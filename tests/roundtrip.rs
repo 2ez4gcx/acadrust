@@ -2812,6 +2812,7 @@ fn dxf_roundtrip_complex_linetype_shape() {
         scale: 2.0,
         rotation: 30.0,
         absolute_rotation: false,
+        source_flags: 8,
         offset: [1.0, 0.5],
     });
     let mut space = LineTypeElement::space(2.0);
@@ -2832,6 +2833,7 @@ fn dxf_roundtrip_complex_linetype_shape() {
     assert!((c0.scale - 2.0).abs() < 1e-6);
     assert!((c0.rotation - 30.0).abs() < 1e-6);
     assert!(!c0.is_absolute_rotation());
+    assert_eq!(c0.source_flags, 12);
 }
 
 #[test]
@@ -2849,6 +2851,7 @@ fn dxf_roundtrip_complex_linetype_text() {
         scale: 1.5,
         rotation: 45.0,
         absolute_rotation: true,
+        source_flags: 1,
         offset: [0.0, 0.25],
     });
     lt.elements.push(dash);
@@ -2882,6 +2885,7 @@ fn dwg_roundtrip_complex_linetype_shape() {
         scale: 1.0,
         rotation: 0.0,
         absolute_rotation: false,
+        source_flags: 0,
         offset: [0.0, 0.0],
     });
     lt.elements.push(dash);
