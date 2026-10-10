@@ -12952,6 +12952,7 @@ impl<'a> SectionReader<'a> {
         let mut insertion = PointReader::new();
         let mut normal = PointReader::new();
         let mut x_direction = PointReader::new();
+        let mut rotation_from_code50 = None;
         let mut reading_columns = false;
 
         while let Some(pair) = self.reader.read_pair()? {
@@ -13011,7 +13012,7 @@ impl<'a> SectionReader<'a> {
                                 columns.heights.push(value);
                             }
                         } else {
-                            mtext.rotation = value.to_radians();
+                            rotation_from_code50 = Some(value.to_radians());
                         }
                     }
                 }
