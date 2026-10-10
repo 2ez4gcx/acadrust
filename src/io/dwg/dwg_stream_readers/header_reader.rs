@@ -242,7 +242,11 @@ pub fn read_header_with_encoding(
         data[size_offset + 1],
         data[size_offset + 2],
         data[size_offset + 3],
-    ]) as usize;
+    ]);
+    if section_size < 0 {
+        return Err(DxfError::Parse("Header section has a negative size".to_string()));
+    }
+    let section_size = section_size as usize;
     size_offset += 4;
 
     // Extra 4 zero bytes when: (AC1024+ && maintenance > 3) || AC1032+
@@ -250,7 +254,17 @@ pub fn read_header_with_encoding(
         size_offset += 4;
     }
 
-    let section_data = &data[size_offset..size_offset + section_size];
+    let section_end = size_offset
+        .checked_add(section_size)
+        .ok_or_else(|| DxfError::Parse("Header section size overflows input bounds".to_string()))?;
+    let section_data = data.get(size_offset..section_end).ok_or_else(|| {
+        DxfError::Parse(format!(
+            "Header section extends past input: offset={}, size={}, data_len={}",
+            size_offset,
+            section_size,
+            data.len()
+        ))
+    })?;
 
     let mut r = SectionReader::with_encoding(section_data.to_vec(), version, encoding)?;
     let mut h = HeaderVariables::default();
@@ -958,5 +972,18 @@ mod tests {
         bad_data[..16].fill(0xFF);
         let result = read_header(&bad_data, DxfVersion::AC1015, 0);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_header_invalid_section_sizes_fail_without_panicking() {
+        let mut negative = vec![0u8; 64];
+        negative[..16].copy_from_slice(&start_sentinels::HEADER);
+        negative[16..20].copy_from_slice(&(-1i32).to_le_bytes());
+        assert!(read_header(&negative, DxfVersion::AC1015, 0).is_err());
+
+        let mut oversized = vec![0u8; 64];
+        oversized[..16].copy_from_slice(&start_sentinels::HEADER);
+        oversized[16..20].copy_from_slice(&(10_000i32).to_le_bytes());
+        assert!(read_header(&oversized, DxfVersion::AC1015, 0).is_err());
     }
 }
