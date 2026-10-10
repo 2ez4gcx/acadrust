@@ -16390,7 +16390,9 @@ impl<'a> SectionReader<'a> {
                 }
                 50 => {
                     if let Some(r) = pair.as_double() {
-                        shape.rotation = r;
+                        // DXF stores SHAPE rotation in degrees; the entity
+                        // model uses radians, like the DWG reader and writer.
+                        shape.rotation = r.to_radians();
                     }
                 }
                 // Previously dropped: thickness, relative X scale, oblique
@@ -16407,7 +16409,8 @@ impl<'a> SectionReader<'a> {
                 }
                 51 => {
                     if let Some(o) = pair.as_double() {
-                        shape.oblique_angle = o;
+                        // DXF stores SHAPE oblique angle in degrees.
+                        shape.oblique_angle = o.to_radians();
                     }
                 }
                 210 | 220 | 230 => {

@@ -3955,7 +3955,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_double(41, text.width_factor)?;
         }
         if text.oblique_angle != 0.0 {
-            self.writer.write_double(51, text.oblique_angle)?;
+            self.writer.write_double(51, text.oblique_angle.to_degrees())?;
         }
         self.writer.write_string(7, &text.style)?;
         if text.generation_flags != 0 {
