@@ -1,5 +1,6 @@
 # acadrust
 
+[![CI](https://github.com/hakanaktt/acadrust/actions/workflows/ci.yml/badge.svg)](https://github.com/hakanaktt/acadrust/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/acadrust.svg)](https://crates.io/crates/acadrust)
 [![Documentation](https://docs.rs/acadrust/badge.svg)](https://docs.rs/acadrust)
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
@@ -216,6 +217,10 @@ cargo test
 cargo test --all-features
 cargo check --all-targets --all-features
 ```
+
+GitHub Actions runs these checks with stable Rust on Linux, Windows, and macOS
+for pull requests and pushes to `main`. It also checks default and all-feature
+library builds for `wasm32-unknown-unknown`.
 
 ---
 
