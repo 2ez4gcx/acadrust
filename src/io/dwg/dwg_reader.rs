@@ -1099,6 +1099,7 @@ impl<R: Read + Seek> DwgReader<R> {
                     crate::io::dxf::code_page::encoding_from_dwg_code_page(info.code_page),
                 ) {
                     Ok(header_vars) => document.header = header_vars,
+                    Err(e) if !failsafe => return Err(e),
                     Err(e) => report_read_error(
                         &mut self.notifications,
                         &mut diagnostics,
