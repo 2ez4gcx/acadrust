@@ -436,7 +436,7 @@ fn read_xref_dependant_bits(reader: &mut DwgMergedReader, version: DwgVersion) -
 
 /// Read a generic table control object (after non-entity common data).
 pub fn read_table_control(reader: &mut DwgMergedReader) -> TableControlData {
-    let entry_count = safe_count(reader.read_bit_long());
+    let entry_count = safe_count(reader.read_bit_long(), reader);
     let mut entry_handles = Vec::new();
     for _ in 0..entry_count {
         entry_handles.push(reader.read_handle());
@@ -488,7 +488,7 @@ pub fn read_vx_table_record(reader: &mut DwgMergedReader) -> VxTableRecordData {
 
 /// Read BLOCK_CONTROL data (special: has *Model_Space and *Paper_Space).
 pub fn read_block_control(reader: &mut DwgMergedReader) -> BlockControlData {
-    let entry_count = safe_count(reader.read_bit_long());
+    let entry_count = safe_count(reader.read_bit_long(), reader);
     let mut entry_handles = Vec::new();
     for _ in 0..entry_count {
         entry_handles.push(reader.read_handle());
@@ -1407,7 +1407,7 @@ pub fn read_block_header(reader: &mut DwgMergedReader, version: DwgVersion) -> B
     };
 
     let owned_object_count = if version.r2004_plus() && !is_xref && !is_xref_overlay {
-        Some(safe_count(reader.read_bit_long()))
+        Some(safe_count(reader.read_bit_long(), reader))
     } else {
         None
     };
@@ -1430,7 +1430,7 @@ pub fn read_block_header(reader: &mut DwgMergedReader, version: DwgVersion) -> B
         }
 
         description = Some(reader.read_variable_text());
-        preview_data_size = Some(safe_count(reader.read_bit_long()));
+        preview_data_size = Some(safe_count(reader.read_bit_long(), reader));
 
         // Read preview data if present
         let pds = preview_data_size.unwrap_or(0);
@@ -1541,7 +1541,7 @@ pub struct VPortEntityHeaderData {
 /// Read VPORT_ENTITY_CONTROL (type 70) — R13-R14 viewport entity control.
 /// Same structure as a generic table control.
 pub fn read_vport_entity_control(reader: &mut DwgMergedReader) -> VPortEntityControlData {
-    let entry_count = safe_count(reader.read_bit_long());
+    let entry_count = safe_count(reader.read_bit_long(), reader);
     let mut entry_handles = Vec::new();
     for _ in 0..entry_count {
         entry_handles.push(reader.read_handle());

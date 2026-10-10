@@ -1215,6 +1215,11 @@ impl<R: Read + Seek> DwgReader<R> {
                         };
                         decoded_source_records = build_outcome.decoded_records;
                         skipped_source_records = build_outcome.skipped_records;
+                        if !failsafe && skipped_source_records != 0 {
+                            return Err(DxfError::Parse(build_outcome.diagnostics.first()
+                                .map(|diagnostic| diagnostic.message.clone())
+                                .unwrap_or_else(|| "Invalid DWG object records".to_string())));
+                        }
                         diagnostics.extend(build_outcome.diagnostics);
                         self.notifications.extend(build_outcome.notifications);
                     },

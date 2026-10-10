@@ -5,10 +5,8 @@ use crate::io::dwg::dwg_version::DwgVersion;
 use crate::objects::*;
 use crate::types::{DxfVersion, Handle, Vector3};
 
-const MAX_ITEMS: i32 = 100_000;
-
-fn count(value: i32) -> usize {
-    value.max(0).min(MAX_ITEMS) as usize
+fn count(value: i32, reader: &DwgMergedReader) -> usize {
+    reader.checked_count(i64::from(value)) as usize
 }
 
 /// `read_predefined_bit`: whether the R2013+ `has_predefined` flag follows
@@ -50,11 +48,11 @@ fn read_render_settings(
 
 fn read_point_cloud_ramps(reader: &mut DwgMergedReader) -> Vec<PointCloudColorRamp> {
     let mut result = Vec::new();
-    for _ in 0..count(reader.read_bit_long()) {
+    for _ in 0..count(reader.read_bit_long(), reader) {
         let id = reader.read_variable_text();
         let class_version = reader.read_bit_short();
         let mut colors = Vec::new();
-        for _ in 0..count(reader.read_bit_long()) {
+        for _ in 0..count(reader.read_bit_long(), reader) {
             let color = reader.read_bit_long();
             colors.push(PointCloudRampColor {
                 color,
@@ -136,8 +134,8 @@ fn read_view_rep_sketch_geometry(
                 reader.read_bit_long(),
                 reader.read_bit_long(),
             ];
-            let mut knots = Vec::with_capacity(count(knot_header[0]));
-            for _ in 0..count(knot_header[0]) {
+            let mut knots = Vec::with_capacity(count(knot_header[0], reader));
+            for _ in 0..count(knot_header[0], reader) {
                 knots.push(reader.read_bit_double());
             }
             let weight_header = [
@@ -145,8 +143,8 @@ fn read_view_rep_sketch_geometry(
                 reader.read_bit_long(),
                 reader.read_bit_long(),
             ];
-            let mut weights = Vec::with_capacity(count(weight_header[0]));
-            for _ in 0..count(weight_header[0]) {
+            let mut weights = Vec::with_capacity(count(weight_header[0], reader));
+            for _ in 0..count(weight_header[0], reader) {
                 weights.push(reader.read_bit_double());
             }
             let point_header = [
@@ -154,8 +152,8 @@ fn read_view_rep_sketch_geometry(
                 reader.read_bit_long(),
                 reader.read_bit_long(),
             ];
-            let mut control_points = Vec::with_capacity(count(point_header[0]));
-            for _ in 0..count(point_header[0]) {
+            let mut control_points = Vec::with_capacity(count(point_header[0], reader));
+            for _ in 0..count(point_header[0], reader) {
                 control_points.push(reader.read_3bit_double());
             }
             ViewRepSketchGeometry::Nurb {
@@ -202,11 +200,11 @@ fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
     let geometry_version = reader.read_bit_long();
     let geometry_marker = reader.read_bit_long();
     let mut sketches = Vec::new();
-    for _ in 0..count(reader.read_bit_long()) {
+    for _ in 0..count(reader.read_bit_long(), reader) {
         let id = reader.read_bit_long();
         let sketch_version = reader.read_bit_long();
         let mut references = Vec::new();
-        for _ in 0..count(reader.read_bit_long()) {
+        for _ in 0..count(reader.read_bit_long(), reader) {
             references.push(ViewRepSketchReference {
                 object: read_view_rep_handle(reader),
                 flag: reader.read_bit(),
@@ -238,9 +236,9 @@ fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
     let projection = reader.read_bit_short();
     let linked_views = [read_view_rep_handle(reader), read_view_rep_handle(reader)];
     let mut section_sketches = Vec::new();
-    for _ in 0..count(reader.read_bit_long()) {
+    for _ in 0..count(reader.read_bit_long(), reader) {
         let class_name = reader.read_variable_text();
-        let path_count = count(reader.read_bit_short() as i32);
+        let path_count = count(reader.read_bit_short() as i32, reader);
         let mut objects = Vec::with_capacity(path_count.saturating_add(1));
         for _ in 0..=path_count {
             objects.push(read_view_rep_handle(reader));
@@ -269,7 +267,7 @@ fn read_view_rep(reader: &mut DwgMergedReader) -> ViewRep {
         let class_name = reader.read_variable_text();
         let block_path_version = reader.read_bit_long();
         let mut entries = Vec::new();
-        for _ in 0..count(reader.read_bit_long()) {
+        for _ in 0..count(reader.read_bit_long(), reader) {
             entries.push(ViewRepBlockPathEntry {
                 flag: reader.read_byte(),
                 kind: reader.read_byte(),
@@ -404,7 +402,7 @@ pub fn read_class_object_data(
         "ACDBSYMODELSPACEVIEWSELSET" => {
             let version = reader.read_bit_long();
             let mut entities = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 entities.push(Handle::from(reader.read_handle()));
             }
             ClassObjectData::ViewRepModelSpaceViewSelectionSet(ViewRepModelSpaceViewSelectionSet {
@@ -419,13 +417,13 @@ pub fn read_class_object_data(
         "SPATIAL_INDEX" => return None,
         "LAYERFILTER" => {
             let mut names = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 names.push(reader.read_variable_text());
             }
             ClassObjectData::LayerFilter(LayerFilter { names })
         }
         "PARTIAL_VIEWING_INDEX" => {
-            let num_entries = count(reader.read_bit_long());
+            let num_entries = count(reader.read_bit_long(), reader);
             let has_entries = num_entries != 0 && reader.read_bit();
             let mut entries = Vec::with_capacity(num_entries);
             for _ in 0..num_entries {
@@ -444,7 +442,7 @@ pub fn read_class_object_data(
             if !version.r2000_plus() {
                 return None;
             }
-            let size = count(reader.read_bit_long());
+            let size = count(reader.read_bit_long(), reader);
             ClassObjectData::VbaProject(VbaProject {
                 storage: crate::compound_file::StructuredStoragePayload::decode(
                     &reader.read_bytes(size),
@@ -454,7 +452,7 @@ pub fn read_class_object_data(
         "SECTION_MANAGER" => {
             let is_live = reader.read_bit();
             let mut sections = Vec::new();
-            for _ in 0..count(reader.read_bit_short() as i32) {
+            for _ in 0..count(reader.read_bit_short() as i32, reader) {
                 sections.push(Handle::from(reader.read_handle()));
             }
             ClassObjectData::SectionManager(SectionManager { is_live, sections })
@@ -462,17 +460,17 @@ pub fn read_class_object_data(
         "SECTION_SETTINGS" => {
             let current_type = reader.read_bit_long();
             let mut types = Vec::new();
-            for _ in 0..count(reader.read_bit_long()).min(4) {
+            for _ in 0..count(reader.read_bit_long(), reader).min(4) {
                 let section_type = reader.read_bit_long();
                 let generation = reader.read_bit_long();
                 let mut sources = Vec::new();
-                for _ in 0..count(reader.read_bit_long()) {
+                for _ in 0..count(reader.read_bit_long(), reader) {
                     sources.push(Handle::from(reader.read_handle()));
                 }
                 let destination_block = Handle::from(reader.read_handle());
                 let destination_file = reader.read_variable_text();
                 let mut geometry = Vec::new();
-                for _ in 0..count(reader.read_bit_long()) {
+                for _ in 0..count(reader.read_bit_long(), reader) {
                     geometry.push(SectionGeometrySettings {
                         geometry_count: reader.read_bit_long(),
                         index: reader.read_bit_long(),
@@ -513,7 +511,7 @@ pub fn read_class_object_data(
         "LIGHTLIST" => {
             let class_version = reader.read_bit_long();
             let mut lights = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 lights.push(LightListEntry {
                     handle: Handle::from(reader.read_handle()),
                     name: reader.read_variable_text(),
@@ -789,10 +787,10 @@ pub fn read_class_object_data(
         "CONTEXTDATAMANAGER" => {
             let object_context = Handle::from(reader.read_handle());
             let mut sub_managers = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 let handle = Handle::from(reader.read_handle());
                 let mut entries = Vec::new();
-                for _ in 0..count(reader.read_bit_long()) {
+                for _ in 0..count(reader.read_bit_long(), reader) {
                     entries.push(ContextDataEntry {
                         item: Handle::from(reader.read_handle()),
                         name: reader.read_variable_text(),
@@ -821,7 +819,7 @@ pub fn read_class_object_data(
             };
             let select_dates_from_calendar = reader.read_bit();
             let mut dates = Vec::new();
-            for _ in 0..count(reader.read_bit_long()).min(10_000) {
+            for _ in 0..count(reader.read_bit_long(), reader).min(10_000) {
                 dates.push(SunStudyDate {
                     julian_day: reader.read_bit_long(),
                     milliseconds: reader.read_bit_long(),
@@ -838,7 +836,7 @@ pub fn read_class_object_data(
                 (0, 0, 0)
             };
             let mut hours = Vec::new();
-            for _ in 0..count(reader.read_bit_long()).min(10_000) {
+            for _ in 0..count(reader.read_bit_long(), reader).min(10_000) {
                 hours.push(reader.read_bit());
             }
             ClassObjectData::SunStudy(SunStudy {
@@ -871,9 +869,14 @@ pub fn read_class_object_data(
         }
         "DATATABLE" => {
             let flags = reader.read_bit_short();
-            let column_count = reader.read_bit_long();
-            let row_count = reader.read_bit_long();
-            if !(0..=MAX_ITEMS).contains(&column_count) || !(0..=MAX_ITEMS).contains(&row_count) {
+            let raw_column_count = reader.read_bit_long();
+            let column_count = reader.checked_count(i64::from(raw_column_count)) as i32;
+            let raw_row_count = reader.read_bit_long();
+            let row_count = reader.checked_count(i64::from(raw_row_count)) as i32;
+            if reader.checked_count(i64::from(column_count) * i64::from(row_count))
+                != i64::from(column_count) * i64::from(row_count)
+                || column_count < 0 || row_count < 0
+            {
                 return None;
             }
             let name = reader.read_variable_text();
@@ -888,7 +891,7 @@ pub fn read_class_object_data(
                 }
                 let column_name = reader.read_variable_text();
                 let mut rows = Vec::new();
-                for _ in 0..count(row_count) {
+                for _ in 0..count(row_count, reader) {
                     let mut value = DataTableValue::default();
                     match cell_type {
                         DataTableCellType::Integer => value.integer = reader.read_bit_long(),
@@ -934,7 +937,7 @@ pub fn read_class_object_data(
             let status_flags = reader.read_bit_long();
             let update_status = reader.read_variable_text();
             let mut custom_data = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 custom_data.push(DataLinkCustomData {
                     target: Handle::from(reader.read_handle()),
                     value: reader.read_variable_text(),
@@ -969,11 +972,11 @@ pub fn read_class_object_data(
             let associated_step_count = reader.read_bit_long();
             let associated_subentity_count = reader.read_bit_long();
             let mut steps = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 steps.push(reader.read_bit_long());
             }
             let mut subentities = Vec::new();
-            for _ in 0..count(reader.read_bit_long()) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 subentities.push(reader.read_bit_long());
             }
             ClassObjectData::PersistentSubentityManager(PersistentSubentityManager {
@@ -1104,7 +1107,7 @@ pub fn read_class_object_data(
                 end_line_overshoot: reader.read_bit_double(),
                 hatch_angles: {
                     let mut angles = Vec::new();
-                    for _ in 0..count(reader.read_bit_long()) {
+                    for _ in 0..count(reader.read_bit_long(), reader) {
                         angles.push(reader.read_bit_double());
                     }
                     angles

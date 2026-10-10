@@ -438,12 +438,12 @@ pub fn read_section_object(reader: &mut DwgMergedReader) -> ExtendedEntityData {
     let bottom_height = reader.read_bit_double();
     let indicator_alpha = reader.read_bit_short();
     let indicator_color = reader.read_cm_color();
-    let vertex_count = safe_count(reader.read_bit_long()) as usize;
+    let vertex_count = safe_count(reader.read_bit_long(), reader) as usize;
     let mut vertices = Vec::with_capacity(vertex_count);
     for _ in 0..vertex_count {
         vertices.push(reader.read_3bit_double());
     }
-    let back_line_count = safe_count(reader.read_bit_long()) as usize;
+    let back_line_count = safe_count(reader.read_bit_long(), reader) as usize;
     let mut back_line_vertices = Vec::with_capacity(back_line_count);
     for _ in 0..back_line_count {
         back_line_vertices.push(reader.read_3bit_double());
@@ -609,7 +609,7 @@ pub fn read_point_cloud(
     let class_version = reader.read_bit_short();
     let origin = reader.read_3bit_double();
     let saved_filename = reader.read_variable_text();
-    let source_count = safe_count(reader.read_bit_long()) as usize;
+    let source_count = safe_count(reader.read_bit_long(), reader) as usize;
     let mut extents_min = Vector3::ZERO;
     let mut extents_max = Vector3::ZERO;
     let mut point_count = 0;
@@ -648,13 +648,13 @@ pub fn read_point_cloud(
             low_intensity_threshold = reader.read_bit_double();
             high_intensity_threshold = reader.read_bit_double();
             show_clipping = reader.read_bit();
-            let clip_count = safe_count(reader.read_bit_long()) as usize;
+            let clip_count = safe_count(reader.read_bit_long(), reader) as usize;
             clippings.reserve(clip_count);
             for _ in 0..clip_count {
                 let inverted = reader.read_bit();
                 let clip_type = reader.read_bit_short();
                 let vertex_count = if clip_type == 3 {
-                    safe_count(reader.read_bit_long()) as usize
+                    safe_count(reader.read_bit_long(), reader) as usize
                 } else {
                     2
                 };
@@ -722,7 +722,7 @@ pub fn read_point_cloud_ex(reader: &mut DwgMergedReader) -> ExtendedEntityData {
     let name = reader.read_variable_text();
     let show_intensity = reader.read_bit();
     let show_cropping = reader.read_bit();
-    let crop_count = safe_count(reader.read_bit_long()) as usize;
+    let crop_count = safe_count(reader.read_bit_long(), reader) as usize;
     let mut croppings = Vec::with_capacity(crop_count);
     for _ in 0..crop_count {
         let crop_type = i16::from(reader.read_byte());
@@ -731,7 +731,7 @@ pub fn read_point_cloud_ex(reader: &mut DwgMergedReader) -> ExtendedEntityData {
         let plane = reader.read_3bit_double();
         let x_direction = reader.read_3bit_double();
         let y_direction = reader.read_3bit_double();
-        let point_count = safe_count(reader.read_bit_long()) as usize;
+        let point_count = safe_count(reader.read_bit_long(), reader) as usize;
         let mut points = Vec::with_capacity(point_count);
         for _ in 0..point_count {
             points.push(reader.read_3bit_double());
@@ -746,9 +746,9 @@ pub fn read_point_cloud_ex(reader: &mut DwgMergedReader) -> ExtendedEntityData {
             points,
         });
     }
-    let scan_count = safe_count(reader.read_bit_long()) as usize;
+    let scan_count = safe_count(reader.read_bit_long(), reader) as usize;
     let hidden_scans = (0..scan_count).map(|_| reader.read_variable_text()).collect();
-    let region_count = safe_count(reader.read_bit_long()) as usize;
+    let region_count = safe_count(reader.read_bit_long(), reader) as usize;
     let hidden_regions = (0..region_count).map(|_| reader.read_bit_long()).collect();
     let stylization_type = reader.read_bit_short();
     let intensity_color_scheme = reader.read_variable_text();
@@ -803,7 +803,7 @@ pub fn read_ole_frame(reader: &mut DwgMergedReader, version: DwgVersion) -> Exte
     } else {
         0
     };
-    let size = safe_count(reader.read_bit_long()) as usize;
+    let size = safe_count(reader.read_bit_long(), reader) as usize;
     ExtendedEntityData::OleFrame(OleFrameData {
         flag,
         mode,
@@ -1211,23 +1211,38 @@ fn read_lwpolyline_impl(
         Vector3::UNIT_Z
     };
 
-    let num_pts = safe_count(reader.read_bit_long());
+    let raw_num_pts = reader.read_bit_long();
+    let point_bits = if raw_points || version.r13_14_only() { 128 } else { 4 };
+    let num_pts = reader.checked_main_count(i64::from(raw_num_pts), point_bits) as i32;
     let num_bulges = if has_bulges {
-        safe_count(reader.read_bit_long())
+        safe_count(reader.read_bit_long(), reader)
     } else {
         0
     };
     let has_vertex_ids = (flag & 0x400) != 0;
     let num_vertex_ids = if has_vertex_ids {
-        safe_count(reader.read_bit_long())
+        safe_count(reader.read_bit_long(), reader)
     } else {
         0
     };
     let num_widths = if has_widths {
-        safe_count(reader.read_bit_long())
+        safe_count(reader.read_bit_long(), reader)
     } else {
         0
     };
+
+    // The first compressed vertex is two raw doubles; later vertices need at
+    // least two DD selectors. Include all optional arrays before allocating.
+    let required_bits = if num_pts == 0 { 0 } else if point_bits == 128 {
+        i64::from(num_pts) * 128
+    } else {
+        128 + i64::from(num_pts - 1) * 4
+    } + i64::from(num_bulges) * 2 + i64::from(num_vertex_ids) * 2 + i64::from(num_widths) * 4;
+    reader.checked_main_count(required_bits, 1);
+    if num_bulges > num_pts || num_vertex_ids > num_pts || num_widths > num_pts {
+        reader.invalidate("LWPOLYLINE optional array exceeds vertex count");
+    }
+    let num_pts = if reader.check_error().is_ok() { num_pts } else { 0 };
 
     // Read vertex positions
     let mut xs = Vec::with_capacity(num_pts as usize);
@@ -1350,8 +1365,8 @@ pub fn read_spline(
             periodic = reader.read_bit();
             knot_tolerance = reader.read_bit_double();
             control_tolerance = reader.read_bit_double();
-            let num_knots = safe_count(reader.read_bit_long());
-            let num_ctrl = safe_count(reader.read_bit_long());
+            let num_knots = safe_count(reader.read_bit_long(), reader);
+            let num_ctrl = safe_count(reader.read_bit_long(), reader);
             let has_weights = reader.read_bit();
 
             for _ in 0..num_knots {
@@ -1369,7 +1384,7 @@ pub fn read_spline(
             fit_tolerance = reader.read_bit_double();
             begin_tangent = reader.read_3bit_double();
             end_tangent = reader.read_3bit_double();
-            let num_fit = safe_count(reader.read_bit_long());
+            let num_fit = safe_count(reader.read_bit_long(), reader);
             for _ in 0..num_fit {
                 fit_points.push(reader.read_3bit_double());
             }
@@ -1612,7 +1627,7 @@ pub fn read_mtext(
             column_type = reader.read_bit_short();
             if column_type != 0 {
                 // Column height count BL 72
-                column_count = safe_count(reader.read_bit_long());
+                column_count = safe_count(reader.read_bit_long(), reader);
                 // Column width BD 44
                 column_width = reader.read_bit_double();
                 // Gutter BD 45
@@ -1697,7 +1712,7 @@ pub fn read_leader(
     let annotation_type = reader.read_bit_short();
     let path_type = reader.read_bit_short();
 
-    let num_pts = safe_count(reader.read_bit_long());
+    let num_pts = safe_count(reader.read_bit_long(), reader);
     let mut vertices = Vec::with_capacity(num_pts as usize);
     for _ in 0..num_pts {
         vertices.push(reader.read_3bit_double());
@@ -2481,7 +2496,7 @@ pub fn read_hatch_boundary_path_contents(
     let mut polyline_closed = false;
 
     if !is_polyline {
-        let num_edges = safe_count(reader.read_bit_long());
+        let num_edges = safe_count(reader.read_bit_long(), reader);
         for _ in 0..num_edges {
             let edge_type = reader.read_byte();
             match edge_type {
@@ -2524,8 +2539,8 @@ pub fn read_hatch_boundary_path_contents(
                     let degree = reader.read_bit_long();
                     let rational = reader.read_bit();
                     let periodic = reader.read_bit();
-                    let num_knots = safe_count(reader.read_bit_long());
-                    let num_ctrl = safe_count(reader.read_bit_long());
+                    let num_knots = safe_count(reader.read_bit_long(), reader);
+                    let num_ctrl = safe_count(reader.read_bit_long(), reader);
                     let mut knots = Vec::new();
                     for _ in 0..num_knots {
                         knots.push(reader.read_bit_double());
@@ -2544,7 +2559,7 @@ pub fn read_hatch_boundary_path_contents(
                     let mut start_tangent = Vector2::ZERO;
                     let mut end_tangent = Vector2::ZERO;
                     if version.r2010_plus() {
-                        let num_fit = safe_count(reader.read_bit_long());
+                        let num_fit = safe_count(reader.read_bit_long(), reader);
                         if num_fit > 0 {
                             for _ in 0..num_fit {
                                 fit_points.push(reader.read_2raw_double());
@@ -2570,7 +2585,7 @@ pub fn read_hatch_boundary_path_contents(
     } else {
         let has_bulge = reader.read_bit();
         polyline_closed = reader.read_bit();
-        let num_verts = safe_count(reader.read_bit_long());
+        let num_verts = safe_count(reader.read_bit_long(), reader);
         for _ in 0..num_verts {
             let pt = reader.read_2raw_double();
             let bulge = if has_bulge {
@@ -2582,13 +2597,9 @@ pub fn read_hatch_boundary_path_contents(
         }
     }
 
-    // Cap the boundary-handle count to a sane upper bound. Corrupt /
-    // misaligned hatch records have been seen to emit ~1.9 × 10^9 here,
-    // which spins read_handle() for tens of seconds per record. AutoCAD
-    // hatches realistically carry well under MAX_ARRAY_COUNT (100k)
-    // associative boundary references.
+    // Validate associative boundary references against remaining record data.
     let boundary_handle_count = if has_boundary_handles {
-        safe_count(reader.read_bit_long())
+        safe_count(reader.read_bit_long(), reader)
     } else {
         0
     };
@@ -2609,7 +2620,7 @@ fn read_mpolygon_loop(reader: &mut DwgMergedReader, invalid: bool) -> HatchBound
         let _unknown = reader.read_bit();
     }
     let has_bulge = reader.read_bit();
-    let num_verts = safe_count(reader.read_bit_long());
+    let num_verts = safe_count(reader.read_bit_long(), reader);
     let mut polyline_vertices = Vec::new();
     for _ in 0..num_verts {
         let pt = reader.read_2raw_double();
@@ -2671,7 +2682,7 @@ fn read_hatch_kind(
         gradient_shift = reader.read_bit_double();
         gradient_single_color = reader.read_bit_long() != 0;
         gradient_tint = reader.read_bit_double();
-        let num_colors = safe_count(reader.read_bit_long());
+        let num_colors = safe_count(reader.read_bit_long(), reader);
         for _ in 0..num_colors {
             let value = reader.read_bit_double();
             let (color, color_name, book_name) = reader.read_cm_color_with_names();
@@ -2687,7 +2698,7 @@ fn read_hatch_kind(
     // MPOLYGON has no associative flag.
     let is_associative = !is_mpolygon && reader.read_bit();
 
-    let num_paths = safe_count(reader.read_bit_long());
+    let num_paths = safe_count(reader.read_bit_long(), reader);
     let mut paths = Vec::new();
     let mut has_derived = false;
     for _ in 0..num_paths {
@@ -2746,7 +2757,7 @@ fn read_hatch_kind(
     ) = if is_mpolygon {
         let hatch_color = reader.read_cm_color();
         let x_direction = reader.read_2raw_double();
-        let num_invalid_loops = safe_count(reader.read_bit_long());
+        let num_invalid_loops = safe_count(reader.read_bit_long(), reader);
         let mut invalid_loops = Vec::new();
         for _ in 0..num_invalid_loops {
             invalid_loops.push(read_mpolygon_loop(reader, true));
@@ -2758,7 +2769,7 @@ fn read_hatch_kind(
         } else {
             0.0
         };
-        let num_seeds = safe_count(reader.read_bit_long());
+        let num_seeds = safe_count(reader.read_bit_long(), reader);
         let mut seed_points = Vec::new();
         for _ in 0..num_seeds {
             seed_points.push(reader.read_2raw_double());
@@ -3067,7 +3078,7 @@ pub fn read_mline(reader: &mut DwgMergedReader) -> MLineData {
     let normal = reader.read_3bit_double();
     let openclosed = reader.read_bit_short();
     let lines_in_style = reader.read_byte();
-    let vertex_count = reader.read_bit_short();
+    let vertex_count = safe_count(reader.read_bit_short() as i32, reader) as i16;
 
     // Read vertices (position + direction + miter + segments)
     let mut vertices = Vec::with_capacity(vertex_count as usize);
@@ -3077,12 +3088,12 @@ pub fn read_mline(reader: &mut DwgMergedReader) -> MLineData {
         let miter = reader.read_3bit_double();
         let mut segments = Vec::with_capacity(lines_in_style as usize);
         for _ in 0..lines_in_style {
-            let num_params = reader.read_bit_short();
+            let num_params = safe_count(reader.read_bit_short() as i32, reader);
             let mut params = Vec::with_capacity(num_params as usize);
             for _ in 0..num_params {
                 params.push(reader.read_bit_double());
             }
-            let num_area = reader.read_bit_short();
+            let num_area = safe_count(reader.read_bit_short() as i32, reader);
             let mut area_params = Vec::with_capacity(num_area as usize);
             for _ in 0..num_area {
                 area_params.push(reader.read_bit_double());
@@ -3120,7 +3131,7 @@ pub fn read_mesh(reader: &mut DwgMergedReader) -> MeshData {
     let blend_crease = reader.read_bit();
     let subdivision_level = reader.read_bit_long();
 
-    let num_verts = safe_count(reader.read_bit_long());
+    let num_verts = safe_count(reader.read_bit_long(), reader);
     let mut vertices = Vec::with_capacity(num_verts as usize);
     for _ in 0..num_verts {
         vertices.push(reader.read_3bit_double());
@@ -3128,9 +3139,12 @@ pub fn read_mesh(reader: &mut DwgMergedReader) -> MeshData {
 
     let declared_face_data = reader.read_bit_long();
     let available_face_data = reader.main_remaining_bits().saturating_sub(6) / 2;
-    let total_face_data = usize::try_from(declared_face_data)
-        .unwrap_or(0)
-        .min(usize::try_from(available_face_data).unwrap_or(0));
+    let total_face_data = if declared_face_data < 0 || i64::from(declared_face_data) > available_face_data {
+        reader.invalidate("MESH face count exceeds remaining main data");
+        0
+    } else {
+        declared_face_data as usize
+    };
     let mut faces = Vec::new();
     let mut consumed = 0usize;
     let mut stored_indices = 0usize;
@@ -3180,7 +3194,7 @@ pub fn read_mesh(reader: &mut DwgMergedReader) -> MeshData {
         }
     }
 
-    let num_edges = safe_count(reader.read_bit_long());
+    let num_edges = safe_count(reader.read_bit_long(), reader);
     let mut edges = Vec::with_capacity(num_edges as usize);
     for _ in 0..num_edges {
         let s = reader.read_bit_long();
@@ -3188,7 +3202,7 @@ pub fn read_mesh(reader: &mut DwgMergedReader) -> MeshData {
         edges.push((s, e));
     }
 
-    let num_creases = safe_count(reader.read_bit_long());
+    let num_creases = safe_count(reader.read_bit_long(), reader);
     let mut crease_values = Vec::with_capacity(num_creases as usize);
     for _ in 0..num_creases {
         crease_values.push(reader.read_bit_double());
@@ -3244,7 +3258,7 @@ pub fn read_underlay(reader: &mut DwgMergedReader) -> UnderlayData {
     let fade = reader.read_byte();
     let definition_handle = reader.read_handle();
 
-    let n = safe_count(reader.read_bit_long()) as usize;
+    let n = safe_count(reader.read_bit_long(), reader) as usize;
     let mut clip_boundary_vertices: Vec<Vector2> = Vec::with_capacity(n);
     for _ in 0..n {
         clip_boundary_vertices.push(reader.read_2raw_double());
@@ -3322,7 +3336,7 @@ fn cell_value_type(code: i32) -> CellValueType {
 /// General/String value: BL byte count then bytes (R2007+ = UTF-16LE minus the
 /// trailing NUL, else the reader's ANSI code page).
 fn read_string_cad_value(reader: &mut DwgMergedReader, version: DwgVersion) -> String {
-    let len = safe_count(reader.read_bit_long()) as usize;
+    let len = safe_count(reader.read_bit_long(), reader) as usize;
     let bytes = reader.read_bytes(len);
     if version.r2007_plus() {
         let n = len.saturating_sub(2);
@@ -3521,7 +3535,7 @@ fn read_cell_style(reader: &mut DwgMergedReader) -> Option<CellStyle> {
         style.horizontal_spacing = reader.read_bit_double();
         style.vertical_spacing = reader.read_bit_double();
     }
-    let nborders = safe_count(reader.read_bit_long());
+    let nborders = safe_count(reader.read_bit_long(), reader);
     for _ in 0..nborders {
         let edge = reader.read_bit_long() as u32;
         if matches!(edge, 1 | 2 | 4 | 8 | 0x10 | 0x20) {
@@ -3568,7 +3582,7 @@ fn read_table_cell_content(reader: &mut DwgMergedReader, version: DwgVersion) ->
         }
         _ => {}
     }
-    let natts = safe_count(reader.read_bit_long());
+    let natts = safe_count(reader.read_bit_long(), reader);
     for _ in 0..natts {
         content.attributes.push(TableAttribute {
             definition_handle: Handle::from(reader.read_handle()),
@@ -3598,7 +3612,7 @@ fn read_table_cell(reader: &mut DwgMergedReader, version: DwgVersion) -> TableCe
     cell.state = CellStateFlags::from_bits_retain(reader.read_bit_long() as u32);
     cell.tooltip = reader.read_variable_text();
     cell.custom_data = reader.read_bit_long();
-    let ndata = safe_count(reader.read_bit_long());
+    let ndata = safe_count(reader.read_bit_long(), reader);
     for _ in 0..ndata {
         cell.custom_data_items
             .push(read_custom_table_data(reader, version));
@@ -3611,7 +3625,7 @@ fn read_table_cell(reader: &mut DwgMergedReader, version: DwgVersion) -> TableCe
         cell.data_link_columns = reader.read_bit_long();
         cell.data_link_unknown = reader.read_bit_long();
     }
-    let ncontents = safe_count(reader.read_bit_long());
+    let ncontents = safe_count(reader.read_bit_long(), reader);
     for _ in 0..ncontents {
         cell.contents.push(read_table_cell_content(reader, version));
     }
@@ -3624,7 +3638,7 @@ fn read_table_cell(reader: &mut DwgMergedReader, version: DwgVersion) -> TableCe
         cell.geometry_height_with_gap = reader.read_bit_double();
         let handle = reader.read_handle();
         cell.geometry_handle = (handle != 0).then(|| Handle::from(handle));
-        let geometry_count = safe_count(reader.read_bit_long());
+        let geometry_count = safe_count(reader.read_bit_long(), reader);
         cell.geometry_flags = geometry_count;
         cell.geometries.reserve(geometry_count as usize);
         for index in 0..geometry_count as usize {
@@ -3657,12 +3671,12 @@ pub(crate) fn read_table_content(
     let name = reader.read_variable_text();
     let description = reader.read_variable_text();
 
-    let ncols = safe_count(reader.read_bit_long());
+    let ncols = safe_count(reader.read_bit_long(), reader);
     let mut columns = Vec::with_capacity(ncols as usize);
     for _ in 0..ncols {
         let name = reader.read_variable_text();
         let custom_data = reader.read_bit_long();
-        let ndata = safe_count(reader.read_bit_long());
+        let ndata = safe_count(reader.read_bit_long(), reader);
         let mut custom_data_items = Vec::with_capacity(ndata as usize);
         for _ in 0..ndata {
             custom_data_items.push(read_custom_table_data(reader, version));
@@ -3680,16 +3694,16 @@ pub(crate) fn read_table_content(
         });
     }
 
-    let nrows = safe_count(reader.read_bit_long());
+    let nrows = safe_count(reader.read_bit_long(), reader);
     let mut rows = Vec::with_capacity(nrows as usize);
     for _ in 0..nrows {
-        let ncells = safe_count(reader.read_bit_long());
+        let ncells = safe_count(reader.read_bit_long(), reader);
         let mut cells = Vec::with_capacity(ncells as usize);
         for _ in 0..ncells {
             cells.push(read_table_cell(reader, version));
         }
         let custom_data = reader.read_bit_long();
-        let ndata = safe_count(reader.read_bit_long());
+        let ndata = safe_count(reader.read_bit_long(), reader);
         let mut custom_data_items = Vec::with_capacity(ndata as usize);
         for _ in 0..ndata {
             custom_data_items.push(read_custom_table_data(reader, version));
@@ -3707,13 +3721,13 @@ pub(crate) fn read_table_content(
         });
     }
 
-    let nfields = safe_count(reader.read_bit_long());
+    let nfields = safe_count(reader.read_bit_long(), reader);
     let mut field_handles = Vec::with_capacity(nfields as usize);
     for _ in 0..nfields {
         field_handles.push(Handle::from(reader.read_handle()));
     }
     let base_style = read_cell_style(reader);
-    let nranges = safe_count(reader.read_bit_long());
+    let nranges = safe_count(reader.read_bit_long(), reader);
     let mut merged_ranges = Vec::with_capacity(nranges as usize);
     for _ in 0..nranges {
         merged_ranges.push(crate::entities::table::CellRange {
@@ -3774,7 +3788,7 @@ fn read_table_cell_data(
             content.content_type = TableCellContentType::Block;
             content.block_handle = cell.value_handle;
             if reader.read_bit() {
-                let natts = safe_count(reader.read_bit_short() as i32);
+                let natts = safe_count(reader.read_bit_short() as i32, reader);
                 for _ in 0..natts {
                     content.attributes.push(TableAttribute {
                         definition_handle: Handle::from(reader.read_handle()),
@@ -4005,7 +4019,7 @@ pub fn read_table(
             break_spacing = reader.read_bit_double();
             reader.read_bit_long();
             reader.read_bit_long();
-            let num = safe_count(reader.read_bit_long());
+            let num = safe_count(reader.read_bit_long(), reader);
             for _ in 0..num {
                 break_data.push(TableBreakData {
                     position: reader.read_3bit_double(),
@@ -4014,7 +4028,7 @@ pub fn read_table(
                 });
             }
         }
-        let nranges = safe_count(reader.read_bit_long());
+        let nranges = safe_count(reader.read_bit_long(), reader);
         for _ in 0..nranges {
             break_ranges.push(TableBreakRange {
                 position: reader.read_3bit_double(),
@@ -4027,8 +4041,14 @@ pub fn read_table(
         // then optional table-wide and per-border overrides.
         value_flags = reader.read_bit_short() as i32;
         horizontal_direction = reader.read_3bit_double();
-        let ncols = safe_count(reader.read_bit_long());
-        let nrows = safe_count(reader.read_bit_long());
+        let mut ncols = safe_count(reader.read_bit_long(), reader);
+        let mut nrows = safe_count(reader.read_bit_long(), reader);
+        if reader.checked_count(i64::from(ncols) * i64::from(nrows))
+            != i64::from(ncols) * i64::from(nrows)
+        {
+            ncols = 0;
+            nrows = 0;
+        }
         for _ in 0..ncols {
             let width = reader.read_bit_double();
             columns.push(TableColumn {
@@ -4127,7 +4147,7 @@ pub fn read_raster_image(reader: &mut DwgMergedReader, version: DwgVersion) -> R
         clip_boundary_vertices.push(reader.read_2raw_double());
     } else {
         // Polygonal
-        let n = safe_count(reader.read_bit_long()) as usize;
+        let n = safe_count(reader.read_bit_long(), reader) as usize;
         clip_boundary_vertices.reserve(n);
         for _ in 0..n {
             clip_boundary_vertices.push(reader.read_2raw_double());
@@ -4172,8 +4192,8 @@ pub fn read_ole2frame(reader: &mut DwgMergedReader, version: DwgVersion) -> Ole2
     // don't use safe_count (100 KB cap). Bound the declared length by what's
     // actually left in the object stream instead of an arbitrary cap — a
     // 10 MB ceiling used to truncate big embedded pictures mid-stream.
-    let declared = reader.read_bit_long().max(0) as usize;
-    let data_len = declared.min(reader.remaining_bytes());
+    let declared = reader.read_bit_long();
+    let data_len = reader.checked_main_count(i64::from(declared), 8) as usize;
     let data = reader.read_bytes(data_len);
     let lock_aspect = if version.r2000_plus() {
         reader.read_byte()
@@ -4212,7 +4232,7 @@ pub(crate) fn read_embedded_mtext(
     if entmode == 0 {
         let _owner = reader.read_handle();
     }
-    let num_reactors = safe_count(reader.read_bit_long());
+    let num_reactors = safe_count(reader.read_bit_long(), reader);
     for _ in 0..num_reactors {
         let _reactor = reader.read_handle();
     }
@@ -4293,7 +4313,7 @@ pub(crate) fn read_embedded_mtext(
 
         column_type = reader.read_bit_short();
         if column_type != 0 {
-            column_count = safe_count(reader.read_bit_long());
+            column_count = safe_count(reader.read_bit_long(), reader);
             column_width = reader.read_bit_double();
             column_gutter = reader.read_bit_double();
             column_auto_height = reader.read_bit();
@@ -4580,7 +4600,7 @@ pub fn read_multileader(
     // Through R2007: num_arrowheads (BL) + override-arrowhead list.
     let mut arrowhead_overrides = Vec::new();
     if !version.r2010_plus() {
-        let ah_count = safe_count(reader.read_bit_long());
+        let ah_count = safe_count(reader.read_bit_long(), reader);
         arrowhead_overrides.reserve(ah_count as usize);
         for index in 0..ah_count {
             let is_default = reader.read_bit();
@@ -4597,7 +4617,7 @@ pub fn read_multileader(
     // text-direction / alignment / attachment-point / scale. These fields
     // immediately follow the pre-R2007 arrowhead override list when present.
     let mut block_attributes = Vec::new();
-    let ba_count = safe_count(reader.read_bit_long());
+    let ba_count = safe_count(reader.read_bit_long(), reader);
     block_attributes.reserve(ba_count as usize);
     for _ in 0..ba_count {
         let def_handle = reader.read_handle();
@@ -4683,7 +4703,7 @@ pub(crate) fn read_multileader_annotation_context(
     standalone: bool,
 ) -> MultiLeaderAnnotContext {
     // Leader root count
-    let mut leader_root_count = safe_count(reader.read_bit_long());
+    let mut leader_root_count = safe_count(reader.read_bit_long(), reader);
     let standalone_uses_root_flags = standalone && leader_root_count == 0;
     let mut standalone_flags = 0u8;
     if standalone && leader_root_count == 0 {
@@ -4779,7 +4799,7 @@ pub(crate) fn read_multileader_annotation_context(
         column_gutter = reader.read_bit_double();
         column_flow_reversed = reader.read_bit();
 
-        let col_count = safe_count(reader.read_bit_long());
+        let col_count = safe_count(reader.read_bit_long(), reader);
         column_sizes = Vec::with_capacity(col_count as usize);
         for _ in 0..col_count {
             column_sizes.push(reader.read_bit_double());
@@ -4908,7 +4928,7 @@ fn read_leader_root(
     let connection_point = reader.read_3bit_double();
     let direction = reader.read_3bit_double();
 
-    let bp_count = safe_count(reader.read_bit_long());
+    let bp_count = safe_count(reader.read_bit_long(), reader);
     let mut break_points = Vec::with_capacity(bp_count as usize);
     for _ in 0..bp_count {
         let start_point = reader.read_3bit_double();
@@ -4922,7 +4942,7 @@ fn read_leader_root(
     let leader_index = reader.read_bit_long();
     let landing_distance = reader.read_bit_double();
 
-    let line_count = safe_count(reader.read_bit_long());
+    let line_count = safe_count(reader.read_bit_long(), reader);
     let mut lines = Vec::with_capacity(line_count as usize);
     for _ in 0..line_count {
         lines.push(read_leader_line(reader, version));
@@ -4947,17 +4967,17 @@ fn read_leader_root(
 }
 
 fn read_leader_line(reader: &mut DwgMergedReader, version: DwgVersion) -> LeaderLine {
-    let pt_count = safe_count(reader.read_bit_long());
+    let pt_count = safe_count(reader.read_bit_long(), reader);
     let mut points = Vec::with_capacity(pt_count as usize);
     for _ in 0..pt_count {
         points.push(reader.read_3bit_double());
     }
 
-    let break_info_count = safe_count(reader.read_bit_long());
+    let break_info_count = safe_count(reader.read_bit_long(), reader);
     let mut break_infos = Vec::with_capacity(break_info_count as usize);
     for _ in 0..break_info_count {
         let segment_index = reader.read_bit_long();
-        let sep_count = safe_count(reader.read_bit_long());
+        let sep_count = safe_count(reader.read_bit_long(), reader);
         let mut break_points = Vec::with_capacity(sep_count as usize);
         for _ in 0..sep_count {
             let start_point = reader.read_3bit_double();
@@ -5266,8 +5286,8 @@ fn read_acis_entity_impl(
                         return None;
                     }
                 }
-                let block_size = raw_block_size.max(0) as usize;
-                if block_size == 0 || block_size > 50_000_000 {
+                let block_size = reader.checked_main_count(i64::from(raw_block_size), 8) as usize;
+                if block_size == 0 {
                     break;
                 }
                 let block = reader.read_bytes(block_size);
@@ -5388,7 +5408,7 @@ fn read_acis_entity_impl(
         isolines = reader.read_bit_long();
         isoline_present = reader.read_bit();
         if isoline_present {
-            let num_wires = safe_count(reader.read_bit_long());
+            let num_wires = safe_count(reader.read_bit_long(), reader);
             for _ in 0..num_wires {
                 wires.push(read_wire(reader, version));
             }
@@ -5396,7 +5416,7 @@ fn read_acis_entity_impl(
 
         // Silhouettes belong to the wireframe body, but are independent of
         // the isoline-data gate above.
-        let num_silhouettes = safe_count(reader.read_bit_long());
+        let num_silhouettes = safe_count(reader.read_bit_long(), reader);
         for _ in 0..num_silhouettes {
             let viewport_id = reader.read_bit_long_long();
             let target = reader.read_3bit_double();
@@ -5406,7 +5426,7 @@ fn read_acis_entity_impl(
             let mut sil_wires = Vec::new();
             let has_sil_wires = reader.read_bit();
             if has_sil_wires {
-                let num_sw = safe_count(reader.read_bit_long());
+                let num_sw = safe_count(reader.read_bit_long(), reader);
                 sil_wires.reserve(num_sw as usize);
                 for _ in 0..num_sw {
                     sil_wires.push(read_wire(reader, version));
@@ -5438,7 +5458,7 @@ fn read_acis_entity_impl(
     let mut materials = Vec::new();
     if version.r2007_plus() {
         if acis_version > 1 && !has_ds_data {
-            let count = safe_count(reader.read_bit_long());
+            let count = safe_count(reader.read_bit_long(), reader);
             materials.reserve(count as usize);
             for _ in 0..count {
                 let array_index = reader.read_bit_long();
@@ -5471,7 +5491,7 @@ fn read_acis_entity_impl(
         let minor2 = reader.read_bit_short();
         let raw = reader.read_bytes(8);
         let mut bytes = [0u8; 8];
-        bytes.copy_from_slice(&raw[..8.min(raw.len())]);
+        bytes[..raw.len()].copy_from_slice(&raw);
         let end_marker = reader.read_bit_long() as u32;
         AcisRevision {
             has_guid,
@@ -5574,7 +5594,7 @@ fn read_surface_embedded_entity(
             acis_data,
         });
     }
-    let bit_length = safe_count(reader.read_bit_long()) as usize;
+    let bit_length = safe_count(reader.read_bit_long(), reader) as usize;
     crate::io::dwg::embedded_entity::read_embedded_entity_bits(
         reader,
         type_code,
@@ -5635,8 +5655,8 @@ pub fn read_surface(
                 ruled_surface,
                 virtual_guide,
             ) = {
-                let cross_count = safe_count(reader.read_bit_short() as i32);
-                let guide_count = safe_count(reader.read_bit_short() as i32);
+                let cross_count = safe_count(reader.read_bit_short() as i32, reader);
+                let guide_count = safe_count(reader.read_bit_short() as i32, reader);
                 let has_path = reader.read_bit();
                 let values = (
                     reader.read_bit_double(),
@@ -5797,7 +5817,7 @@ fn read_wire(reader: &mut DwgMergedReader, version: DwgVersion) -> Wire {
         reader.read_bit_short() as i32
     };
     let acis_index = reader.read_bit_long();
-    let num_pts = safe_count(reader.read_bit_long());
+    let num_pts = safe_count(reader.read_bit_long(), reader);
     let mut pts = Vec::with_capacity(num_pts as usize);
     for _ in 0..num_pts {
         pts.push(reader.read_3bit_double());

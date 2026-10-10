@@ -3,15 +3,15 @@ use crate::io::dwg::dwg_version::DwgVersion;
 use crate::objects::{Field, FieldChildValue, FieldList};
 use crate::types::Handle;
 
-fn safe_count(value: i32) -> usize {
-    value.clamp(0, 20_000) as usize
+fn safe_count(value: i32, reader: &DwgMergedReader) -> usize {
+    reader.checked_count(i64::from(value)) as usize
 }
 
 pub fn read_field_object(reader: &mut DwgMergedReader, version: DwgVersion) -> Field {
     let evaluator_id = reader.read_variable_text();
     let code = reader.read_variable_text();
-    let child_count = safe_count(reader.read_bit_long());
-    let object_count = safe_count(reader.read_bit_long());
+    let child_count = safe_count(reader.read_bit_long(), reader);
+    let object_count = safe_count(reader.read_bit_long(), reader);
     let format = if version.r2007_pre() {
         reader.read_variable_text()
     } else {
@@ -26,7 +26,7 @@ pub fn read_field_object(reader: &mut DwgMergedReader, version: DwgVersion) -> F
     let value = super::entities::read_cad_value(reader, version);
     let value_string = reader.read_variable_text();
     let value_string_length = reader.read_bit_long();
-    let child_value_count = safe_count(reader.read_bit_long());
+    let child_value_count = safe_count(reader.read_bit_long(), reader);
     let mut child_values = Vec::with_capacity(child_value_count);
     for _ in 0..child_value_count {
         child_values.push(FieldChildValue {
@@ -63,7 +63,7 @@ pub fn read_field_object(reader: &mut DwgMergedReader, version: DwgVersion) -> F
 }
 
 pub fn read_field_list(reader: &mut DwgMergedReader) -> FieldList {
-    let count = safe_count(reader.read_bit_long());
+    let count = safe_count(reader.read_bit_long(), reader);
     let unknown = reader.read_bit();
     let mut fields = Vec::with_capacity(count);
     for _ in 0..count {

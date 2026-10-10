@@ -100,13 +100,13 @@ fn read_hatch_scale_context_data(
     version: crate::io::dwg::DwgVersion,
 ) -> crate::objects::HatchScaleContext {
     let mut pattern_lines = Vec::new();
-    for _ in 0..reader.read_bit_short().max(0).min(10_000) {
+    for _ in 0..reader.read_short_count() {
         let angle = reader.read_bit_double();
         let base_point =
             crate::types::Vector2::new(reader.read_bit_double(), reader.read_bit_double());
         let offset = crate::types::Vector2::new(reader.read_bit_double(), reader.read_bit_double());
         let mut dash_lengths = Vec::new();
-        for _ in 0..reader.read_bit_short().max(0).min(10_000) {
+        for _ in 0..reader.read_short_count() {
             dash_lengths.push(reader.read_bit_double());
         }
         pattern_lines.push(crate::entities::HatchPatternLine {
@@ -123,7 +123,7 @@ fn read_hatch_scale_context_data(
         reader.read_bit_double(),
     );
     let mut loops = Vec::new();
-    for _ in 0..reader.read_bit_long().max(0).min(100_000) {
+    for _ in 0..reader.read_count() {
         let loop_type = reader.read_bit_long();
         let supports_context = reader.read_bit();
         let boundary = (!supports_context).then(|| {
@@ -225,6 +225,23 @@ impl Pass2Output {
         let handle = entity.common().handle;
         self.entities.push(std::sync::Arc::new(entity));
         Ok(handle)
+    }
+
+    fn discard_record(&mut self, handle: Handle) {
+        self.entity_next_handles.remove(&handle);
+        self.objects.remove(&handle);
+        self.eed_by_handle.remove(&handle);
+        self.xdic_by_handle.remove(&handle);
+        self.reactors_by_handle.remove(&handle);
+        self.dwg_data_store_handles.remove(&handle);
+        self.context_scales.remove(&handle);
+        self.block_visibility_params.remove(&handle);
+        self.block_representations.remove(&handle);
+        self.fields.remove(&handle);
+        self.dgn_ls_definitions.remove(&handle);
+        self.dgn_ls_components.remove(&handle);
+        self.view_rep_refs.remove(&handle);
+        self.section_view_reps.retain(|h| *h != handle);
     }
 }
 
@@ -772,17 +789,18 @@ impl DwgDocumentBuilder {
                 }));
                 let (obj_handle, type_code, eed_raw_pass1, xdic_pass1, reactors_pass1) =
                     match result {
-                        Ok(v) => v,
-                        Err(_) => {
+                        Ok(v) if reader.check_error().is_ok() => v,
+                        _ => {
                             skipped_pass1 += 1;
                             let message = format!(
-                                "Skipped corrupt table record at handle {:#X} (panic in common data)",
-                                handle
+                                "Invalid table common data at handle {handle:#X}: {}",
+                                reader.check_error().err().map(|e| e.to_string())
+                                    .unwrap_or_else(|| "record decoder panicked".to_string())
                             );
                             self.notifications
                                 .notify(NotificationType::Error, message.clone());
                             let mut diagnostic = ReadDiagnostic::new(
-                                "record-decode-panicked",
+                                "record-decode-failed",
                                 ReadStage::RecordStream,
                                 message,
                             );
@@ -947,7 +965,7 @@ impl DwgDocumentBuilder {
                     }
                 }));
                 match table_result {
-                    Ok(Some(entry)) => {
+                    Ok(Some(entry)) if reader.check_error().is_ok() => {
                         // Populate handle→name maps (needed by Pass 2)
                         match &entry {
                             ParsedEntry::Layer(h, data) => {
@@ -1007,8 +1025,8 @@ impl DwgDocumentBuilder {
                             parsed_entries.push(entry);
                         }
                     }
-                    Ok(None) => {}
-                    Err(_) => {
+                    Ok(None) if reader.check_error().is_ok() => {}
+                    _ => {
                         skipped_pass1 += 1;
                         let message = format!(
                             "Skipped corrupt table record at handle {:#X}, type_code={}",
@@ -1753,7 +1771,7 @@ impl DwgDocumentBuilder {
                     records.len(),
                 );
                 for &(handle, offset, raw_type_code, type_code) in records {
-                    let (_, reader) = match self.obj_reader.read_record_at(offset) {
+                    let (_, mut reader) = match self.obj_reader.read_record_at(offset) {
                         Ok(record) => record,
                         Err(error) => {
                             chunk.failures.push(RecordFailure {
@@ -1780,12 +1798,15 @@ impl DwgDocumentBuilder {
                             reader.get_handle_bits(),
                         ));
                     }
+                    let entity_start = chunk.output.entities.len();
+                    let section_style = chunk.output.section_view_style.clone();
+                    let section_reps = chunk.output.section_view_reps.len();
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         self.process_pass2_record(
                             handle,
                             raw_type_code,
                             type_code,
-                            reader,
+                            &mut reader,
                             &mut chunk.output,
                             &maps,
                             &mut chunk.pending,
@@ -1795,16 +1816,34 @@ impl DwgDocumentBuilder {
                             photometric_lighting,
                         );
                     }));
-                    if result.is_err() {
-                        chunk.failures.push(RecordFailure {
-                                code: "record-decode-panicked",
-                                handle,
-                                offset,
-                                type_code,
-                                message: format!(
-                                    "Skipped corrupt record at handle {handle:#X}, type_code={type_code} (panic recovered)"
-                                ),
+                    if let Some(message) = reader.check_error().err().map(|e| e.to_string())
+                        .or_else(|| result.err().map(|_| "Record decoder panicked".to_string()))
+                    {
+                        // Never commit fabricated entities or expose them to visitors.
+                        chunk.output.entities.truncate(entity_start);
+                        chunk.output.section_view_style = section_style;
+                        chunk.output.section_view_reps.truncate(section_reps);
+                        chunk.output.discard_record(Handle::from(handle));
+                        chunk.pending.polylines.retain(|(h, _)| *h != handle);
+                        for vertices in chunk.pending.vertices.values_mut() {
+                            vertices.retain(|vertex| match vertex {
+                                PendingVertex::V2D(data) => data.handle.value() != handle,
+                                PendingVertex::V3D(data, _) => data.handle.value() != handle,
+                                PendingVertex::PfaceFace(data, _) => data.handle.value() != handle,
                             });
+                        }
+                        chunk.pending.seqends.retain(|_, h| h.value() != handle);
+                        for attributes in chunk.pending_attributes.values_mut() {
+                            attributes.retain(|attribute| attribute.common.handle.value() != handle);
+                        }
+                        chunk.raw_records.retain(|(h, ..)| *h != handle);
+                        chunk.failures.push(RecordFailure {
+                            code: "record-decode-failed",
+                            handle,
+                            offset,
+                            type_code,
+                            message: format!("Invalid record at handle {handle:#X}, type_code={type_code}: {message}"),
+                        });
                     }
                 }
                 chunk
@@ -3373,7 +3412,7 @@ impl DwgDocumentBuilder {
         handle: u64,
         raw_type_code: i16,
         type_code: i16,
-        mut reader: crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader,
+        mut reader: &mut crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader,
         document: &mut Pass2Output,
         maps: &HandleMaps,
         pending: &mut PendingPolylines,
@@ -3394,6 +3433,12 @@ impl DwgDocumentBuilder {
             let entity_data = self
                 .obj_reader
                 .read_common_entity_data(&mut reader, type_code);
+            if entity_data.common.handle != handle {
+                reader.invalidate("DWG entity handle disagrees with handle map");
+            }
+            if reader.check_error().is_err() {
+                return;
+            }
             if !self.obj_reader.version().r2004_plus() {
                 let next = entity_data
                     .next_entity_handle
@@ -5165,6 +5210,12 @@ impl DwgDocumentBuilder {
                 .obj_reader
                 .read_common_non_entity_data(&mut reader, type_code);
             let owner_handle = Handle::from(non_entity_data.owner_handle);
+            if non_entity_data.common.handle != handle {
+                reader.invalidate("DWG object handle disagrees with handle map");
+            }
+            if reader.check_error().is_err() {
+                return;
+            }
             if non_entity_data.has_ds_data {
                 document
                     .dwg_data_store_handles
@@ -6749,7 +6800,7 @@ impl DwgDocumentBuilder {
                                     // EED preface, but retains the non-entity common
                                     // tail before AcDbObjectContextData.
                                     let embedded_reactor_count =
-                                        reader.read_bit_long().max(0).min(100_000)
+                                        reader.read_count()
                                             as usize;
                                     let embedded_no_xdic = reader.read_bit();
                                     let embedded_has_binary_data = if self
@@ -6895,7 +6946,7 @@ impl DwgDocumentBuilder {
                                 let class_version = reader.read_bit_short();
                                 let is_default = reader.read_bit();
                                 let mut points = Vec::new();
-                                for _ in 0..reader.read_bit_long().max(0).min(100_000) {
+                                for _ in 0..reader.read_count() {
                                     points.push(reader.read_3bit_double());
                                 }
                                 let x_direction = reader.read_3bit_double();
