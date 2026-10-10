@@ -10902,6 +10902,7 @@ impl<'a> SectionReader<'a> {
         let mut insertion = PointReader::new();
         let mut normal = PointReader::new();
         let mut x_direction = PointReader::new();
+        let mut rotation_from_code50 = None;
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 || pair.code >= 1000 {
                 self.reader.push_back(pair);
@@ -10930,7 +10931,7 @@ impl<'a> SectionReader<'a> {
                 46 => {
                     mtext.rectangle_height = pair.as_double().filter(|h| *h != 0.0);
                 }
-                50 => mtext.rotation = pair.as_double().unwrap_or(0.0).to_radians(),
+                50 => rotation_from_code50 = pair.as_double().map(f64::to_radians),
                 71 => {
                     mtext.attachment_point = match pair.as_i16().unwrap_or(1) {
                         2 => AttachmentPoint::TopCenter,
@@ -10971,6 +10972,11 @@ impl<'a> SectionReader<'a> {
                 mtext.rotation = xd.y.atan2(xd.x);
                 mtext.dwg_x_direction = Some(xd);
             }
+        } else if let Some(rotation) = rotation_from_code50 {
+            let direction = crate::types::Matrix3::arbitrary_axis(mtext.normal)
+                * Vector3::new(rotation.cos(), rotation.sin(), 0.0);
+            mtext.rotation = direction.y.atan2(direction.x);
+            mtext.dwg_x_direction = Some(direction);
         }
         Ok(mtext)
     }
@@ -12990,7 +12996,13 @@ impl<'a> SectionReader<'a> {
         if let Some(xd) = x_direction.get_point() {
             if xd.x != 0.0 || xd.y != 0.0 {
                 mtext.rotation = xd.y.atan2(xd.x);
+                mtext.dwg_x_direction = Some(xd);
             }
+        } else if let Some(rotation) = rotation_from_code50 {
+            let direction = crate::types::Matrix3::arbitrary_axis(mtext.normal)
+                * Vector3::new(rotation.cos(), rotation.sin(), 0.0);
+            mtext.rotation = direction.y.atan2(direction.x);
+            mtext.dwg_x_direction = Some(direction);
         }
 
         Ok(Some(mtext))
@@ -15033,6 +15045,9 @@ impl<'a> SectionReader<'a> {
             }
             dc.text_rotation = text_rotation;
             dc.horizontal_direction = horizontal_direction;
+            if let Some(point) = insertion_point.get_point() {
+                dc.insertion_point = point;
+            }
             dc.text_user_positioned = text_user_positioned;
             dc.attachment_point = attachment_point;
             dc.line_spacing_style = line_spacing_style;

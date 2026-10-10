@@ -3790,6 +3790,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         if polyline.end_width != 0.0 {
             self.writer.write_double(41, polyline.end_width)?;
         }
+        self.write_normal(polyline.normal)?;
 
         // XDATA precedes the child VERTEX/SEQEND records.
         self.write_xdata(&polyline.common.extended_data)?;
@@ -3985,9 +3986,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_mtext_value(&mtext.value)?;
 
         self.writer.write_string(7, &mtext.style)?;
-        if mtext.rotation != 0.0 {
-            self.writer.write_double(50, mtext.rotation.to_degrees())?;
-        }
+        let x_direction = mtext
+            .dwg_x_direction
+            .unwrap_or_else(|| Vector3::new(mtext.rotation.cos(), mtext.rotation.sin(), 0.0));
+        self.writer.write_point3d(11, x_direction)?;
         // Laid-out text extents (output-only). Skipped when never computed so
         // files authored without layout info round-trip unchanged.
         if mtext.extents_width > 0.0 {
@@ -4228,63 +4230,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         type_flags: i16,
         owner: Handle,
     ) -> Result<()> {
-        self.writer.write_handle(5, base.common.handle)?;
-        self.writer.write_handle(330, owner)?;
-
-        // Write xdictionary group
-        if let Some(xdict) = base.common.xdictionary_handle {
-            if xdict != Handle::NULL
-                && (self.valid_handles.is_empty() || self.valid_handles.contains(&xdict))
-            {
-                self.writer.write_string(102, "{ACAD_XDICTIONARY")?;
-                self.writer.write_handle(360, xdict)?;
-                self.writer.write_string(102, "}")?;
-            }
-        }
-
-        // Write reactor group (filter out reactors pointing to non-existent objects)
-        if !base.common.reactors.is_empty() {
-            let valid_reactors: Vec<Handle> = if self.valid_handles.is_empty() {
-                base.common.reactors.clone()
-            } else {
-                base.common
-                    .reactors
-                    .iter()
-                    .copied()
-                    .filter(|r| self.valid_handles.contains(r))
-                    .collect()
-            };
-            if !valid_reactors.is_empty() {
-                self.writer.write_string(102, "{ACAD_REACTORS")?;
-                for reactor in &valid_reactors {
-                    self.writer.write_handle(330, *reactor)?;
-                }
-                self.writer.write_string(102, "}")?;
-            }
-        }
-
-        self.writer.write_subclass("AcDbEntity")?;
-        self.writer.write_string(8, &base.common.layer)?;
-
-        // Write color if not ByLayer
-        if base.common.color != Color::ByLayer {
-            self.writer.write_color(62, base.common.color)?;
-        }
-        // True color (code 420) — only for AC1018+
-        if self.dxf_version >= DxfVersion::AC1018 {
-            if let Some(tc) = base.common.color.to_true_color_value() {
-                self.writer.write_i32(420, tc)?;
-            }
-            if let Some(name) = &base.common.color_name {
-                self.writer.write_string(430, name)?;
-            }
-        }
-        // Transparency (code 440) — only for AC1018+ and non-opaque
-        if self.dxf_version >= DxfVersion::AC1018 && !base.common.transparency.is_by_layer() {
-            self.writer
-                .write_i32(440, base.common.transparency.to_dxf_value())?;
-        }
-
+        self.write_common_entity_data(&base.common, owner)?;
         self.writer.write_subclass("AcDbDimension")?;
         // Omit an absent geometry cache so the CAD host can regenerate it.
         // An explicit empty group 2 is an invalid block-table reference.
@@ -4293,6 +4239,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
         self.writer.write_point3d(10, definition_point)?;
         self.writer.write_point3d(11, base.text_middle_point)?;
+        if base.insertion_point != Vector3::ZERO {
+            self.writer.write_point3d(12, base.insertion_point)?;
+        }
         // Bit 0x80 marks text positioned at a user-defined location.
         let type_flags = if base.text_user_positioned {
             type_flags | 0x80
