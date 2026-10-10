@@ -12,7 +12,7 @@ fn read_single_viewport(bytes: Vec<u8>) -> Viewport {
     let viewport = document
         .entities()
         .find_map(|entity| match entity {
-            EntityType::Viewport(viewport) => Some(viewport.clone()),
+            EntityType::Viewport(viewport) => Some(viewport.as_ref().clone()),
             _ => None,
         })
         .expect("viewport missing");
@@ -26,7 +26,7 @@ fn dxf_status_is_preserved_independently_of_viewport_id() {
     viewport.id = 7;
     viewport.dxf_status = Some(3);
     let handle = document
-        .add_paper_space_entity(EntityType::Viewport(viewport))
+        .add_paper_space_entity(EntityType::Viewport(Box::new(viewport)))
         .unwrap();
 
     let bytes = DxfWriter::new(&document).write_to_vec().unwrap();
@@ -49,7 +49,7 @@ fn dxf_reader_preserves_group_68_when_it_precedes_or_follows_group_69() {
     viewport.id = 7;
     viewport.dxf_status = Some(3);
     document
-        .add_paper_space_entity(EntityType::Viewport(viewport))
+        .add_paper_space_entity(EntityType::Viewport(Box::new(viewport)))
         .unwrap();
 
     let bytes = DxfWriter::new(&document).write_to_vec().unwrap();

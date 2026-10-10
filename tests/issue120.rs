@@ -27,7 +27,7 @@ fn add_viewport(
     viewport.status.is_on = is_on;
     viewport.off_screen = off_screen;
     let handle = document
-        .add_entity_to_layout(EntityType::Viewport(viewport), layout)
+        .add_entity_to_layout(EntityType::Viewport(Box::new(viewport)), layout)
         .unwrap();
     ExpectedViewport {
         handle,

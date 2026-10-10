@@ -26,7 +26,7 @@ fn gradient_document() -> CadDocument {
         ],
         ..Default::default()
     };
-    document.add_entity(EntityType::Hatch(hatch)).unwrap();
+    document.add_entity(EntityType::Hatch(Box::new(hatch))).unwrap();
     document
 }
 
