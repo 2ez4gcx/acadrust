@@ -270,6 +270,10 @@ pub fn read_header_with_encoding(
     let mut h = HeaderVariables::default();
 
     read_header_fields(&mut r, version, &mut h);
+    match &r.inner {
+        SectionReaderInner::BitReader(reader) => reader.check_error()?,
+        SectionReaderInner::MergedReader(reader) => reader.check_error()?,
+    }
 
     Ok(h)
 }

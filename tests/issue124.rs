@@ -21,7 +21,7 @@ fn invalid_header_lengths_return_errors_for_all_section_layouts() {
         let document = CadDocument::with_version(version);
         let bytes = write_header(version, &document.header, maintenance);
         assert!(read_header(&bytes, version, maintenance).is_ok());
-        for size in [-1, i32::MIN, i32::MAX, bytes.len() as i32] {
+        for size in [0, 1, -1, i32::MIN, i32::MAX, bytes.len() as i32] {
             let mut corrupt = bytes.clone();
             corrupt[16..20].copy_from_slice(&size.to_le_bytes());
             assert!(
