@@ -24,7 +24,10 @@ fn invalid_header_lengths_return_errors_for_all_section_layouts() {
         for size in [-1, i32::MIN, i32::MAX, bytes.len() as i32] {
             let mut corrupt = bytes.clone();
             corrupt[16..20].copy_from_slice(&size.to_le_bytes());
-            assert!(read_header(&corrupt, version, maintenance).is_err(), "{version:?} size {size}");
+            assert!(
+                read_header(&corrupt, version, maintenance).is_err(),
+                "{version:?} size {size}"
+            );
         }
     }
 }
@@ -33,10 +36,20 @@ fn invalid_header_lengths_return_errors_for_all_section_layouts() {
 fn public_reader_propagates_header_errors_and_failsafe_reports_them() {
     let document = CadDocument::with_version(DxfVersion::AC1015);
     let mut bytes = DwgWriter::write_to_vec(&document).unwrap();
-    let header = bytes.windows(16).position(|b| b == start_sentinels::HEADER).unwrap();
+    let header = bytes
+        .windows(16)
+        .position(|b| b == start_sentinels::HEADER)
+        .unwrap();
     bytes[header + 16..header + 20].copy_from_slice(&i32::MAX.to_le_bytes());
-    assert!(DwgReader::from_stream(Cursor::new(bytes.clone())).read().is_err());
-    let mut reader = DwgReader::from_stream_with_options(Cursor::new(bytes), DwgReadOptions::failsafe());
+    assert!(DwgReader::from_stream(Cursor::new(bytes.clone()))
+        .read()
+        .is_err());
+    let mut reader =
+        DwgReader::from_stream_with_options(Cursor::new(bytes), DwgReadOptions::failsafe());
     let outcome = reader.read_with_stats().unwrap();
-    assert!(outcome.stats.diagnostics.iter().any(|d| d.code == "header-decode-failed"));
+    assert!(outcome
+        .stats
+        .diagnostics
+        .iter()
+        .any(|d| d.code == "header-decode-failed"));
 }
