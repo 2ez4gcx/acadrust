@@ -9828,7 +9828,7 @@ impl<'a> SectionReader<'a> {
                 }
                 50 => {
                     if let Some(v) = pair.as_double() {
-                        ds.dimjogang = v;
+                        ds.dimjogang = v.to_radians();
                     }
                 }
                 140 => {
