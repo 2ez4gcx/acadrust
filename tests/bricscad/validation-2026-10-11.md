@@ -22,7 +22,7 @@ all nine symbol tables.
 
 ## BricsCAD
 
-The final native run passed 12 of 20 input files. Its reports and AUDIT output
+The final native run passed 18 of 20 input files. Its reports and AUDIT output
 are retained in `target/bricscad-final/`, including `native-results.json`.
 
 | Input Family | Passed | Failed | Result |
@@ -31,15 +31,17 @@ are retained in `target/bricscad-final/`, including `native-results.json`.
 | Modern DWG | 0 | 2 | All checked fields except title suppression pass; zero audit errors. |
 | CP437, Mac Roman and Johab DWG | 3 | 0 | Text and code-page checks pass; zero audit errors. |
 | Legacy ASCII DXF | 3 | 0 | Text and code-page checks pass; zero audit errors. |
-| Legacy binary DXF | 0 | 3 | BricsCAD rejects the files with `Invalid ResBuf`. |
-| Legacy DWG-to-DXF | 0 | 3 | Text checks pass; AUDIT flags the existing R2000 DIMSTYLE `Dimjogang` default. |
+| Legacy binary DXF | 3 | 0 | Binary output is promoted to AC1024/UTF-8 for BricsCAD compatibility; zero audit errors. |
+| Legacy DWG-to-DXF | 3 | 0 | DIMJOGANG is written in DXF degrees and passes AUDIT. |
 
 The modern DWG suppression failure also occurs when BricsCAD saves and reopens
 its own suppression-enabled TABLESTYLE. `create_style_fixture.lsp` reproduces
 that behavior. The runner keeps the suppression checks strict.
 
-The legacy binary load and DIMSTYLE audit failures remain unresolved native
-interoperability limitations. They are not counted as successful tests.
+Modern DWG TABLESTYLE suppression remains the only native failure. BricsCAD V20
+also drops suppression when it saves and reopens its own suppression-enabled
+TABLESTYLE, so this is an external BricsCAD limitation rather than an
+acadrust-only round-trip failure.
 
 The supplied issuesamples/*.dwg corpus is now covered by
 tests/issue129.rs: all five AC1018 drawings strict-read with the exact
