@@ -36,7 +36,7 @@ pub struct DwgBitReader {
     /// Exact DXF version (for R2013+/R2018+ sub-version checks).
     dxf_version: DxfVersion,
     /// Text encoding for non-Unicode strings.
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
     /// Whether the text stream is empty (R2007+ flag).
     pub is_empty: bool,
     /// Text stream bit position for R2007+ three-stream merge.
@@ -69,7 +69,7 @@ impl DwgBitReader {
             last_byte: 0,
             version,
             dxf_version,
-            encoding: encoding_rs::WINDOWS_1252,
+            encoding: encoding_rs::WINDOWS_1252.into(),
             is_empty: false,
             text_stream_pos: -1,
             text_stream_end_pos: -1,
@@ -80,10 +80,10 @@ impl DwgBitReader {
         data: Arc<[u8]>,
         version: DwgVersion,
         dxf_version: DxfVersion,
-        encoding: &'static encoding_rs::Encoding,
+        encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
     ) -> Self {
         let mut reader = Self::from_shared(data, version, dxf_version);
-        reader.encoding = encoding;
+        reader.encoding = encoding.into();
         reader
     }
 
@@ -92,10 +92,10 @@ impl DwgBitReader {
         data: Vec<u8>,
         version: DwgVersion,
         dxf_version: DxfVersion,
-        encoding: &'static encoding_rs::Encoding,
+        encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
     ) -> Self {
         let mut r = Self::new(data, version, dxf_version);
-        r.encoding = encoding;
+        r.encoding = encoding.into();
         r
     }
 

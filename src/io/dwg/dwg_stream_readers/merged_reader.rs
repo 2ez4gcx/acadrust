@@ -47,7 +47,7 @@ pub struct DwgMergedReader {
     /// Raw data (kept for lazy text/handle setup in ThreeStream mode)
     raw_data: Option<Vec<u8>>,
     /// Document code page used by lazily-created stream readers.
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
     /// Handle-stream bit count from the R2010+ MC framing field.
     /// Stored so unknown entities can reproduce the correct framing on write.
     handle_bits: i64,
@@ -94,8 +94,9 @@ impl DwgMergedReader {
         data: Vec<u8>,
         dxf_version: DxfVersion,
         handle_start_bits: i64,
-        encoding: &'static encoding_rs::Encoding,
+        encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
     ) -> Self {
+        let encoding = encoding.into();
         let dwg = DwgVersion::from_dxf_version(dxf_version).unwrap_or(DwgVersion::AC15);
 
         let mode = if dxf_version >= DxfVersion::AC1021 {
@@ -180,7 +181,7 @@ impl DwgMergedReader {
             _mode: mode,
             dxf_version,
             raw_data: None,
-            encoding: encoding_rs::WINDOWS_1252,
+            encoding: encoding_rs::WINDOWS_1252.into(),
             handle_bits: 0,
             ref_handle: 0,
             handle_start_bit: 0,

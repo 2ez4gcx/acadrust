@@ -143,7 +143,7 @@ pub struct DwgObjectReader {
     /// Handle → byte-offset map (from handle section)
     handle_map: HashMap<u64, i64>,
     /// Document code page used by pre-R2007 object strings.
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
 }
 
 impl DwgObjectReader {
@@ -165,7 +165,7 @@ impl DwgObjectReader {
         data: Vec<u8>,
         dxf_version: DxfVersion,
         handle_map: HashMap<u64, i64>,
-        encoding: &'static encoding_rs::Encoding,
+        encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
     ) -> Result<Self> {
         let version = DwgVersion::from_dxf_version(dxf_version)?;
         Ok(DwgObjectReader {
@@ -173,7 +173,7 @@ impl DwgObjectReader {
             version,
             dxf_version,
             handle_map,
-            encoding,
+            encoding: encoding.into(),
         })
     }
 

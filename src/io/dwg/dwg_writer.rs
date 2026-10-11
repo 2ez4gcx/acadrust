@@ -1619,7 +1619,7 @@ fn build_template(description: &[u8], measurement: i16) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-fn summary_encoding(document: &CadDocument) -> &'static encoding_rs::Encoding {
+fn summary_encoding(document: &CadDocument) -> crate::io::dxf::code_page::LegacyEncoding {
     crate::io::dxf::code_page::encoding_from_dwg_code_page(
         crate::io::dxf::code_page::dwg_code_page_index(&document.header.code_page),
     )
@@ -1638,7 +1638,7 @@ fn summary_encoding(document: &CadDocument) -> &'static encoding_rs::Encoding {
 fn build_summary_info(
     version: DxfVersion,
     info: &SummaryInfo,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
 ) -> Vec<u8> {
     let mut data = Vec::with_capacity(128);
     let is_utf16 = version >= DxfVersion::AC1021;
@@ -2610,7 +2610,7 @@ mod tests {
         let d = build_summary_info(
             DxfVersion::AC1018,
             &SummaryInfo::default(),
-            encoding_rs::WINDOWS_1252,
+            encoding_rs::WINDOWS_1252.into(),
         );
         // 8 × 3 bytes (u16(1) + ANSI null) + 8 + 16 + 2 + 8 = 58
         assert_eq!(d.len(), 58);
@@ -2625,7 +2625,7 @@ mod tests {
         let d = build_summary_info(
             DxfVersion::AC1021,
             &SummaryInfo::default(),
-            encoding_rs::WINDOWS_1252,
+            encoding_rs::WINDOWS_1252.into(),
         );
         // 8 × 4 bytes (u16(1) + UTF-16LE null) + 8 + 16 + 2 + 8 = 66
         assert_eq!(d.len(), 66);
@@ -2648,7 +2648,7 @@ mod tests {
             ..SummaryInfo::default()
         };
         // R2004: drawing code page, one byte per character
-        let d = build_summary_info(DxfVersion::AC1018, &info, encoding_rs::WINDOWS_1252);
+        let d = build_summary_info(DxfVersion::AC1018, &info, encoding_rs::WINDOWS_1252.into());
         assert_eq!(u16::from_le_bytes([d[0], d[1]]), 10);
         assert_eq!(&d[2..12], b"Kanal S\xfcd\0");
         // Seven empty strings, 24 bytes of timers, then one property (the empty pair is skipped)
@@ -2657,7 +2657,7 @@ mod tests {
         assert_eq!(&d[count_at + 2..count_at + 9], b"\x05\0Plan\0");
         assert_eq!(d.len(), count_at + 2 + 7 + 6 + 8);
         // R2007+: UTF-16LE, count in code units
-        let d = build_summary_info(DxfVersion::AC1021, &info, encoding_rs::WINDOWS_1252);
+        let d = build_summary_info(DxfVersion::AC1021, &info, encoding_rs::WINDOWS_1252.into());
         assert_eq!(u16::from_le_bytes([d[0], d[1]]), 10);
         assert_eq!(u16::from_le_bytes([d[16], d[17]]), 0xfc);
     }

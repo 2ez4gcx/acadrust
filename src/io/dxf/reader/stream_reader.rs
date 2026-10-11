@@ -196,7 +196,7 @@ pub trait DxfStreamReader {
     ///
     /// Called after reading $DWGCODEPAGE from the header.
     /// Implementations that don't support encoding changes can ignore this.
-    fn set_encoding(&mut self, _encoding: &'static encoding_rs::Encoding) {
+    fn set_encoding(&mut self, _encoding: crate::io::dxf::code_page::LegacyEncoding) {
         // Default: no-op
     }
 
@@ -272,7 +272,7 @@ impl DxfStreamReader for XDataRecorder {
         self.inner.reset()
     }
 
-    fn set_encoding(&mut self, encoding: &'static encoding_rs::Encoding) {
+    fn set_encoding(&mut self, encoding: crate::io::dxf::code_page::LegacyEncoding) {
         self.inner.set_encoding(encoding);
     }
 

@@ -169,6 +169,8 @@ pub fn read_header(data: &[u8]) -> Result<R12Header> {
         raw: data[..variables_end].to_vec(),
     };
     let mut c = Codec::reading(data[..variables_end].to_vec());
+    let page = u16::from_le_bytes(data[0x3F9..0x3FB].try_into().unwrap());
+    c.encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(page);
     c.pos = 0x14;
     c.long(&mut header.layout.entities_start);
     c.long(&mut header.layout.entities_end);
@@ -215,6 +217,9 @@ pub fn write_header(
     source_raw: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     let mut c = Codec::writing(source_raw);
+    c.encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(
+        crate::io::dxf::code_page::dwg_code_page_index(&header.code_page),
+    );
     c.data[..6].copy_from_slice(b"AC1009");
     c.data[6..11].fill(0);
     c.data[0x0b] = maintenance_version;
@@ -281,7 +286,7 @@ struct Codec {
     data: Vec<u8>,
     pos: usize,
     read: bool,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
 }
 
 impl Codec {
@@ -290,7 +295,7 @@ impl Codec {
             data,
             pos: 0,
             read: true,
-            encoding: encoding_rs::WINDOWS_1252,
+            encoding: encoding_rs::WINDOWS_1252.into(),
         }
     }
 
@@ -304,7 +309,7 @@ impl Codec {
             data,
             pos: 0,
             read: false,
-            encoding: encoding_rs::WINDOWS_1252,
+            encoding: encoding_rs::WINDOWS_1252.into(),
         }
     }
 
@@ -380,9 +385,11 @@ impl Codec {
         if self.read {
             let bytes = &self.data[self.pos..self.pos + length];
             let end = bytes.iter().position(|byte| *byte == 0).unwrap_or(length);
-            *value = self.encoding.decode(&bytes[..end]).0.into_owned();
+            *value = crate::io::dxf::code_page::decode_legacy_escapes(
+                &self.encoding.decode(&bytes[..end]).0,
+            );
         } else {
-            let bytes = self.encoding.encode(value).0;
+            let bytes = crate::io::dxf::code_page::encode_legacy_string(value, self.encoding);
             let count = bytes.len().min(length.saturating_sub(1));
             self.data[self.pos..self.pos + length].fill(0);
             self.data[self.pos..self.pos + count].copy_from_slice(&bytes[..count]);

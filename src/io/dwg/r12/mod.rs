@@ -207,8 +207,10 @@ pub(crate) fn read_document(data: &[u8]) -> Result<CadDocument> {
     Ok(document)
 }
 
-fn parse_dxf_records(data: &[u8]) -> (Vec<EntityRecord>, Vec<EntityRecord>) {
-    let text = String::from_utf8_lossy(data);
+fn parse_dxf_records(data: &[u8], code_page: &str) -> (Vec<EntityRecord>, Vec<EntityRecord>) {
+    let encoding = crate::io::dxf::code_page::encoding_from_code_page(code_page)
+        .unwrap_or(encoding_rs::UTF_8.into());
+    let text = encoding.decode(data).0;
     let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
     let mut entities = Vec::new();
     let mut blocks = Vec::new();
@@ -334,7 +336,7 @@ fn document_table_records(document: &CadDocument) -> [Vec<EntityRecord>; 10] {
 
 pub(crate) fn write_document(document: &CadDocument) -> Result<Vec<u8>> {
     let dxf = DxfWriter::new(document).write_to_vec()?;
-    let (entity_records, block_records) = parse_dxf_records(&dxf);
+    let (entity_records, block_records) = parse_dxf_records(&dxf, &document.header.code_page);
     let tables = document_tables(document);
     let encoded_entities = encode_entities(
         &entity_records,

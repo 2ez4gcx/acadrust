@@ -1490,7 +1490,7 @@ fn decode_xrecord_entries(raw: &[u8], unicode: bool) -> (Vec<XRecordEntry>, bool
                         .0
                         .into_owned();
                     position += length;
-                    value
+                    crate::io::dxf::code_page::decode_legacy_escapes(&value)
                 };
                 XRecordValue::String(text)
             }

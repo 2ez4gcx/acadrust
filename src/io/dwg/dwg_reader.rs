@@ -687,7 +687,7 @@ fn section_name_from_field(name_buf: &[u8; 64]) -> String {
 /// integrity checksums including the AC1021 Header CRC-64.
 /// Read one `T16` string (2-byte character-count prefix). R2007+ stores the
 /// characters as UTF-16LE; earlier versions as one byte per character.
-fn read_t16(cur: &mut &[u8], utf16: bool, encoding: &'static encoding_rs::Encoding) -> String {
+fn read_t16(cur: &mut &[u8], utf16: bool, encoding: crate::io::dxf::code_page::LegacyEncoding) -> String {
     if cur.len() < 2 {
         *cur = &[];
         return String::new();
@@ -779,7 +779,7 @@ fn decode_block_units_xdata(document: &mut crate::document::CadDocument) {
 fn parse_summary_info(
     buf: &[u8],
     utf16: bool,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
 ) -> crate::document::SummaryInfo {
     let mut cur: &[u8] = buf;
     let mut si = crate::document::SummaryInfo {

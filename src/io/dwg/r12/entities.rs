@@ -75,14 +75,14 @@ fn table_name(table: &[String], index: i16) -> Result<&str> {
 struct Reader<'a> {
     bytes: &'a [u8],
     pos: usize,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
 }
 impl<'a> Reader<'a> {
     fn new(bytes: &'a [u8], code_page: &str) -> Self {
         Self {
             bytes,
             pos: 0,
-            encoding: encoding_from_code_page(code_page).unwrap_or(encoding_rs::WINDOWS_1252),
+            encoding: encoding_from_code_page(code_page).unwrap_or(encoding_rs::WINDOWS_1252.into()),
         }
     }
     fn take(&mut self, len: usize) -> Result<&'a [u8]> {
@@ -136,13 +136,13 @@ impl<'a> Reader<'a> {
 
 struct Writer {
     bytes: Vec<u8>,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
 }
 impl Writer {
     fn new(code_page: &str) -> Self {
         Self {
             bytes: Vec::new(),
-            encoding: encoding_from_code_page(code_page).unwrap_or(encoding_rs::WINDOWS_1252),
+            encoding: encoding_from_code_page(code_page).unwrap_or(encoding_rs::WINDOWS_1252.into()),
         }
     }
     fn byte(&mut self, v: u8) {

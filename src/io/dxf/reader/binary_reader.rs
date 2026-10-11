@@ -16,6 +16,7 @@ pub struct DxfBinaryReader<R: Read + Seek> {
     use_single_byte_codes: bool,
     /// Reusable buffer for reading null-terminated strings.
     str_buf: Vec<u8>,
+    encoding: Option<crate::io::dxf::code_page::LegacyEncoding>,
     context: DxfStreamContext,
 }
 
@@ -48,6 +49,7 @@ impl<R: Read + Seek> DxfBinaryReader<R> {
             peeked_pair: None,
             use_single_byte_codes,
             str_buf: Vec::with_capacity(256),
+            encoding: None,
             context: DxfStreamContext::default(),
         })
     }
@@ -114,12 +116,16 @@ impl<R: Read + Seek> DxfBinaryReader<R> {
             self.str_buf.pop();
         }
         // Try UTF-8 first (borrow check), then fall back to lossy conversion
-        let s = match std::str::from_utf8(&self.str_buf) {
-            Ok(s) => s.to_owned(),
-            Err(_) => String::from_utf8_lossy(&self.str_buf).into_owned(),
+        let s = if let Some(encoding) = self.encoding {
+            encoding.decode(&self.str_buf).0.into_owned()
+        } else {
+            match std::str::from_utf8(&self.str_buf) {
+                Ok(s) => s.to_owned(),
+                Err(_) => String::from_utf8_lossy(&self.str_buf).into_owned(),
+            }
         };
         self.str_buf.clear(); // keep the allocation for reuse
-        Ok(s)
+        Ok(crate::io::dxf::code_page::decode_legacy_escapes(&s))
     }
 
     /// Read a code/value pair from the binary stream for a given group code.
@@ -209,6 +215,10 @@ impl<R: Read + Seek> DxfBinaryReader<R> {
 }
 
 impl<R: Read + Seek> DxfStreamReader for DxfBinaryReader<R> {
+    fn set_encoding(&mut self, encoding: crate::io::dxf::code_page::LegacyEncoding) {
+        self.encoding = Some(encoding);
+    }
+
     fn read_pair(&mut self) -> Result<Option<DxfCodePair>> {
         // If we have a peeked pair, return it
         if let Some(pair) = self.peeked_pair.take() {

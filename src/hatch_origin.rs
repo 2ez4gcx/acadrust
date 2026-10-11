@@ -209,7 +209,7 @@ mod tests {
         let stale = crate::io::dwg::eed_codec::encode_values_with_encoding(
             true,
             &[XDataValue::Point3D(Vector3::new(1.0, 2.0, 0.0))],
-            encoding_rs::WINDOWS_1252,
+            encoding_rs::WINDOWS_1252.into(),
             30,
             |_| 0,
         );

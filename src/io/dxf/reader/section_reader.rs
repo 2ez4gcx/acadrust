@@ -1447,6 +1447,7 @@ impl<'a> SectionReader<'a> {
     /// Read the HEADER section
     pub fn read_header(&mut self, document: &mut CadDocument) -> Result<()> {
         let hdr = &mut document.header;
+        let mut code_page_seen = false;
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
@@ -1463,6 +1464,13 @@ impl<'a> SectionReader<'a> {
                 "$ACADVER" => {
                     if let Some(p) = self.reader.read_pair()? {
                         document.version = DxfVersion::from_version_string(&p.value_string);
+                        if document.version >= DxfVersion::AC1021 {
+                            self.reader.set_encoding(encoding_rs::UTF_8.into());
+                        } else if code_page_seen {
+                            if let Some(encoding) = crate::io::dxf::code_page::encoding_from_code_page(&hdr.code_page) {
+                                self.reader.set_encoding(encoding);
+                            }
+                        }
                     }
                 }
                 "$ACADMAINTVER" => {
@@ -1478,6 +1486,7 @@ impl<'a> SectionReader<'a> {
                 "$DWGCODEPAGE" => {
                     if let Some(p) = self.reader.read_pair()? {
                         hdr.code_page = p.value_string.clone();
+                        code_page_seen = true;
                         // Set encoding immediately for pre-2007 files
                         if document.version < DxfVersion::AC1021 {
                             if let Some(enc) =

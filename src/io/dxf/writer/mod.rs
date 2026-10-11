@@ -55,12 +55,23 @@ impl<'a> DxfWriter<'a> {
 
     /// Write to any writer
     pub fn write_to_writer<W: Write>(&self, writer: W) -> Result<()> {
+        let encoding = if self.document.version < crate::types::DxfVersion::AC1021 {
+            crate::io::dxf::code_page::encoding_from_code_page(&self.document.header.code_page)
+        } else {
+            None
+        };
         if self.binary {
             let mut stream_writer = DxfBinaryWriter::new(writer)?;
+            if let Some(encoding) = encoding {
+                stream_writer.set_encoding(encoding);
+            }
             self.write_dxf(&mut stream_writer)?;
             stream_writer.flush()?;
         } else {
             let mut stream_writer = DxfTextWriter::new(writer);
+            if let Some(encoding) = encoding {
+                stream_writer.set_encoding(encoding);
+            }
             self.write_dxf(&mut stream_writer)?;
             stream_writer.flush()?;
         }

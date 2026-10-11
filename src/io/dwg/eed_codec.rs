@@ -36,13 +36,13 @@ use crate::xdata::XDataValue;
 /// `0` when the layer is unknown).
 #[cfg(test)]
 fn encode_values(wide: bool, values: &[XDataValue], layer_handle: impl Fn(&str) -> u64) -> Vec<u8> {
-    encode_values_with_encoding(wide, values, encoding_rs::WINDOWS_1252, 30, layer_handle)
+    encode_values_with_encoding(wide, values, encoding_rs::WINDOWS_1252.into(), 30, layer_handle)
 }
 
 pub(crate) fn encode_values_with_encoding(
     wide: bool,
     values: &[XDataValue],
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
     code_page: u16,
     layer_handle: impl Fn(&str) -> u64,
 ) -> Vec<u8> {
@@ -262,7 +262,7 @@ mod tests {
         let data = encode_values_with_encoding(
             false,
             &[XDataValue::String("MVIEW".into())],
-            encoding_rs::WINDOWS_1254,
+            encoding_rs::WINDOWS_1254.into(),
             33,
             |_| 0,
         );
@@ -293,7 +293,7 @@ mod tests {
         let encoded = encode_values_with_encoding(
             false,
             &[XDataValue::Handle(Handle::new(0x6DA))],
-            encoding_rs::WINDOWS_1252,
+            encoding_rs::WINDOWS_1252.into(),
             30,
             |_| 0,
         );

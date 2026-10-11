@@ -643,14 +643,14 @@ fn checked_short(value: i32, field: &str) -> Result<i16> {
 
 struct Writer {
     data: Vec<u8>,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
 }
 
 impl Writer {
     fn new(code_page: &str) -> Self {
         Self {
             data: Vec::new(),
-            encoding: encoding_from_code_page(code_page).unwrap_or(encoding_rs::WINDOWS_1252),
+            encoding: encoding_from_code_page(code_page).unwrap_or(encoding_rs::WINDOWS_1252.into()),
         }
     }
     fn byte(&mut self, value: u8) {
@@ -703,7 +703,7 @@ impl Writer {
 struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
 }
 
 impl<'a> Reader<'a> {
@@ -711,7 +711,7 @@ impl<'a> Reader<'a> {
         Self {
             data,
             pos: 0,
-            encoding: encoding_from_code_page(code_page).unwrap_or(encoding_rs::WINDOWS_1252),
+            encoding: encoding_from_code_page(code_page).unwrap_or(encoding_rs::WINDOWS_1252.into()),
         }
     }
     fn take(&mut self, size: usize) -> Result<&'a [u8]> {

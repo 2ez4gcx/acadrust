@@ -105,7 +105,7 @@ fn transcode_xrecord_xdata(
     raw: &[u8],
     src_unicode: bool,
     tgt_unicode: bool,
-    target_encoding: &'static encoding_rs::Encoding,
+    target_encoding: crate::io::dxf::code_page::LegacyEncoding,
     target_code_page: u8,
 ) -> Vec<u8> {
     if src_unicode == tgt_unicode {
@@ -208,7 +208,7 @@ fn transcode_xrecord_xdata(
 fn encode_xrecord_entries(
     entries: &[XRecordEntry],
     unicode: bool,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
     code_page: u8,
 ) -> Vec<u8> {
     let mut output = Vec::new();
@@ -2241,7 +2241,7 @@ impl<'a> DwgObjectWriter<'a> {
                 let encoding = crate::io::dxf::code_page::encoding_from_code_page(
                     &self.document.header.code_page,
                 )
-                .unwrap_or(encoding_rs::WINDOWS_1252);
+                .unwrap_or(encoding_rs::WINDOWS_1252.into());
                 let bytes = crate::io::dwg::eed_codec::encode_values_with_encoding(
                     self.version.r2007_plus(),
                     &[crate::xdata::XDataValue::String("NOLOAD".to_string())],
