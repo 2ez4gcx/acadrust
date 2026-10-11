@@ -5390,7 +5390,7 @@ fn read_acis_entity_impl(
         if isoline_present {
             let num_wires = safe_count(reader.read_bit_long());
             for _ in 0..num_wires {
-                wires.push(read_wire(reader, version));
+                wires.push(read_wire(reader));
             }
         }
 
@@ -5409,7 +5409,7 @@ fn read_acis_entity_impl(
                 let num_sw = safe_count(reader.read_bit_long());
                 sil_wires.reserve(num_sw as usize);
                 for _ in 0..num_sw {
-                    sil_wires.push(read_wire(reader, version));
+                    sil_wires.push(read_wire(reader));
                 }
             }
             silhouettes.push(Silhouette {
@@ -5788,16 +5788,14 @@ pub fn read_surface(
 
 /// Read a single wire struct from the DWG stream.
 /// Field order/types per LibreDWG `Dwg_3DSOLID_wire`:
-/// RC type, BLd selection_marker, BS/BL color, BLd acis_index, BL num_points,
+/// RC type, BLd selection_marker, BS color, BLd acis_index, BL num_points,
 /// 3BD points…, B transform_present [+ axes/translation/scale/flags].
-fn read_wire(reader: &mut DwgMergedReader, version: DwgVersion) -> Wire {
+fn read_wire(reader: &mut DwgMergedReader) -> Wire {
     let wire_type_raw = reader.read_byte();
     let selection_marker = reader.read_bit_long();
-    let color_val = if version.r2004_plus() {
-        reader.read_bit_long()
-    } else {
-        reader.read_bit_short() as i32
-    };
+    // Wire colors remain BS in R2004+; BL consumes the next field's bits
+    // for the full-width ByLayer value (256) and shifts point counts.
+    let color_val = reader.read_bit_short();
     let acis_index = reader.read_bit_long();
     let num_pts = safe_count(reader.read_bit_long());
     let mut pts = Vec::with_capacity(num_pts as usize);
