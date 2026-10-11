@@ -407,6 +407,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_header_variable("$ATTMODE", |w| w.write_i16(70, hdr.attribute_visibility))?;
         self.write_header_variable("$TEXTSIZE", |w| w.write_double(40, hdr.text_height))?;
         self.write_header_variable("$TRACEWID", |w| w.write_double(40, hdr.trace_width))?;
+        self.write_header_variable("$ELEVATION", |w| w.write_double(40, hdr.elevation))?;
+        self.write_header_variable("$THICKNESS", |w| w.write_double(40, hdr.thickness))?;
+        self.write_header_variable("$FILLETRAD", |w| w.write_double(40, hdr.fillet_radius))?;
+        self.write_header_variable("$CHAMFERA", |w| w.write_double(40, hdr.chamfer_distance_a))?;
+        self.write_header_variable("$CHAMFERB", |w| w.write_double(40, hdr.chamfer_distance_b))?;
         self.write_header_variable("$SKETCHINC", |w| w.write_double(40, hdr.sketch_increment))?;
         self.write_header_variable("$SKPOLY", |w| w.write_i16(70, hdr.sketch_type.clamp(0, 2)))?;
         // SKTOLERANCE is application state, not a portable DXF header variable.
@@ -476,6 +481,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_header_variable("$LUPREC", |w| w.write_i16(70, hdr.linear_unit_precision))?;
         self.write_header_variable("$AUNITS", |w| w.write_i16(70, hdr.angular_unit_format))?;
         self.write_header_variable("$AUPREC", |w| w.write_i16(70, hdr.angular_unit_precision))?;
+        self.write_header_variable("$ANGBASE", |w| w.write_double(50, hdr.angle_base.to_degrees()))?;
+        self.write_header_variable("$ANGDIR", |w| w.write_i16(70, hdr.angle_direction))?;
         self.write_header_variable("$MEASUREMENT", |w| w.write_i16(70, hdr.measurement))?;
         self.write_header_variable("$INSUNITS", |w| w.write_i16(70, hdr.insertion_units))?;
 

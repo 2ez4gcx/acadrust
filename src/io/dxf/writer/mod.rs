@@ -88,6 +88,7 @@ impl<'a> DxfWriter<'a> {
         // so entity layer/linetype lookups miss and reference a name the
         // written table no longer defines (issue #80).
         crate::io::dwg::dwg_writer::prepare_table_keys(&mut prepared);
+        crate::io::dwg::dwg_writer::prepare_active_viewport_elevation(&mut prepared);
         self.write_prepared_dxf(writer, prepared.as_ref())
     }
 

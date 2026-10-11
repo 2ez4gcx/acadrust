@@ -2082,7 +2082,7 @@ impl<'a> SectionReader<'a> {
                 "$ANGBASE" => {
                     if let Some(p) = self.reader.read_pair()? {
                         if let Some(v) = p.as_double() {
-                            hdr.angle_base = v;
+                            hdr.angle_base = v.to_radians();
                         }
                     }
                 }

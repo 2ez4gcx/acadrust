@@ -70,6 +70,7 @@ impl DwgWriter {
         prepare_surface_classes(&mut prepared);
         prepare_database_references(&mut prepared);
         prepare_table_keys(&mut prepared);
+        prepare_active_viewport_elevation(&mut prepared);
         prepare_roundtrip_records(&mut prepared);
         let document = prepared.as_ref();
         let perf = std::env::var_os("PERF").is_some();
@@ -150,6 +151,7 @@ impl DwgWriter {
         prepare_surface_classes(&mut prepared);
         prepare_database_references(&mut prepared);
         prepare_table_keys(&mut prepared);
+        prepare_active_viewport_elevation(&mut prepared);
         prepare_roundtrip_records(&mut prepared);
         write_ac21_impl(&mut output, prepared.as_ref(), document.version, true)
     }
@@ -159,6 +161,22 @@ impl DwgWriter {
         let mut buffer = Cursor::new(Vec::new());
         Self::write_to_writer(&mut buffer, document)?;
         Ok(buffer.into_inner())
+    }
+}
+
+pub(crate) fn prepare_active_viewport_elevation(document: &mut std::borrow::Cow<'_, CadDocument>) {
+    let elevation = document.header.elevation;
+    let needs_elevation = elevation != 0.0 && document.vports.iter().any(|viewport| {
+        viewport.name.eq_ignore_ascii_case("*ACTIVE") && viewport.ucs_elevation == 0.0
+    });
+    if needs_elevation {
+        // CAD hosts activate the VPORT's UCS elevation when loading the file,
+        // so a default zero viewport would mask the nonzero header setting.
+        for viewport in document.to_mut().vports.iter_mut() {
+            if viewport.name.eq_ignore_ascii_case("*ACTIVE") && viewport.ucs_elevation == 0.0 {
+                viewport.ucs_elevation = elevation;
+            }
+        }
     }
 }
 
