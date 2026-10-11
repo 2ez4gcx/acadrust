@@ -39,6 +39,12 @@ use crate::types::Handle;
 use crate::types::LineWeight;
 use std::collections::{HashMap, HashSet};
 
+fn linetype_segment_is_complex(segment: &tables::LinetypeSegment, shape_handle: u64) -> bool {
+    // Scale, rotation and offsets have no meaning on a plain dash; native
+    // writers commonly store scale 0 instead of 1 (issue #128).
+    segment.dwg_flags & 0x06 != 0 || segment.shape_number != 0 || shape_handle != 0
+}
+
 fn boundary_path_from_dwg(path: entities::HatchBoundaryPath) -> crate::entities::BoundaryPath {
     use crate::entities::hatch::*;
 
@@ -1337,13 +1343,7 @@ impl DwgDocumentBuilder {
                             use crate::tables::linetype::{
                                 LineTypeComplexContent, LineTypeComplexData, LineTypeElement,
                             };
-                            let is_complex = s.dwg_flags != 0
-                                || s.offset_x.abs() > 1e-12
-                                || s.offset_y.abs() > 1e-12
-                                || (s.scale - 1.0).abs() > 1e-12
-                                || s.rotation.abs() > 1e-12
-                                || s.shape_number != 0
-                                || sh != 0;
+                            let is_complex = linetype_segment_is_complex(s, sh);
                             let complex = if is_complex {
                                 let content = if s.dwg_flags & 0x02 != 0 {
                                     LineTypeComplexContent::Text {
@@ -7642,6 +7642,37 @@ fn anonymous_block_names(entries: &[u64], names: &HashMap<u64, String>) -> HashM
 #[cfg(test)]
 mod dedupe_block_names_tests {
     use super::*;
+
+    #[test]
+    fn issue128_plain_dash_metadata_does_not_create_a_shape() {
+        let mut segment = tables::LinetypeSegment {
+            length: 1.27,
+            shape_number: 0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            scale: 0.0,
+            rotation: 0.0,
+            dwg_flags: 0,
+            text: String::new(),
+        };
+        assert!(!linetype_segment_is_complex(&segment, 0));
+        for scale in [0.0, 1.0, 2.5] {
+            segment.scale = scale;
+            segment.offset_x = 4.0;
+            segment.offset_y = -2.0;
+            segment.rotation = 1.0;
+            segment.dwg_flags = 0x01 | 0x80;
+            assert!(!linetype_segment_is_complex(&segment, 0));
+        }
+        for flags in [0x02, 0x04, 0x05, 0x82] {
+            segment.dwg_flags = flags;
+            assert!(linetype_segment_is_complex(&segment, 0));
+        }
+        segment.dwg_flags = 0;
+        assert!(linetype_segment_is_complex(&segment, 42));
+        segment.shape_number = 7;
+        assert!(linetype_segment_is_complex(&segment, 0));
+    }
 
     #[test]
     fn anonymous_names_follow_live_control_order_including_named_blocks() {
