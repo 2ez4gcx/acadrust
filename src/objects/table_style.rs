@@ -680,22 +680,37 @@ impl TableStyle {
 
     /// Returns true if title row is visible.
     pub fn has_title_row(&self) -> bool {
-        !self.title_suppressed
+        !self.title_suppressed && !self.flags.contains(TableStyleFlags::TITLE_SUPPRESSED)
     }
 
     /// Returns true if header row is visible.
     pub fn has_header_row(&self) -> bool {
-        !self.header_suppressed
+        !self.header_suppressed && !self.flags.contains(TableStyleFlags::HEADER_SUPPRESSED)
     }
 
     /// Sets title row visibility.
     pub fn set_title_visible(&mut self, visible: bool) {
         self.title_suppressed = !visible;
+        self.flags.set(TableStyleFlags::TITLE_SUPPRESSED, !visible);
     }
 
     /// Sets header row visibility.
     pub fn set_header_visible(&mut self, visible: bool) {
         self.header_suppressed = !visible;
+        self.flags.set(TableStyleFlags::HEADER_SUPPRESSED, !visible);
+    }
+
+    pub(crate) fn effective_flags(&self) -> TableStyleFlags {
+        let mut flags = self.flags;
+        flags.set(TableStyleFlags::TITLE_SUPPRESSED, !self.has_title_row());
+        flags.set(TableStyleFlags::HEADER_SUPPRESSED, !self.has_header_row());
+        flags
+    }
+
+    pub(crate) fn sync_suppression_flags(&mut self) {
+        self.flags = self.effective_flags();
+        self.title_suppressed = self.flags.contains(TableStyleFlags::TITLE_SUPPRESSED);
+        self.header_suppressed = self.flags.contains(TableStyleFlags::HEADER_SUPPRESSED);
     }
 }
 

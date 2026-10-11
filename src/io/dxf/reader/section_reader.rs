@@ -21215,6 +21215,7 @@ impl<'a> SectionReader<'a> {
         if let Some(row) = rows.get(2) {
             ts.header_row_style = row.clone();
         }
+        ts.sync_suppression_flags();
         ts.raw_dxf_codes = Some(raw_dxf_codes);
         Ok(Some(ts))
     }
