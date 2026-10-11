@@ -151,19 +151,10 @@ impl<R: Read + Seek> DxfBinaryReader<R> {
                 DxfCodePair::new_typed(code, value_string, CodePairValue::Double(value))
             }
 
-            GroupCodeValueType::Int16 => {
+            GroupCodeValueType::Int16 | GroupCodeValueType::Byte => {
                 let mut bytes = [0u8; 2];
                 self.reader.read_exact(&mut bytes)?;
                 let value = i16::from_le_bytes(bytes);
-                let mut buf = itoa::Buffer::new();
-                let value_string = buf.format(value).to_owned();
-                DxfCodePair::new_typed(code, value_string, CodePairValue::Int(value as i64))
-            }
-
-            GroupCodeValueType::Byte => {
-                let mut byte = [0u8; 1];
-                self.reader.read_exact(&mut byte)?;
-                let value = byte[0] as i16;
                 let mut buf = itoa::Buffer::new();
                 let value_string = buf.format(value).to_owned();
                 DxfCodePair::new_typed(code, value_string, CodePairValue::Int(value as i64))

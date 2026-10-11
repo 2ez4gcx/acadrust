@@ -142,7 +142,8 @@ impl<W: Write> DxfStreamWriter for DxfBinaryWriter<W> {
 
     fn write_byte(&mut self, code: i32, value: u8) -> Result<()> {
         self.write_code(code)?;
-        self.writer.write_u8(value)?;
+        // Group codes 280-289 are "Byte" type but written as Int16 in binary DXF
+        self.writer.write_i16::<LittleEndian>(value as i16)?;
         Ok(())
     }
 
@@ -183,10 +184,9 @@ impl<W: Write> DxfStreamWriter for DxfBinaryWriter<W> {
                 self.writer.write_u8(value)?;
                 Ok(())
             }
-            GroupCodeValueType::Int16 => {
+            GroupCodeValueType::Byte | GroupCodeValueType::Int16 => {
                 self.write_i16(code, i16::from(value))
             }
-            GroupCodeValueType::Byte => self.write_byte(code, value),
             GroupCodeValueType::Int32 => self.write_i32(code, i32::from(value)),
             GroupCodeValueType::Int64 => self.write_i64(code, i64::from(value)),
             GroupCodeValueType::Double => self.write_double(code, f64::from(value)),

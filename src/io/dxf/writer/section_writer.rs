@@ -932,7 +932,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(78, vport.snap_isopair)?;
 
         if self.dxf_version >= DxfVersion::AC1015 {
-            self.writer.write_byte(281, vport.render_mode.to_value() as u8)?;
+            self.writer.write_i16(281, vport.render_mode.to_value())?;
             self.writer
                 .write_i16(65, if vport.ucs_per_viewport { 1 } else { 0 })?;
             self.writer.write_double(110, vport.ucs_origin.x)?;
@@ -966,7 +966,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_handle(361, vport.sun_handle)?;
             }
             self.writer.write_bool(292, vport.use_default_lights)?;
-            self.writer.write_byte(282, vport.default_lighting_type as u8)?;
+            self.writer.write_i16(282, vport.default_lighting_type)?;
             self.writer.write_double(141, vport.brightness)?;
             self.writer.write_double(142, vport.contrast)?;
             self.writer.write_color(63, vport.ambient_color)?;
@@ -1352,7 +1352,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         if self.dxf_version >= DxfVersion::AC1015 {
             self.writer
                 .write_i16(72, if view.ucs_associated { 1 } else { 0 })?;
-            self.writer.write_byte(281, view.render_mode.to_value() as u8)?;
+            self.writer.write_i16(281, view.render_mode.to_value())?;
             if view.ucs_associated {
                 self.writer.write_double(110, view.ucs_origin.x)?;
                 self.writer.write_double(120, view.ucs_origin.y)?;
@@ -1389,7 +1389,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_handle(361, view.sun_handle)?;
             }
             self.writer.write_bool(292, view.use_default_lights)?;
-            self.writer.write_byte(282, view.default_lighting_type as u8)?;
+            self.writer.write_i16(282, view.default_lighting_type)?;
             self.writer.write_double(141, view.brightness)?;
             self.writer.write_double(142, view.contrast)?;
             self.writer.write_color(63, view.ambient_color)?;
@@ -1664,21 +1664,21 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(277, dimstyle.dimlunit)?;
         self.writer.write_i16(278, dimstyle.dimdsep)?;
         self.writer.write_i16(279, dimstyle.dimtmove)?;
-        self.writer.write_byte(280, dimstyle.dimjust as u8)?;
+        self.writer.write_i16(280, dimstyle.dimjust)?;
         self.writer
-            .write_byte(281, if dimstyle.dimsd1 { 1 } else { 0 })?;
+            .write_i16(281, if dimstyle.dimsd1 { 1 } else { 0 })?;
         self.writer
-            .write_byte(282, if dimstyle.dimsd2 { 1 } else { 0 })?;
-        self.writer.write_byte(283, dimstyle.dimtolj as u8)?;
-        self.writer.write_byte(284, dimstyle.dimtzin as u8)?;
-        self.writer.write_byte(285, dimstyle.dimaltz as u8)?;
-        self.writer.write_byte(286, dimstyle.dimalttz as u8)?;
+            .write_i16(282, if dimstyle.dimsd2 { 1 } else { 0 })?;
+        self.writer.write_i16(283, dimstyle.dimtolj)?;
+        self.writer.write_i16(284, dimstyle.dimtzin)?;
+        self.writer.write_i16(285, dimstyle.dimaltz)?;
+        self.writer.write_i16(286, dimstyle.dimalttz)?;
         self.writer
-            .write_byte(288, if dimstyle.dimupt { 1 } else { 0 })?;
+            .write_i16(288, if dimstyle.dimupt { 1 } else { 0 })?;
         if self.dxf_version <= DxfVersion::AC1014 {
-            self.writer.write_byte(287, dimstyle.dimfit as u8)?;
+            self.writer.write_i16(287, dimstyle.dimfit)?;
         } else {
-            self.writer.write_byte(289, dimstyle.dimatfit as u8)?;
+            self.writer.write_i16(289, dimstyle.dimatfit)?;
         }
         if self.dxf_version >= DxfVersion::AC1021 && dimstyle.dimfxlon {
             self.writer.write_bool(290, true)?;
@@ -1778,7 +1778,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer
                 .write_byte(280, if block_record.explodable { 1 } else { 0 })?;
             self.writer
-                .write_byte(281, if block_record.scale_uniformly { 1 } else { 0 })?;
+                .write_i16(281, if block_record.scale_uniformly { 1 } else { 0 })?;
         }
         let mut generated = Vec::new();
         if self.dxf_version < DxfVersion::AC1021 && (block_record.units != 0 || document.object_xdata.get(&block_record.handle).and_then(|data| data.get_record("ACAD")).is_some_and(|record| record.values.iter().any(|value| matches!(value, XDataValue::String(value) if value == "DesignCenter Data")))) {
@@ -2413,7 +2413,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_double(11, point.label_offset.x)?;
             self.writer.write_double(21, point.label_offset.y)?;
             self.writer.write_double(31, point.label_offset.z)?;
-            self.writer.write_byte(280, point.raw_flag_280)?;
+            self.writer.write_i16(280, point.raw_flag_280 as i16)?;
         }
         Ok(())
     }
@@ -3450,7 +3450,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_bool(295, data.show_cropping)?;
         self.writer.write_i32(92, data.croppings.len() as i32)?;
         for crop in &data.croppings {
-        self.writer.write_byte(280, crop.crop_type as u8)?;
+            self.writer.write_i16(280, crop.crop_type)?;
             self.writer.write_bool(290, crop.inside)?;
             self.writer.write_bool(290, crop.inverted)?;
             self.writer.write_point3d(13, crop.plane)?;
@@ -7943,7 +7943,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_bool(70, d.dimatfit)?;
                 self.writer.write_bool(292, d.dimtix)?;
                 self.writer.write_bool(71, d.dimtmove)?;
-                self.writer.write_byte(280, d.override_code as u8)?;
+                self.writer.write_i16(280, d.override_code as i16)?;
                 self.writer.write_bool(295, d.has_arrow2)?;
                 self.writer.write_bool(296, d.flip_arrow2)?;
                 self.writer.write_bool(297, d.flip_arrow1)?;
@@ -8351,7 +8351,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(468, obj.reflectivity)?;
         self.writer.write_i32(93, obj.illumination_model)?;
         self.writer.write_i32(94, obj.channel_flags)?;
-        self.writer.write_byte(282, obj.mode as u8)?;
+        self.writer.write_i16(282, obj.mode as i16)?;
         // Advanced properties (460-465, 290, 293, 270-273 and the normal map)
         // are not part of the MATERIAL body: the reference application rejects
         // them here ("Unexpected DXF group code: 460") and stores them in the
@@ -8848,7 +8848,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // BricsCAD's own DXF export does not write the hard-owner flag (280)
         // for ACDBDICTIONARYWDFLT records; emitting it makes BricsCAD's
         // audit reject the plot style references (issue #51).
-        self.writer.write_byte(281, obj.duplicate_cloning as u8)?;
+        self.writer.write_i16(281, obj.duplicate_cloning)?;
         for (key, handle) in &obj.entries {
             if !objects.contains_key(handle) {
                 continue;
@@ -9858,7 +9858,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(73, light.shadow_type as i16)?;
         self.writer.write_i32(91, light.shadow_map_size as i32)?;
         self.writer
-            .write_byte(280, light.shadow_map_softness as u8)?;
+            .write_i16(280, light.shadow_map_softness as i16)?;
         if light.photometric_mode {
             self.writer
                 .write_bool(295, light.photometric_data.is_some())?;
@@ -11540,7 +11540,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i32(90, 5)?;
         self.writer.write_string(2, "AcDbDs::HandleAttribute")?;
         self.writer.write_byte(280, 7)?;
-        self.writer.write_byte(282, 1)?;
+        self.writer.write_i16(282, 1)?;
 
         Ok(())
     }
@@ -11580,7 +11580,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_string(2, "AcDbDs::HandleAttribute")?;
         self.writer.write_byte(280, 7)?;
         self.writer.write_i32(91, 1)?;
-        self.writer.write_byte(284, 1)?;
+        self.writer.write_i16(284, 1)?;
 
         Ok(())
     }
