@@ -1683,7 +1683,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         if dimstyle.dimjogang != std::f64::consts::FRAC_PI_4 {
             // Clamp to valid range [5°..90°]
             self.writer
-                .write_double(50, dimstyle.dimjogang.clamp(0.0872665, 1.5708))?;
+                .write_double(50, dimstyle.dimjogang.to_degrees().clamp(5.0, 90.0))?;
         }
 
         // Floats 140-148
