@@ -7704,8 +7704,37 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     fn write_table_style(&mut self, style: &TableStyle) -> Result<()> {
         self.writer.write_string(0, "TABLESTYLE")?;
         if let Some(raw_dxf_codes) = &style.raw_dxf_codes {
+            let has_flags = raw_dxf_codes.iter().any(|(code, _)| *code == 71);
+            let has_title_suppressed = raw_dxf_codes
+                .iter()
+                .skip_while(|(code, _)| *code != 3)
+                .any(|(code, _)| *code == 280);
+            let has_header_suppressed = raw_dxf_codes.iter().any(|(code, _)| *code == 281);
+            let mut saw_name = false;
             for (code, value) in raw_dxf_codes {
-                self.writer.write_string(*code, value)?;
+                match *code {
+                    3 => {
+                        self.writer.write_string(*code, value)?;
+                        if !saw_name {
+                            if !has_flags {
+                                self.writer.write_i16(71, style.effective_flags().bits())?;
+                            }
+                            if !has_title_suppressed {
+                                self.writer.write_byte(280, (!style.has_title_row()) as u8)?;
+                            }
+                            if !has_header_suppressed {
+                                self.writer.write_byte(281, (!style.has_header_row()) as u8)?;
+                            }
+                        }
+                        saw_name = true;
+                    }
+                    71 => self.writer.write_i16(71, style.effective_flags().bits())?,
+                    280 if saw_name => {
+                        self.writer.write_byte(280, (!style.has_title_row()) as u8)?;
+                    }
+                    281 => self.writer.write_byte(281, (!style.has_header_row()) as u8)?,
+                    _ => self.writer.write_string(*code, value)?,
+                }
             }
             return Ok(());
         }
@@ -7719,7 +7748,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(70, style.flow_direction as i16)?;
 
         // Flags
-        self.writer.write_i16(71, style.flags.bits())?;
+        self.writer.write_i16(71, style.effective_flags().bits())?;
 
         // Horizontal margin
         self.writer.write_double(40, style.horizontal_margin)?;
@@ -7728,10 +7757,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(41, style.vertical_margin)?;
 
         // Title suppressed
-        self.writer.write_byte(280, style.title_suppressed as u8)?;
+        self.writer.write_byte(280, (!style.has_title_row()) as u8)?;
 
         // Header suppressed
-        self.writer.write_byte(281, style.header_suppressed as u8)?;
+        self.writer.write_byte(281, (!style.has_header_row()) as u8)?;
 
         // Write cell style info for data row
         self.write_table_cell_style(&style.data_row_style)?;
@@ -10788,9 +10817,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Write cells
-        for row in &table.rows {
-            for cell in &row.cells {
-                self.write_table_cell(cell)?;
+        let merged_ranges = table.canonical_merged_ranges();
+        for (row_index, row) in table.rows.iter().enumerate() {
+            for (column_index, cell) in row.cells.iter().enumerate() {
+                let merged_range = merged_ranges
+                    .iter()
+                    .find(|range| range.contains(row_index, column_index));
+                let anchor_range = merged_range.filter(|range| {
+                    range.top_row == row_index && range.left_col == column_index
+                });
+                self.write_table_cell(cell, anchor_range, merged_range.is_some())?;
             }
         }
 
@@ -10798,7 +10834,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     }
 
     /// Write table cell data
-    fn write_table_cell(&mut self, cell: &TableCell) -> Result<()> {
+    fn write_table_cell(
+        &mut self,
+        cell: &TableCell,
+        merged_range: Option<&table::CellRange>,
+        merged: bool,
+    ) -> Result<()> {
         // Cell type
         self.writer.write_i16(171, cell.cell_type as i16)?;
 
@@ -10806,10 +10847,19 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // extended cell flags (group 92).
         self.writer.write_i16(172, cell.edge_flags as i16)?;
 
-        self.writer.write_i16(173, cell.merged as i16)?;
+        self.writer
+            .write_i16(173, if merged_range.is_some() {
+                0
+            } else if merged {
+                1
+            } else {
+                cell.merged as i16
+            })?;
         self.writer.write_i16(174, cell.auto_fit as i16)?;
-        self.writer.write_i16(175, cell.merge_width as i16)?;
-        self.writer.write_i16(176, cell.merge_height as i16)?;
+        let merge_width = merged_range.map_or(cell.merge_width, |range| range.col_count() as i32);
+        let merge_height = merged_range.map_or(cell.merge_height, |range| range.row_count() as i32);
+        self.writer.write_i16(175, merge_width as i16)?;
+        self.writer.write_i16(176, merge_height as i16)?;
         if self.dxf_version >= DxfVersion::AC1021 {
             self.writer.write_i32(91, cell.flag)?;
             self.writer.write_i32(92, cell.state.bits() as i32)?;

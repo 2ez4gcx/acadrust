@@ -1157,11 +1157,12 @@ impl<'a> DwgObjectWriter<'a> {
         if !self.version.r2010_plus() {
             self.writer.write_variable_text(&value.name);
             self.writer.write_bit_short(value.flow_direction as i16);
-            self.writer.write_bit_short(value.flags.bits() & !STALE_TABLE_STYLE_FLAG);
+            self.writer
+                .write_bit_short(value.effective_flags().bits() & !STALE_TABLE_STYLE_FLAG);
             self.writer.write_bit_double(value.horizontal_margin);
             self.writer.write_bit_double(value.vertical_margin);
-            self.writer.write_bit(value.title_suppressed);
-            self.writer.write_bit(value.header_suppressed);
+            self.writer.write_bit(!value.has_title_row());
+            self.writer.write_bit(!value.has_header_row());
             self.write_legacy_table_row_style(&value.data_row_style);
             self.write_legacy_table_row_style(&value.title_row_style);
             self.write_legacy_table_row_style(&value.header_row_style);
@@ -1169,7 +1170,8 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_byte(value.modern_unknown_byte);
             self.writer.write_variable_text(&value.name);
             // The R2010+ flags field carries the table style flags.
-            self.writer.write_bit_long((value.flags.bits() & !STALE_TABLE_STYLE_FLAG) as i32);
+            self.writer
+                .write_bit_long((value.effective_flags().bits() & !STALE_TABLE_STYLE_FLAG) as i32);
             self.writer.write_bit_long(value.modern_unknown_long2);
             self.writer.write_handle(
                 DwgReferenceType::HardOwnership,

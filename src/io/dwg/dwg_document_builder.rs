@@ -3733,6 +3733,7 @@ impl DwgDocumentBuilder {
                     e.field_handles = data.field_handles;
                     e.base_style = data.base_style;
                     e.merged_ranges = data.merged_ranges;
+                    e.sync_cells_from_merged_ranges();
                     e.break_options = BreakOptionFlags::from_bits_retain(data.break_options as u32);
                     e.break_flow_direction =
                         BreakFlowDirection::from(data.break_flow_direction as u8);
@@ -6078,6 +6079,7 @@ impl DwgDocumentBuilder {
                     obj.field_handles = field_handles;
                     obj.base_style = base_style;
                     obj.merged_ranges = merged_ranges;
+                    obj.sync_cells_from_merged_ranges();
                     obj.table_style_handle = (style_handle != 0)
                         .then(|| Handle::from(style_handle));
                     document.objects.insert(
