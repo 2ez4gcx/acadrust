@@ -270,9 +270,16 @@ fn dxf_output_contains_declared_external_bytes_and_preserves_unmappable_text() {
                 }
                 .write_to_vec()
                 .unwrap();
-                let mut encoded = b"X".to_vec();
-                encoded.extend_from_slice(bytes);
-                encoded.extend_from_slice(b"\\U+D83D\\U+DE00");
+                let encoded = if binary && version < DxfVersion::AC1021 {
+                    // Binary legacy streams are promoted to R2010 for
+                    // BricsCAD compatibility, so strings use UTF-8 directly.
+                    format!("X{expected}\u{1F600}").into_bytes()
+                } else {
+                    let mut encoded = b"X".to_vec();
+                    encoded.extend_from_slice(bytes);
+                    encoded.extend_from_slice(b"\\U+D83D\\U+DE00");
+                    encoded
+                };
                 assert!(
                     output
                         .windows(encoded.len())

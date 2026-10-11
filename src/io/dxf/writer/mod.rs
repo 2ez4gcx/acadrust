@@ -55,7 +55,13 @@ impl<'a> DxfWriter<'a> {
 
     /// Write to any writer
     pub fn write_to_writer<W: Write>(&self, writer: W) -> Result<()> {
-        let encoding = if self.document.version < crate::types::DxfVersion::AC1021 {
+        // BricsCAD's binary DXF importer rejects the R2000/R2004 headers even
+        // when their records are otherwise valid.  The same records are
+        // accepted as R2010 binary DXF, whose strings are UTF-8.  Keep this
+        // compatibility promotion local to binary output; ASCII and DWG
+        // continue to preserve the requested legacy version and code page.
+        let output_version = self.output_version();
+        let encoding = if output_version < crate::types::DxfVersion::AC1021 {
             crate::io::dxf::code_page::encoding_from_code_page(&self.document.header.code_page)
         } else {
             None
@@ -65,14 +71,14 @@ impl<'a> DxfWriter<'a> {
             if let Some(encoding) = encoding {
                 stream_writer.set_encoding(encoding);
             }
-            self.write_dxf(&mut stream_writer)?;
+            self.write_dxf(&mut stream_writer, output_version)?;
             stream_writer.flush()?;
         } else {
             let mut stream_writer = DxfTextWriter::new(writer);
             if let Some(encoding) = encoding {
                 stream_writer.set_encoding(encoding);
             }
-            self.write_dxf(&mut stream_writer)?;
+            self.write_dxf(&mut stream_writer, output_version)?;
             stream_writer.flush()?;
         }
         Ok(())
@@ -89,7 +95,11 @@ impl<'a> DxfWriter<'a> {
     }
 
     /// Write DXF content to a stream writer
-    fn write_dxf<W: DxfStreamWriter>(&self, writer: &mut W) -> Result<()> {
+    fn write_dxf<W: DxfStreamWriter>(
+        &self,
+        writer: &mut W,
+        output_version: crate::types::DxfVersion,
+    ) -> Result<()> {
         let mut prepared = crate::io::loft_parameters::prepared(self.document);
         // DXF and DWG share the same ownership graph. Repair table-backed
         // entities before either writer snapshots handles, otherwise an
@@ -100,24 +110,28 @@ impl<'a> DxfWriter<'a> {
         // written table no longer defines (issue #80).
         crate::io::dwg::dwg_writer::prepare_table_keys(&mut prepared);
         crate::io::dwg::dwg_writer::prepare_active_viewport_elevation(&mut prepared);
-        self.write_prepared_dxf(writer, prepared.as_ref())
+        if output_version >= crate::types::DxfVersion::AC1021 {
+            prepared.to_mut().header.code_page = "UTF-8".to_string();
+        }
+        self.write_prepared_dxf(writer, prepared.as_ref(), output_version)
     }
 
     fn write_prepared_dxf<W: DxfStreamWriter>(
         &self,
         writer: &mut W,
         document: &CadDocument,
+        output_version: crate::types::DxfVersion,
     ) -> Result<()> {
         let handle_start = compute_max_handle(document);
         // Count against the version actually emitted, not the one the document
         // was loaded as, so the handle budget matches what the writer produces.
         let extra_handles = count_extra_handles(
             document,
-            SectionWriter::<W>::writable_version(document.version),
+            SectionWriter::<W>::writable_version(output_version),
         );
         let handle_seed = handle_start + extra_handles + 1;
         let mut section_writer = SectionWriter::new(writer, handle_start, handle_seed);
-        section_writer.set_version(document.version);
+        section_writer.set_version(output_version);
         section_writer.build_valid_handles(document);
 
         // Write all sections
@@ -133,6 +147,14 @@ impl<'a> DxfWriter<'a> {
         writer.write_string(0, "EOF")?;
 
         Ok(())
+    }
+
+    fn output_version(&self) -> crate::types::DxfVersion {
+        if self.binary && self.document.version < crate::types::DxfVersion::AC1021 {
+            crate::types::DxfVersion::AC1024
+        } else {
+            self.document.version
+        }
     }
 
     /// Get a reference to the document
