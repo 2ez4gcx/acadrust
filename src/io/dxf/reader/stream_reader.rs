@@ -248,7 +248,7 @@ impl DxfStreamReader for XDataRecorder {
                 }
                 if self.in_xdata {
                     self.recorded.push(pair.clone());
-                } else if pair.code == 5 && self.handle.is_none() {
+                } else if matches!(pair.code, 5 | 105) && self.handle.is_none() {
                     self.handle = Some(pair.value_string.trim().to_string());
                 }
             }

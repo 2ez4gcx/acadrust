@@ -1654,11 +1654,17 @@ pub fn read_book_color(reader: &mut DwgMergedReader) -> BookColorData {
             String::new()
         };
         BookColorData {
-            color: Color::from_rgb(
-                ((true_color >> 16) & 0xFF) as u8,
-                ((true_color >> 8) & 0xFF) as u8,
-                (true_color & 0xFF) as u8,
-            ),
+            color: match true_color >> 24 {
+                0xC0 => Color::ByLayer,
+                0xC1 => Color::ByBlock,
+                0xC3 => Color::from_index((true_color & 0xFF) as i16),
+                0xC8 => Color::None,
+                _ => Color::from_rgb(
+                    ((true_color >> 16) & 0xFF) as u8,
+                    ((true_color >> 8) & 0xFF) as u8,
+                    (true_color & 0xFF) as u8,
+                ),
+            },
             color_name,
             book_name,
         }

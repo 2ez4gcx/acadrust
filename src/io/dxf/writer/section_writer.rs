@@ -795,6 +795,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         for vport in document.vports.iter() {
             self.write_vport_entry(vport, table_handle, document)?;
+            self.write_table_xdata(document, vport.handle, &[])?;
         }
 
         self.write_table_end()?;
@@ -984,6 +985,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         for ltype in document.line_types.iter() {
             self.write_ltype_entry(ltype, table_handle, document)?;
+            self.write_table_xdata(document, ltype.handle, &[])?;
         }
 
         self.write_table_end()?;
@@ -1165,20 +1167,22 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Plot flag (code 290 is Bool type - single byte in binary)
         self.writer.write_bool(290, layer.is_plottable)?;
 
+        let mut generated = Vec::new();
         // AutoCAD stores layer transparency as AcCmTransparency XDATA.
-        if !layer.transparency.is_opaque() {
-            self.writer.write_string(1001, "AcCmTransparency")?;
-            self.writer
-                .write_i32(1071, layer.transparency.to_dxf_value())?;
+        if !layer.transparency.is_opaque() || document.object_xdata.get(&layer.handle).is_some_and(|data| data.get_record("AcCmTransparency").is_some()) {
+            let mut record = crate::xdata::ExtendedDataRecord::new("AcCmTransparency");
+            record.values.push(XDataValue::Integer32(layer.transparency.to_dxf_value()));
+            generated.push(record);
         }
 
         // ... and the description as AcAecLayerStandard XDATA, the text being
         // the second of two strings.
-        if !layer.description.is_empty() {
-            self.writer.write_string(1001, "AcAecLayerStandard")?;
-            self.writer.write_string(1000, "")?;
-            self.writer.write_string(1000, &layer.description)?;
+        if !layer.description.is_empty() || document.object_xdata.get(&layer.handle).is_some_and(|data| data.get_record("AcAecLayerStandard").is_some()) {
+            let mut record = crate::xdata::ExtendedDataRecord::new("AcAecLayerStandard");
+            record.values = vec![XDataValue::String(String::new()), XDataValue::String(layer.description.clone())];
+            generated.push(record);
         }
+        self.write_table_xdata(document, layer.handle, &generated)?;
 
         Ok(())
     }
@@ -1271,7 +1275,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 style.true_type_font_flags,
             )?;
         }
-        self.write_annotative_xdata(style.annotative)?;
+        self.write_table_annotative_xdata(document, style.handle, style.annotative)?;
 
         Ok(())
     }
@@ -1283,6 +1287,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         for view in document.views.iter() {
             self.write_view_entry(view, table_handle, document)?;
+            self.write_table_xdata(document, view.handle, &[])?;
         }
 
         self.write_table_end()?;
@@ -1402,6 +1407,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         for ucs in document.ucss.iter() {
             self.write_ucs_entry(ucs, table_handle, document)?;
+            self.write_table_xdata(document, ucs.handle, &[])?;
         }
 
         self.write_table_end()?;
@@ -1501,7 +1507,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_subclass("AcDbRegAppTableRecord")?;
         self.writer.write_string(2, &name)?;
         self.writer.write_i16(70, 0)?;
-
+        self.write_table_xdata(document, appid.handle, &[])?;
         Ok(())
     }
 
@@ -1716,7 +1722,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_i16(371, dimstyle.dimlwd)?;
             self.writer.write_i16(372, dimstyle.dimlwe)?;
         }
-        self.write_annotative_xdata(dimstyle.annotative)?;
+        self.write_table_annotative_xdata(document, dimstyle.handle, dimstyle.annotative)?;
 
         Ok(())
     }
@@ -1774,14 +1780,14 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer
                 .write_i16(281, if block_record.scale_uniformly { 1 } else { 0 })?;
         }
-        if self.dxf_version < DxfVersion::AC1021 && block_record.units != 0 {
+        let mut generated = Vec::new();
+        if self.dxf_version < DxfVersion::AC1021 && (block_record.units != 0 || document.object_xdata.get(&block_record.handle).and_then(|data| data.get_record("ACAD")).is_some_and(|record| record.values.iter().any(|value| matches!(value, XDataValue::String(value) if value == "DesignCenter Data")))) {
             // Older files keep the units in ACAD `DesignCenter Data` xdata.
             let mut units = crate::xdata::ExtendedDataRecord::new("ACAD");
             units.values = crate::tables::block_record::design_center_units_values(block_record.units);
-            let mut xdata = ExtendedData::new();
-            xdata.add_record(units);
-            self.write_xdata(&xdata)?;
+            generated.push(units);
         }
+        self.write_table_xdata(document, block_record.handle, &generated)?;
 
         Ok(())
     }
@@ -9018,6 +9024,30 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             Some(xdata) => self.write_xdata(xdata),
             None => Ok(()),
         }
+    }
+
+    fn write_table_annotative_xdata(&mut self, document: &CadDocument, handle: Handle, annotative: bool) -> Result<()> {
+        let has_source = document.object_xdata.get(&handle).is_some_and(|data| data.get_record("AcadAnnotative").is_some());
+        let mut generated = Vec::new();
+        if annotative || has_source {
+            let mut record = crate::xdata::ExtendedDataRecord::new("AcadAnnotative");
+            record.values = vec![
+                XDataValue::String("AnnotativeData".to_string()),
+                XDataValue::ControlString("{".to_string()),
+                XDataValue::Integer16(1), XDataValue::Integer16(i16::from(annotative)),
+                XDataValue::ControlString("}".to_string()),
+            ];
+            generated.push(record);
+        }
+        self.write_table_xdata(document, handle, &generated)
+    }
+
+    fn write_table_xdata(&mut self, document: &CadDocument, handle: Handle, generated: &[crate::xdata::ExtendedDataRecord]) -> Result<()> {
+        let mut data = document.object_xdata.get(&handle).cloned().unwrap_or_default();
+        for replacement in generated {
+            data.merge_modeled_record(replacement);
+        }
+        self.write_xdata(&data)
     }
 
     /// Write extended data (XDATA)

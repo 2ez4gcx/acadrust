@@ -9129,6 +9129,7 @@ impl<'a> SectionReader<'a> {
             }
 
             if pair.code == 0 && pair.value_string == "LAYER" {
+                self.reader.record_xdata(true);
                 if let Some((layer, xdictionary)) = self.read_layer_entry()? {
                     if let Some(xdictionary) = xdictionary {
                         document.xdic_by_handle.insert(layer.handle, xdictionary);
@@ -9136,6 +9137,7 @@ impl<'a> SectionReader<'a> {
                     document.layers.add_or_replace(layer);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             } else if pair.code == 5 {
                 if let Ok(handle) = u64::from_str_radix(pair.value_string.trim(), 16) {
                     table_handle = Handle::new(handle);
@@ -9273,10 +9275,12 @@ impl<'a> SectionReader<'a> {
                     document.header.linetype_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "LTYPE" {
+                self.reader.record_xdata(true);
                 if let Some(linetype) = self.read_linetype_entry()? {
                     document.line_types.add_or_replace(linetype);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -9418,6 +9422,7 @@ impl<'a> SectionReader<'a> {
                     document.header.style_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "STYLE" {
+                self.reader.record_xdata(true);
                 if let Some(style) = self.read_textstyle_entry()? {
                     // Shape-file styles all have an empty name; keep each one
                     // (as the DWG reader does) or every shape linetype but
@@ -9429,6 +9434,7 @@ impl<'a> SectionReader<'a> {
                     }
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -9552,6 +9558,7 @@ impl<'a> SectionReader<'a> {
                     document.header.block_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "BLOCK_RECORD" {
+                self.reader.record_xdata(true);
                 if let Some((block_record, reactors)) = self.read_block_record_entry()? {
                     if !reactors.is_empty() && !block_record.handle.is_null() {
                         document
@@ -9576,6 +9583,7 @@ impl<'a> SectionReader<'a> {
                     }
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
 
@@ -9721,6 +9729,7 @@ impl<'a> SectionReader<'a> {
                     document.header.dimstyle_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "DIMSTYLE" {
+                self.reader.record_xdata(true);
                 if let Some(mut dimstyle) = self.read_dimstyle_entry()? {
                     // DXF names the dimension text style only by handle (group 340);
                     // resolve the name from the STYLE table, which is read first.
@@ -9736,6 +9745,7 @@ impl<'a> SectionReader<'a> {
                     document.dim_styles.add_or_replace(dimstyle);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -10174,10 +10184,12 @@ impl<'a> SectionReader<'a> {
                     document.header.appid_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "APPID" {
+                self.reader.record_xdata(true);
                 if let Some(appid) = self.read_appid_entry()? {
                     document.app_ids.add_or_replace(appid);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -10224,10 +10236,12 @@ impl<'a> SectionReader<'a> {
                     document.header.view_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "VIEW" {
+                self.reader.record_xdata(true);
                 if let Some(view) = self.read_view_entry()? {
                     document.views.add_or_replace(view);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -10449,10 +10463,12 @@ impl<'a> SectionReader<'a> {
                     document.header.vport_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "VPORT" {
+                self.reader.record_xdata(true);
                 if let Some(vport) = self.read_vport_entry()? {
                     document.vports.add_allow_duplicate(vport);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -10806,10 +10822,12 @@ impl<'a> SectionReader<'a> {
                     document.header.ucs_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "UCS" {
+                self.reader.record_xdata(true);
                 if let Some(ucs) = self.read_ucs_entry()? {
                     document.ucss.add_or_replace(ucs);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -21122,7 +21140,7 @@ impl<'a> SectionReader<'a> {
             || document
                 .objects
                 .get(&handle)
-                .is_none_or(crate::io::dxf::object_has_own_dxf_xdata)
+                .is_some_and(crate::io::dxf::object_has_own_dxf_xdata)
         {
             return Ok(());
         }

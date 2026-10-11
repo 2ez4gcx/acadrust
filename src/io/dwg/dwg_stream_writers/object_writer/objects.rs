@@ -2959,8 +2959,15 @@ impl<'a> DwgObjectWriter<'a> {
 
         if self.version.r2004_plus() {
             self.writer.write_bit_short(0);
-            let (r, g, b) = bc.color.rgb().unwrap_or((0, 0, 0));
-            let true_color = (0xC2u32 << 24) | ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
+            let true_color = match bc.color {
+                crate::types::Color::ByLayer => 0xC000_0000,
+                crate::types::Color::ByBlock => 0xC100_0000,
+                crate::types::Color::Index(index) => 0xC300_0000 | u32::from(index),
+                crate::types::Color::None => 0xC800_0000,
+                crate::types::Color::Rgb { r, g, b } => {
+                    0xC200_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)
+                }
+            };
             self.writer.write_bit_long(true_color as i32);
 
             let mut flags = 0u8;

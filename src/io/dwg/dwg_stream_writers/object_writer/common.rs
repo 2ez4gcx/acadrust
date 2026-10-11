@@ -660,10 +660,64 @@ impl<'a> DwgObjectWriter<'a> {
         Some((app.handle.value(), bytes))
     }
 
+    pub(super) fn annotative_eed_block_for_handle(
+        &self,
+        handle: Handle,
+        annotative: bool,
+    ) -> Option<(u64, Vec<u8>)> {
+        let had_marker = self
+            .existing_xdata_values(handle, "AcadAnnotative")
+            .is_some_and(|values| {
+                values.iter().any(|value| {
+                    matches!(value, crate::xdata::XDataValue::String(label) if label == "AnnotativeData")
+                })
+            });
+        if !annotative && !had_marker {
+            return None;
+        }
+        let app = self.document.app_ids.get("AcadAnnotative")?;
+        let bytes = crate::io::dwg::annotative_eed::encode(self.version.r2007_plus(), annotative);
+        Some((app.handle.value(), bytes))
+    }
+
+    pub(super) fn existing_xdata_values(
+        &self,
+        handle: Handle,
+        application: &str,
+    ) -> Option<Vec<crate::xdata::XDataValue>> {
+        if let Some(record) = self
+            .document
+            .object_xdata
+            .get(&handle)
+            .and_then(|data| data.get_record(application))
+        {
+            return Some(record.values.clone());
+        }
+        let app = self.document.app_ids.get(application)?;
+        let (_, raw) = self
+            .document
+            .eed_by_handle
+            .get(&handle)?
+            .iter()
+            .find(|(app_handle, _)| *app_handle == app.handle.value())?;
+        let source_version = self.document.dwg_source_version.unwrap_or(self.dxf_version);
+        crate::io::dwg::eed_codec::decode_values(
+            raw,
+            source_version >= crate::types::DxfVersion::AC1021,
+            |handle| {
+                self.document
+                    .layers
+                    .iter()
+                    .find(|layer| layer.handle.value() == handle)
+                    .map(|layer| layer.name.clone())
+            },
+        )
+    }
+
     /// As [`write_common_non_entity_data`], but merges one extra EED block
     /// (e.g. the annotative marker) with any raw EED preserved by handle.
-    /// An existing block for the same application is replaced, so the marker
-    /// is written exactly once.
+    /// Modeled values replace their source group, preserving other values in
+    /// the same application payload.
     pub fn write_common_non_entity_data_eed(
         &mut self,
         type_code: i16,
@@ -743,9 +797,42 @@ impl<'a> DwgObjectWriter<'a> {
                 eed.add_record(record.clone());
             }
         }
-        eed.raw_dwg_eed
-            .retain(|(a, _)| !extra_eed.iter().any(|(app, _)| app == a));
-        self.write_extended_data_with(&eed, &extra_eed);
+        let mut opaque_extra = Vec::new();
+        for (app_handle, bytes) in extra_eed {
+            let application = self
+                .document
+                .app_ids
+                .iter()
+                .find(|app| app.handle.value() == app_handle);
+            let values = crate::io::dwg::eed_codec::decode_values(
+                &bytes,
+                self.version.r2007_plus(),
+                |handle| {
+                    self.document
+                        .layers
+                        .iter()
+                        .find(|layer| layer.handle.value() == handle)
+                        .map(|layer| layer.name.clone())
+                },
+            );
+            if let (Some(application), Some(values)) = (application, values) {
+                if eed.get_record(&application.name).is_none() {
+                    if let Some(values) = self.existing_xdata_values(handle, &application.name) {
+                        let mut source = crate::xdata::ExtendedDataRecord::new(&application.name);
+                        source.values = values;
+                        eed.add_record(source);
+                    }
+                }
+                let mut replacement = crate::xdata::ExtendedDataRecord::new(&application.name);
+                replacement.values = values;
+                eed.merge_modeled_record(&replacement);
+                eed.raw_dwg_eed.retain(|(app, _)| *app != app_handle);
+            } else {
+                eed.raw_dwg_eed.retain(|(app, _)| *app != app_handle);
+                opaque_extra.push((app_handle, bytes));
+            }
+        }
+        self.write_extended_data_with(&eed, &opaque_extra);
 
         // ── R13-R14 Only: size placeholder (after xdata, before owner) ──
         if self.version.r13_14_only() {

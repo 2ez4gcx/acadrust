@@ -2834,8 +2834,9 @@ impl DwgDocumentBuilder {
                 for (handle, blocks) in &document.eed_by_handle {
                     match document.objects.get(handle) {
                         // FIELD decodes its XDATA onto `Field::xdata` itself.
-                        None | Some(crate::objects::ObjectType::Field(_)) => continue,
-                        Some(_) => {}
+                        Some(crate::objects::ObjectType::Field(_)) => continue,
+                        None if document.get_entity(*handle).is_some() => continue,
+                        _ => {}
                     }
                     let mut xdata = crate::xdata::ExtendedData::default();
                     for (app_handle, bytes) in blocks {

@@ -54,6 +54,7 @@ impl DwgWriter {
     /// - An I/O error occurs
     /// - The document contains invalid data
     pub fn write_to_file<P: AsRef<Path>>(path: P, document: &CadDocument) -> Result<()> {
+        validate_unknown_records(document)?;
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
         Self::write_to_writer(writer, document)
@@ -61,6 +62,7 @@ impl DwgWriter {
 
     /// Write a DWG file to any `Write + Seek` output.
     pub fn write_to_writer<W: Write + Seek>(mut output: W, document: &CadDocument) -> Result<()> {
+        validate_unknown_records(document)?;
         if document.version == DxfVersion::AC1009 {
             let bytes = crate::io::dwg::r12::write_document(document)?;
             output.write_all(&bytes)?;
@@ -72,6 +74,7 @@ impl DwgWriter {
         prepare_table_keys(&mut prepared);
         prepare_active_viewport_elevation(&mut prepared);
         prepare_roundtrip_records(&mut prepared);
+        prepare_book_colors(&mut prepared)?;
         let document = prepared.as_ref();
         let perf = std::env::var_os("PERF").is_some();
         let started = web_time::Instant::now();
@@ -136,6 +139,7 @@ impl DwgWriter {
     /// Useful for isolating whether a read error is caused by compression
     /// or by the object data itself.
     pub fn write_to_file_no_lz77<P: AsRef<Path>>(path: P, document: &CadDocument) -> Result<()> {
+        validate_unknown_records(document)?;
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
         Self::write_to_writer_no_lz77(writer, document)
@@ -146,6 +150,7 @@ impl DwgWriter {
         mut output: W,
         document: &CadDocument,
     ) -> Result<()> {
+        validate_unknown_records(document)?;
         validate_version(document.version)?;
         let mut prepared = crate::io::loft_parameters::prepared(document);
         prepare_surface_classes(&mut prepared);
@@ -153,6 +158,7 @@ impl DwgWriter {
         prepare_table_keys(&mut prepared);
         prepare_active_viewport_elevation(&mut prepared);
         prepare_roundtrip_records(&mut prepared);
+        prepare_book_colors(&mut prepared)?;
         write_ac21_impl(&mut output, prepared.as_ref(), document.version, true)
     }
 
@@ -178,6 +184,131 @@ pub(crate) fn prepare_active_viewport_elevation(document: &mut std::borrow::Cow<
             }
         }
     }
+}
+
+fn validate_unknown_records(document: &CadDocument) -> Result<()> {
+    for entity in document.entities() {
+        if document.version < DxfVersion::AC1018 {
+            if let crate::entities::EntityType::Insert(insert) = entity {
+                for attribute in &insert.attributes {
+                    if attribute.common.color_name.as_ref().is_some_and(|name| !name.is_empty())
+                        || attribute.common.color_book_handle.is_some_and(|handle| !handle.is_null())
+                    {
+                        return Err(DxfError::NotImplemented(format!(
+                            "Named color on attribute {} requires DWG R2004 or later",
+                            attribute.common.handle
+                        )));
+                    }
+                }
+            }
+        }
+        if document.version < DxfVersion::AC1018
+            && (entity.common().color_name.as_ref().is_some_and(|name| !name.is_empty())
+                || entity.common().color_book_handle.is_some_and(|handle| !handle.is_null()))
+        {
+            return Err(DxfError::NotImplemented(format!(
+                "Named color on entity {} requires DWG R2004 or later",
+                entity.common().handle
+            )));
+        }
+        if let crate::entities::EntityType::Unknown(entity) = entity {
+            if entity.raw_dwg_data.is_none()
+                || entity.dwg_source_version.is_some_and(|version| version != document.version)
+                || document.version == DxfVersion::AC1009
+            {
+                return Err(DxfError::NotImplemented(format!(
+                    "Cannot encode custom entity {} at handle {} as DWG {:?}: compatible raw DWG data is required",
+                    entity.dxf_name, entity.common.handle, document.version
+                )));
+            }
+        }
+    }
+    for object in document.objects.values() {
+        if let crate::objects::ObjectType::Unknown {
+            type_name, handle, raw_dwg_data, raw_dwg_version, ..
+        } = object {
+            if raw_dwg_data.is_none()
+                || raw_dwg_version.is_some_and(|version| version != document.version)
+                || document.version == DxfVersion::AC1009
+            {
+                return Err(DxfError::NotImplemented(format!(
+                    "Cannot encode custom object {type_name} at handle {handle} as DWG {:?}: compatible raw DWG data is required",
+                    document.version
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn prepare_book_colors(document: &mut std::borrow::Cow<'_, CadDocument>) -> Result<()> {
+    use crate::objects::{BookColor, ObjectType};
+    let mut missing = Vec::new();
+    let mut collect = |owner, attribute_index, common: &crate::entities::EntityCommon| {
+        let Some(name) = common.color_name.as_ref().filter(|name| !name.is_empty()) else {
+            return;
+        };
+        let existing = common.color_book_handle.and_then(|handle| document.objects.get(&handle));
+        if let Some(ObjectType::BookColor(color)) = existing {
+            let identity = crate::io::dxf::join_color_book_name(Some(&color.book_name), Some(&color.color_name));
+            if identity.as_ref().is_some_and(|identity| identity.eq_ignore_ascii_case(name)) && color.color == common.color {
+                return;
+            }
+        }
+        missing.push((owner, attribute_index, common.color, name.clone()));
+    };
+    for entity in document.entities() {
+        let owner = entity.common().handle;
+        collect(owner, None, entity.common());
+        if let crate::entities::EntityType::Insert(insert) = entity {
+            for (index, attribute) in insert.attributes.iter().enumerate() {
+                collect(owner, Some(index), &attribute.common);
+            }
+        }
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+    if document.version < DxfVersion::AC1018 {
+        return Err(DxfError::NotImplemented(
+            "Named entity colors require DWG R2004 or later".to_string(),
+        ));
+    }
+    let output = document.to_mut();
+    output.synchronize_handle_allocator();
+    for (entity_handle, attribute_index, color, name) in missing {
+        let (book_name, color_name) = crate::io::dxf::split_color_book_name(&name);
+        let book_name = book_name.unwrap_or_default();
+        let color_name = color_name.unwrap_or_default();
+        let existing = output.objects.iter().find_map(|(handle, object)| match object {
+            ObjectType::BookColor(value)
+                if value.book_name == book_name && value.color_name == color_name && value.color == color => Some(*handle),
+            _ => None,
+        });
+        let handle = existing.unwrap_or_else(|| {
+            let handle = output.allocate_handle();
+            let mut value = BookColor::new();
+            value.handle = handle;
+            value.owner = output.header.named_objects_dict_handle;
+            value.color = color;
+            value.book_name = book_name;
+            value.color_name = color_name;
+            output.objects.insert(handle, ObjectType::BookColor(value));
+            handle
+        });
+        if let Some(entity) = output.get_entity_mut(entity_handle) {
+            let common = if let Some(index) = attribute_index {
+                let crate::entities::EntityType::Insert(insert) = entity else {
+                    continue;
+                };
+                &mut insert.attributes[index].common
+            } else {
+                entity.common_mut()
+            };
+            common.color_book_handle = Some(handle);
+        }
+    }
+    Ok(())
 }
 
 /// Repair relationships that are stored in both directions in a DWG database.
