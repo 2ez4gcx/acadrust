@@ -39,6 +39,26 @@ fn modeler_record(
     point_count: i32,
     surface: bool,
 ) -> (DwgMergedReader, Vec<u8>, i64) {
+    modeler_record_with_silhouette(
+        dxf_version,
+        bit_offset,
+        color,
+        full_width_color,
+        point_count,
+        surface,
+        None,
+    )
+}
+
+fn modeler_record_with_silhouette(
+    dxf_version: DxfVersion,
+    bit_offset: i64,
+    color: i16,
+    full_width_color: bool,
+    point_count: i32,
+    surface: bool,
+    silhouette_viewport: Option<i64>,
+) -> (DwgMergedReader, Vec<u8>, i64) {
     let version = DwgVersion::from_dxf_version(dxf_version).unwrap();
     let mut writer = DwgBitWriter::new(version, dxf_version);
     for _ in 0..bit_offset {
@@ -72,7 +92,21 @@ fn modeler_record(
         writer.write_3bit_double(Vector3::new(10.0, 20.0, -5.0));
     }
     writer.write_bit(false); // wire transform
-    writer.write_bit_long(0); // silhouettes
+    if let Some(viewport_id) = silhouette_viewport {
+        writer.write_bit_long(1); // silhouettes
+        if version.r2013_plus(dxf_version) {
+            writer.write_bit_long_long(viewport_id);
+        } else {
+            writer.write_bit_long(viewport_id as i32);
+        }
+        writer.write_3bit_double(Vector3::ZERO); // target
+        writer.write_3bit_double(Vector3::UNIT_Z); // view direction
+        writer.write_3bit_double(Vector3::UNIT_Y); // up vector
+        writer.write_bit(false); // perspective
+        writer.write_bit(false); // no silhouette wires
+    } else {
+        writer.write_bit_long(0); // silhouettes
+    }
     writer.write_bit(true); // no extra ACIS body
     if version.r2007_plus() {
         writer.write_bit_long(0); // materials / AcDs trailing BL
@@ -157,6 +191,34 @@ fn native_bit_short_wire_colors_preserve_counts_geometry_and_tail() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn silhouette_viewport_width_matches_the_dwg_generation() {
+    for dxf_version in [DxfVersion::AC1018, DxfVersion::AC1032] {
+        let version = DwgVersion::from_dxf_version(dxf_version).unwrap();
+        let viewport_id = 0x1234_i64;
+        let (mut reader, _, end) = modeler_record_with_silhouette(
+            dxf_version,
+            3,
+            256,
+            true,
+            2,
+            false,
+            Some(viewport_id),
+        );
+        let body = read_acis_entity(
+            &mut reader,
+            version,
+            dxf_version,
+            version.r2013_plus(dxf_version),
+        );
+        reader.check_error().unwrap();
+        assert_eq!(reader.position_in_bits(), end);
+        assert_eq!(body.silhouettes.len(), 1);
+        assert_eq!(body.silhouettes[0].viewport_id, viewport_id);
+        assert!(!body.silhouettes[0].has_wires);
     }
 }
 
@@ -266,6 +328,41 @@ fn modeler_entities_survive_strict_and_failsafe_file_reading() {
                 };
                 assert_eq!(parsed.bodies().len(), 1);
             }
+        }
+    }
+}
+
+#[test]
+fn supplied_issue129_samples_keep_modeler_entities() {
+    let root = std::path::Path::new("issuesamples");
+    if !root.is_dir() {
+        return;
+    }
+    let mut files: Vec<_> = std::fs::read_dir(root)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("dwg")))
+        .collect();
+    files.sort();
+    assert_eq!(files.len(), 6);
+    for path in files {
+        let mut strict = DwgReader::from_file(&path).unwrap();
+        let document = strict.read().unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let name = path.file_name().unwrap().to_string_lossy();
+        if name == "NECG76A.dwg" {
+            let surfaces = document.entities().filter(|entity| matches!(entity, EntityType::Surface(_))).count();
+            assert_eq!(surfaces, 28, "{}", path.display());
+        } else {
+            let expected = match name.as_ref() {
+                "NEBE72GL.dwg" => 7,
+                "NEBE74GL.dwg" => 9,
+                "NECI94GE.dwg" => 5,
+                "NEFE73210.dwg" => 14,
+                "NEFE74215.dwg" => 15,
+                _ => unreachable!(),
+            };
+            let solids = document.entities().filter(|entity| matches!(entity, EntityType::Solid3D(_))).count();
+            assert_eq!(solids, expected, "{}", path.display());
         }
     }
 }

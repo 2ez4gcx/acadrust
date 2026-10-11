@@ -5418,7 +5418,13 @@ fn read_acis_entity_impl(
         // the isoline-data gate above.
         let num_silhouettes = safe_count(reader.read_bit_long(), reader);
         for _ in 0..num_silhouettes {
-            let viewport_id = reader.read_bit_long_long();
+            // R2004 and earlier store the silhouette viewport as a BL.  The
+            // R2013+ COMMON_3DSOLID layout widened it to BLL.
+            let viewport_id = if version.r2013_plus(dxf_version) {
+                reader.read_bit_long_long()
+            } else {
+                i64::from(reader.read_bit_long())
+            };
             let target = reader.read_3bit_double();
             let view_direction = reader.read_3bit_double();
             let up_vector = reader.read_3bit_double();
@@ -5611,7 +5617,18 @@ pub fn read_surface(
     has_ds_data: bool,
     kind: SurfaceKind,
 ) -> SurfaceEntityData {
-    let acis = read_acis_entity_impl(reader, version, dxf_version, has_ds_data, true, false, None)
+    // The optional extra modeler block belongs to AcDs-backed surfaces. On
+    // inline ACIS surfaces the next fields are the surface isoline counts;
+    // probing them as an extra ACIS payload shifts the record by one bit.
+    let acis = read_acis_entity_impl(
+        reader,
+        version,
+        dxf_version,
+        has_ds_data,
+        false,
+        false,
+        None,
+    )
         .expect("database surface decoding retains unrecognized legacy payloads");
     // Surface records do not have the 3DSOLID history-id handle slot.
     let history_handle = 0;
@@ -5811,8 +5828,6 @@ pub fn read_surface(
 fn read_wire(reader: &mut DwgMergedReader) -> Wire {
     let wire_type_raw = reader.read_byte();
     let selection_marker = reader.read_bit_long();
-    // Wire colors remain BS in R2004+; BL consumes the next field's bits
-    // for the full-width ByLayer value (256) and shifts point counts.
     let color_val = reader.read_bit_short();
     let acis_index = reader.read_bit_long();
     let num_pts = safe_count(reader.read_bit_long(), reader);

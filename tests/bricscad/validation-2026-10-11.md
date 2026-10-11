@@ -41,8 +41,8 @@ that behavior. The runner keeps the suppression checks strict.
 The legacy binary load and DIMSTYLE audit failures remain unresolved native
 interoperability limitations. They are not counted as successful tests.
 
-Issue #129's original private drawings were unavailable. The wire-width fix is
-verified against independent format encodings and native solid volume, but
-does not prove every ACIS layout decodes. A separate BricsCAD-resaved modeler
-fixture still produced an array-count error in acadrust; further ACIS layout
-work remains necessary for that fixture.
+The supplied issuesamples/*.dwg corpus is now covered by
+tests/issue129.rs: all five AC1018 drawings strict-read with the exact
+3DSOLID totals from the report, and NECG76A.dwg strict-reads all 28
+SURFACE entities. The test intentionally skips when the locally supplied
+folder is absent from another checkout.

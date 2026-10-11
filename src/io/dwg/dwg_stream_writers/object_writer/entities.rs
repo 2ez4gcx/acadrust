@@ -5762,7 +5762,11 @@ impl<'a> DwgObjectWriter<'a> {
 
             self.writer.write_bit_long(silhouettes.len() as i32);
             for sil in silhouettes {
-                self.writer.write_bit_long_long(sil.viewport_id);
+                if self.version.r2013_plus(self.dxf_version) {
+                    self.writer.write_bit_long_long(sil.viewport_id);
+                } else {
+                    self.writer.write_bit_long(sil.viewport_id as i32);
+                }
                 self.writer.write_3bit_double(sil.target);
                 self.writer.write_3bit_double(sil.view_direction);
                 self.writer.write_3bit_double(sil.up_vector);
