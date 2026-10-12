@@ -1074,6 +1074,37 @@ impl DwgDocumentBuilder {
             let active_model = document.header.model_space_block_handle;
             let active_paper = document.header.paper_space_block_handle;
 
+            // Down-saved dynamic definitions use an anonymous table name and
+            // preserve their public name in AcDbDynamicBlockTrueName XData.
+            // Restore it before deduplication and INSERT name resolution.
+            let true_name_app = parsed_entries.iter().find_map(|entry| match entry {
+                ParsedEntry::AppId(handle, data) if data.name == "AcDbDynamicBlockTrueName" => Some(*handle),
+                _ => None,
+            });
+            if let Some(app) = true_name_app {
+                for entry in &mut parsed_entries {
+                    if let ParsedEntry::Block(handle, data) = entry {
+                        if !data.name.starts_with("*U") { continue; }
+                        let name = document.eed_by_handle.get(&Handle::from(*handle))
+                            .and_then(|records| records.iter().find(|(h, _)| *h == app))
+                            .and_then(|(_, bytes)| crate::io::dwg::eed_codec::decode_values(bytes, self.obj_reader.version().r2007_plus(), |_| None))
+                            .and_then(|values| values.into_iter().find_map(|v| match v {
+                                crate::xdata::XDataValue::String(s) if !s.is_empty() && !s.starts_with('*') => Some(s), _ => None,
+                            }));
+                        if let Some(name) = name {
+                            // Anonymous cached copies may retain the same XData.
+                            // A live named definition already owns that identity.
+                            if maps.blocks.iter().any(|(h, n)| h != handle && n.eq_ignore_ascii_case(&name)) {
+                                continue;
+                            }
+                            data.name = name.clone();
+                            data.anonymous = false;
+                            maps.blocks.insert(*handle, name);
+                        }
+                    }
+                }
+            }
+
             // Collect (index, handle, name) for all Block entries
             let block_info: Vec<(usize, u64, String)> = parsed_entries
                 .iter()
@@ -1087,13 +1118,20 @@ impl DwgDocumentBuilder {
                 })
                 .collect();
 
-            // The BLOCK begin marker stores the definition's full name
-            // ("*U25", "*Paper_Space3") where the record keeps only the bare
-            // prefix. Reconstructing the suffix from control order drifts
-            // past null or erased slots (#55, #66), so the marker's name wins
-            // whenever it extends the record's own.
+            // Recover paper-space suffixes from the BLOCK begin marker;
+            // control order can drift past null or erased slots (#55, #66).
+            // Bare anonymous records instead take AutoCAD's reopen numbering
+            // below, since their marker suffix can be stale after evaluation.
             for (idx, h, name) in &block_info {
                 if !name.starts_with('*') {
+                    continue;
+                }
+                // Bare anonymous records are renumbered from live control
+                // entries when AutoCAD opens the database. Their BLOCK marker
+                // may retain an older evaluation suffix (e.g. *U18 versus *U2).
+                // Keep those bare until anonymous_block_names resolves them;
+                // marker suffixes remain useful for paper-space records.
+                if name.len() == 2 {
                     continue;
                 }
                 let ParsedEntry::Block(_, ref data) = parsed_entries[*idx] else {
@@ -5014,7 +5052,12 @@ impl DwgDocumentBuilder {
                     };
                     e.wires = data.wires;
                     e.silhouettes = data.silhouettes;
-                    if self.obj_reader.version().r2007_plus() && !e.common.has_ds_data {
+                    // Some native R2007 BODY records end after common handles
+                    // and contain only byte padding, with no history slot.
+                    if self.obj_reader.version().r2007_plus()
+                        && !e.common.has_ds_data
+                        && reader.handle_remaining_bits() >= 8
+                    {
                         let h = reader.read_handle();
                         if h != 0 {
                             e.history_handle = Some(Handle::new(h));
@@ -7333,7 +7376,8 @@ impl DwgDocumentBuilder {
         }
     }
 
-    /// Limit opaque recovery to the auxiliary schemas reported in #134.
+    /// Preserve unsupported auxiliary payload variants only after separately
+    /// validating their record framing, identity and common object metadata.
     fn is_recoverable_auxiliary_class(
         class_names: &ClassNames,
         raw_type_code: i16,
@@ -7352,6 +7396,9 @@ impl DwgDocumentBuilder {
                     | "ASSOCGEOMDEPENDENCY"
                     | "ACDBASSOCEDGEACTIONPARAM"
                     | "ASSOCEDGEACTIONPARAM"
+                    | "LSDEFINITION"
+                    | "LSSTROKEPATTERNCOMPONENT"
+                    | "ACDBASSOCARRAYACTIONBODY"
             )
         )
     }
