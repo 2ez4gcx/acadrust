@@ -230,6 +230,32 @@ pub(crate) fn read_document(
     document.version = DxfVersion::AC1009;
     document.maintenance_version = header.maintenance_version;
     header.apply_variables(&mut document.header)?;
+    // R12 stores table indices in the header. Resolve them after importing
+    // tables; the DXF bridge cannot infer these references from entity records.
+    let table_name = |table: usize, index: i16| {
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| table_records[table].get(index))
+            .map(|record| record.string(2))
+    };
+    if let Some(layer) =
+        table_name(1, header.references.layer_index).and_then(|name| document.layers.get(name))
+    {
+        document.header.current_layer_handle = layer.handle;
+    }
+    if let Some(style) = table_name(2, header.references.text_style_index)
+        .and_then(|name| document.text_styles.get(name))
+    {
+        document.header.current_text_style_handle = style.handle;
+    }
+    let linetype_name = match header.references.linetype_index {
+        32767 | -1 => Some("ByLayer"),
+        32766 | -2 => Some("ByBlock"),
+        index => table_name(3, index),
+    };
+    if let Some(linetype) = linetype_name.and_then(|name| document.line_types.get(name)) {
+        document.header.current_linetype_handle = linetype.handle;
+    }
     document.synchronize_handle_allocator();
     document.dwg_source_version = Some(DxfVersion::AC1009);
     Ok(document)

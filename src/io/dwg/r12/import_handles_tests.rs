@@ -13,6 +13,16 @@ fn fixture(
     entities: &[EntityRecord],
     blocks: &[EntityRecord],
 ) -> Vec<u8> {
+    fixture_with_references(seed, tables, entities, blocks, HeaderReferences::default())
+}
+
+fn fixture_with_references(
+    seed: u64,
+    tables: &[Vec<EntityRecord>; 10],
+    entities: &[EntityRecord],
+    blocks: &[EntityRecord],
+    references: HeaderReferences,
+) -> Vec<u8> {
     let refs = ensure_table_defaults(tables::entity_tables(tables));
     let entity_bytes =
         encode_entities(entities, &refs, header::ENTITIES_START, "ANSI_1252").unwrap();
@@ -53,15 +63,7 @@ fn fixture(
     };
     let mut vars = crate::document::HeaderVariables::default();
     vars.handle_seed = seed;
-    let mut out = write_header(
-        &vars,
-        layout,
-        &locators,
-        HeaderReferences::default(),
-        0,
-        None,
-    )
-    .unwrap();
+    let mut out = write_header(&vars, layout, &locators, references, 0, None).unwrap();
     out[0x4ec..0x4ee].copy_from_slice(&u16::from(seed != 0).to_le_bytes()); // HANDLING disabled: every entity receives an import handle.
     let crc = crate::io::dwg::crc::crc16(
         crate::io::dwg::crc::CRC16_SEED,
@@ -263,4 +265,48 @@ fn import_handle_overflow_is_rejected() {
         import_handles::ImportHandles::assign(u64::MAX, &mut tables, &mut [], &mut [], None)
             .is_err()
     );
+}
+
+#[test]
+fn legacy_header_indices_resolve_to_imported_table_handles() {
+    let mut tables: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
+    tables[1] = vec![
+        record("LAYER", &[(2, "0")]),
+        record("LAYER", &[(2, "WORK")]),
+    ];
+    tables[2] = vec![
+        record("STYLE", &[(2, "STANDARD")]),
+        record("STYLE", &[(2, "LABEL")]),
+    ];
+    tables[3] = vec![
+        record("LTYPE", &[(2, "CONTINUOUS")]),
+        record("LTYPE", &[(2, "DASHED")]),
+    ];
+    for index in [1, -1, -2] {
+        let refs = HeaderReferences {
+            layer_index: 1,
+            text_style_index: 1,
+            linetype_index: index,
+            ..Default::default()
+        };
+        let doc =
+            read_document(&fixture_with_references(0, &tables, &[], &[], refs), None).unwrap();
+        assert_eq!(
+            doc.header.current_layer_handle,
+            doc.layers.get("WORK").unwrap().handle
+        );
+        assert_eq!(
+            doc.header.current_text_style_handle,
+            doc.text_styles.get("LABEL").unwrap().handle
+        );
+        let name = match index {
+            -1 => "ByLayer",
+            -2 => "ByBlock",
+            _ => "DASHED",
+        };
+        assert_eq!(
+            doc.header.current_linetype_handle,
+            doc.line_types.get(name).unwrap().handle
+        );
+    }
 }
