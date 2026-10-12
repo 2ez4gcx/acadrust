@@ -202,7 +202,8 @@ pub(crate) fn read_document(data: &[u8]) -> Result<CadDocument> {
     let mut document = DxfReader::from_reader(Cursor::new(dxf))?.read()?;
     document.version = DxfVersion::AC1009;
     document.maintenance_version = header.maintenance_version;
-    document.header = header.variables;
+    header.apply_variables(&mut document.header)?;
+    document.synchronize_handle_allocator();
     document.dwg_source_version = Some(DxfVersion::AC1009);
     Ok(document)
 }

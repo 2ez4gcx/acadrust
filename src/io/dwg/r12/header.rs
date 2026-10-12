@@ -135,6 +135,24 @@ pub struct R12Header {
     pub raw: Vec<u8>,
 }
 
+impl R12Header {
+    /// Apply the variables stored in R12 without replacing references to
+    /// dictionaries, layouts and other objects created by the importer.
+    pub(crate) fn apply_variables(&self, target: &mut HeaderVariables) -> Result<()> {
+        let mut codec = Codec::reading(self.raw.clone());
+        codec.encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(
+            u16::from_le_bytes(self.raw[0x3f9..0x3fb].try_into().unwrap()),
+        );
+        codec.pos = 0x5e;
+        variables(
+            &mut codec,
+            target,
+            &mut self.references.clone(),
+            self.num_header_variables,
+        )
+    }
+}
+
 pub fn read_header(data: &[u8]) -> Result<R12Header> {
     if data.len() < 0x6cd || !matches!(data.get(..6), Some(b"AC1009" | b"AD1009")) {
         return Err(DxfError::InvalidFormat("Invalid AC1009 header".into()));
