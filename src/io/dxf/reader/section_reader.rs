@@ -16034,8 +16034,16 @@ impl<'a> SectionReader<'a> {
                                 }
                             }
                             "SEQEND" => {
-                                // Consume SEQEND contents and stop
-                                self.skip_entity()?;
+                                // The sequence marker has its own persistent identity.
+                                while let Some(pair) = self.reader.read_pair()? {
+                                    if pair.code == 0 {
+                                        self.reader.push_back(pair);
+                                        break;
+                                    }
+                                    if pair.code == 5 {
+                                        insert.seqend_handle = pair.as_handle().map(Handle::new);
+                                    }
+                                }
                                 break;
                             }
                             _ => {

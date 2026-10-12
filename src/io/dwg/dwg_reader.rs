@@ -830,6 +830,7 @@ pub struct DwgReader<R: Read + Seek> {
     /// callers can map DWG parsing into a larger file-open pipeline without
     /// coupling this crate to a UI or an async runtime.
     progress: Option<std::sync::Arc<dyn Fn(u16) + Send + Sync>>,
+    legacy_font_resolver: Option<std::sync::Arc<crate::io::dwg::r12::ImportFontResolver>>,
 }
 
 impl DwgReader<File> {
@@ -851,6 +852,7 @@ impl DwgReader<File> {
             notifications: NotificationCollection::new(),
             source_path: Some(path.to_string_lossy().into_owned()),
             progress: None,
+            legacy_font_resolver: None,
         })
     }
 }
@@ -871,11 +873,32 @@ impl DwgReader<Cursor<memmap2::Mmap>> {
             notifications: NotificationCollection::new(),
             source_path: Some(path.to_string_lossy().into_owned()),
             progress: None,
+            legacy_font_resolver: None,
         })
     }
 }
 
 impl<R: Read + Seek> DwgReader<R> {
+    /// Resolve legacy font files to canonical identities during R12 import.
+    ///
+    /// Missing R12 object handles are synthesized in import order. Loading a
+    /// text font consumes a transient identity once per resolved font; aliases
+    /// and unavailable fonts substituted with the same fallback share that
+    /// identity. Supply the writer's font resolution when matching identities
+    /// across a native reader and another application's writer.
+    ///
+    /// The callback receives the stored font filename and returns a stable key
+    /// for the resolved font, including any fallback. No font files are read by
+    /// acadrust. Without this callback, stored font names identify distinct fonts.
+    /// Existing entity handles are preserved in either mode.
+    pub fn with_legacy_font_resolver<F>(mut self, resolver: F) -> Self
+    where
+        F: Fn(&str) -> String + Send + Sync + 'static,
+    {
+        self.legacy_font_resolver = Some(std::sync::Arc::new(resolver));
+        self
+    }
+
     /// Create a reader from any seekable stream.
     pub fn from_stream(stream: R) -> Self {
         Self {
@@ -884,6 +907,7 @@ impl<R: Read + Seek> DwgReader<R> {
             notifications: NotificationCollection::new(),
             source_path: None,
             progress: None,
+            legacy_font_resolver: None,
         }
     }
 
@@ -895,6 +919,7 @@ impl<R: Read + Seek> DwgReader<R> {
             notifications: NotificationCollection::new(),
             source_path: None,
             progress: None,
+            legacy_font_resolver: None,
         }
     }
 
@@ -980,7 +1005,7 @@ impl<R: Read + Seek> DwgReader<R> {
         if magic == *b"AC1009" || magic == *b"AD1009" {
             let mut bytes = Vec::new();
             self.stream.read_to_end(&mut bytes)?;
-            let mut document = crate::io::dwg::r12::read_document(&bytes)?;
+            let mut document = crate::io::dwg::r12::read_document(&bytes, self.legacy_font_resolver.as_deref())?;
             if let Some(visit) = visit {
                 let handles: Vec<_> = document
                     .entities()
