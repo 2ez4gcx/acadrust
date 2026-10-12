@@ -49,3 +49,67 @@ fn multiline_attribute_and_definition_styles_survive_a_dwg_roundtrip() {
     assert_eq!(def.default_value, "First\\PSecond");
     assert_eq!(def.tag, "TITLE");
 }
+
+#[test]
+fn empty_multiline_values_override_stale_single_line_text() {
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let mut att = AttributeEntity::simple("EMPTY", "stale value");
+    att.is_multiline = true;
+    att.embedded_mtext = Some(Box::new(MText::with_value("", Vector3::ZERO)));
+    let mut insert = Insert::new("*Model_Space", Vector3::ZERO);
+    insert.attributes.push(att);
+    let insert = doc.add_entity(EntityType::Insert(insert)).unwrap();
+    let mut def = AttributeDefinition::simple("EMPTY");
+    def.default_value = "stale default".into();
+    def.is_multiline = true;
+    def.embedded_mtext = Some(Box::new(MText::with_value("", Vector3::ZERO)));
+    let definition = doc
+        .add_entity(EntityType::AttributeDefinition(def))
+        .unwrap();
+    let loaded = DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(&doc).unwrap()))
+        .read()
+        .unwrap();
+    let EntityType::Insert(i) = loaded.get_entity(insert).unwrap() else {
+        panic!()
+    };
+    assert_eq!(i.attributes[0].value, "");
+    let EntityType::AttributeDefinition(d) = loaded.get_entity(definition).unwrap() else {
+        panic!()
+    };
+    assert_eq!(d.default_value, "");
+}
+
+#[test]
+fn legacy_multiline_tag_comes_from_the_roundtrip_record() {
+    use acadrust::objects::{XRecordEntry, XRecordValue};
+    let mut doc = CadDocument::with_version(DxfVersion::AC1021);
+    let handle = doc
+        .add_entity(EntityType::AttributeDefinition(
+            AttributeDefinition::simple("NOTE_001"),
+        ))
+        .unwrap();
+    doc.ensure_xrecord(handle, "ACAD_MLATT");
+    doc.xrecord_mut(handle, "ACAD_MLATT").unwrap().entries = vec![
+        XRecordEntry {
+            code: 70,
+            value: XRecordValue::Int16(4),
+        },
+        XRecordEntry {
+            code: 2,
+            value: XRecordValue::String("NOTE".into()),
+        },
+        XRecordEntry {
+            code: 1,
+            value: XRecordValue::String("Embedded Object".into()),
+        },
+    ];
+    let loaded = DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(&doc).unwrap()))
+        .read()
+        .unwrap();
+    let EntityType::AttributeDefinition(d) = loaded.get_entity(handle).unwrap() else {
+        panic!()
+    };
+    assert_eq!(d.tag, "NOTE");
+    assert!(d.common.raw_record.is_some(), "Derived tag resolution must preserve raw records");
+    assert!(loaded.xrecord(handle, "ACAD_MLATT").is_some());
+}

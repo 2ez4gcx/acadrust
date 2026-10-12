@@ -2,7 +2,13 @@
 
 pub mod entities;
 pub mod header;
+mod import_handles;
 pub(crate) mod tables;
+
+pub(crate) type ImportFontResolver = dyn Fn(&str) -> String + Send + Sync;
+
+#[cfg(test)]
+mod import_handles_tests;
 
 use std::io::Cursor;
 
@@ -103,14 +109,23 @@ fn write_record_section(out: &mut String, name: &str, records: &[EntityRecord]) 
     out.push_str("0\nENDSEC\n");
 }
 
-fn table_section_to_dxf(out: &mut String, records: &[Vec<EntityRecord>; 10]) {
+fn table_section_to_dxf(
+    out: &mut String,
+    records: &[Vec<EntityRecord>; 10],
+    handles: &import_handles::ImportHandles,
+) {
     out.push_str("0\nSECTION\n2\nTABLES\n");
     for (index, rows) in records.iter().enumerate() {
         if rows.is_empty() {
             continue;
         }
         out.push_str("0\nTABLE\n2\n");
-        out.push_str(crate::io::dwg::r12::header::TABLE_NAMES[index]);
+        out.push_str(if index == 0 {
+            "BLOCK_RECORD"
+        } else {
+            crate::io::dwg::r12::header::TABLE_NAMES[index]
+        });
+        out.push_str(&format!("\n5\n{:X}", handles.control(index)));
         out.push_str("\n70\n");
         out.push_str(&rows.len().to_string());
         out.push('\n');
@@ -138,9 +153,10 @@ fn records_to_dxf(
     entities: &[EntityRecord],
     blocks: &[EntityRecord],
     tables: &[Vec<EntityRecord>; 10],
+    handles: &import_handles::ImportHandles,
 ) -> Vec<u8> {
     let mut out = String::from("0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1009\n0\nENDSEC\n");
-    table_section_to_dxf(&mut out, tables);
+    table_section_to_dxf(&mut out, tables, handles);
     write_record_section(&mut out, "ENTITIES", entities);
     if !blocks.is_empty() {
         write_record_section(&mut out, "BLOCKS", blocks);
@@ -149,9 +165,12 @@ fn records_to_dxf(
     out.into_bytes()
 }
 
-pub(crate) fn read_document(data: &[u8]) -> Result<CadDocument> {
+pub(crate) fn read_document(
+    data: &[u8],
+    font_resolver: Option<&ImportFontResolver>,
+) -> Result<CadDocument> {
     let header = read_header(data)?;
-    let table_records =
+    let mut table_records =
         tables::decode_tables(data, &header.tables, header.variables.code_page.as_str())?;
     let tables = ensure_table_defaults(tables::entity_tables(&table_records));
     let code_page = header.variables.code_page.as_str();
@@ -168,7 +187,7 @@ pub(crate) fn read_document(data: &[u8]) -> Result<CadDocument> {
         &tables,
         code_page,
     )?;
-    let blocks = if header.layout.blocks_size != 0 {
+    let mut blocks = if header.layout.blocks_size != 0 {
         section_records(
             data,
             header.layout.blocks_start,
@@ -198,11 +217,46 @@ pub(crate) fn read_document(data: &[u8]) -> Result<CadDocument> {
     };
     let mut entities = entities;
     entities.extend(extras);
-    let dxf = records_to_dxf(&entities, &blocks, &table_records);
+    let handles = import_handles::ImportHandles::assign(
+        header.variables.handle_seed,
+        &mut table_records,
+        &mut blocks,
+        &mut entities,
+        font_resolver,
+    )?;
+    let dxf = records_to_dxf(&entities, &blocks, &table_records, &handles);
     let mut document = DxfReader::from_reader(Cursor::new(dxf))?.read()?;
+    handles.apply_layouts(&mut document)?;
     document.version = DxfVersion::AC1009;
     document.maintenance_version = header.maintenance_version;
-    document.header = header.variables;
+    header.apply_variables(&mut document.header)?;
+    // R12 stores table indices in the header. Resolve them after importing
+    // tables; the DXF bridge cannot infer these references from entity records.
+    let table_name = |table: usize, index: i16| {
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| table_records[table].get(index))
+            .map(|record| record.string(2))
+    };
+    if let Some(layer) =
+        table_name(1, header.references.layer_index).and_then(|name| document.layers.get(name))
+    {
+        document.header.current_layer_handle = layer.handle;
+    }
+    if let Some(style) = table_name(2, header.references.text_style_index)
+        .and_then(|name| document.text_styles.get(name))
+    {
+        document.header.current_text_style_handle = style.handle;
+    }
+    let linetype_name = match header.references.linetype_index {
+        32767 | -1 => Some("ByLayer"),
+        32766 | -2 => Some("ByBlock"),
+        index => table_name(3, index),
+    };
+    if let Some(linetype) = linetype_name.and_then(|name| document.line_types.get(name)) {
+        document.header.current_linetype_handle = linetype.handle;
+    }
+    document.synchronize_handle_allocator();
     document.dwg_source_version = Some(DxfVersion::AC1009);
     Ok(document)
 }

@@ -326,15 +326,39 @@ pub fn audit_entity(entity: &EntityType, location: AuditLocation, report: &mut A
 }
 
 fn invalidate_object_passthrough(object: &mut ObjectType) {
-    if let ObjectType::Unknown {
-        raw_dxf_codes,
-        raw_dwg_data,
-        ..
-    } = object
-    {
-        *raw_dxf_codes = None;
-        *raw_dwg_data = None;
+    object.clear_storage_data();
+}
+
+fn migrate_object_side_data(document: &mut CadDocument, old: Handle, new: Handle) {
+    if let Some(value) = document.eed_by_handle.remove(&old) {
+        document.eed_by_handle.insert(new, value);
     }
+    if let Some(value) = document.object_xdata.remove(&old) {
+        document.object_xdata.insert(new, value);
+    }
+    if let Some(value) = document.xdic_by_handle.remove(&old) {
+        document.xdic_by_handle.insert(new, value);
+    }
+    if let Some(value) = document.reactors_by_handle.remove(&old) {
+        document.reactors_by_handle.insert(new, value);
+    }
+    if let Some(value) = document.block_visibility_params.remove(&old) {
+        document.block_visibility_params.insert(new, value);
+    }
+    if let Some(value) = document.context_scales.remove(&old) {
+        document.context_scales.insert(new, value);
+    }
+    if let Some(value) = document.block_representations.remove(&old) {
+        document.block_representations.insert(new, value);
+    }
+    if let Some(mut value) = document.fields.remove(&old) {
+        value.handle = new;
+        document.fields.insert(new, value);
+    }
+    document
+        .raw_records
+        .retain(|handle, _| *handle != old.value());
+    document.original_objects.remove(&old);
 }
 
 fn known_reference(known: &HashSet<Handle>, target: Handle) -> bool {
@@ -382,6 +406,7 @@ impl CadDocument {
                     false,
                 );
             }
+
         }
 
         let known: HashSet<Handle> = handles
@@ -389,6 +414,48 @@ impl CadDocument {
             .copied()
             .filter(|handle| !handle.is_null())
             .collect();
+
+        for key in self.objects.keys().copied() {
+            if let Some(owner) = self.object_owner(key) {
+                if !known_reference(&known, owner) {
+                    report.issue(
+                        AuditIssueCode::DanglingReference,
+                        AuditSeverity::Error,
+                        AuditLocation::Reference { owner: key, target: owner },
+                        Some(owner),
+                        "object owner handle is dangling",
+                        false,
+                    );
+                }
+            }
+        }
+        for (owner, target) in &self.xdic_by_handle {
+            if !known_reference(&known, *target) {
+                report.issue(
+                    AuditIssueCode::DanglingReference,
+                    AuditSeverity::Error,
+                    AuditLocation::Reference { owner: *owner, target: *target },
+                    Some(*target),
+                    "object extension dictionary is dangling",
+                    false,
+                );
+            }
+        }
+        for (owner, targets) in &self.reactors_by_handle {
+            for target in targets {
+                if !known_reference(&known, *target) {
+                    report.issue(
+                        AuditIssueCode::DanglingReference,
+                        AuditSeverity::Warning,
+                        AuditLocation::Reference { owner: *owner, target: *target },
+                        Some(*target),
+                        "object reactor handle is dangling",
+                        false,
+                    );
+                }
+            }
+        }
+
         let block_handles: HashSet<Handle> = self
             .block_records
             .iter()
@@ -447,6 +514,36 @@ impl CadDocument {
                 );
             }
             let common = entity.common();
+            if !common.layer.is_empty() && !self.layers.contains(&common.layer) {
+                report.issue(
+                    AuditIssueCode::DanglingReference,
+                    AuditSeverity::Error,
+                    AuditLocation::Reference {
+                        owner: common.handle,
+                        target: common.layer_handle.unwrap_or(Handle::NULL),
+                    },
+                    common.layer_handle,
+                    "entity layer name does not resolve to a layer table record",
+                    false,
+                );
+            }
+            if !common.linetype.is_empty()
+                && !common.linetype.eq_ignore_ascii_case("BYLAYER")
+                && !common.linetype.eq_ignore_ascii_case("BYBLOCK")
+                && !self.line_types.contains(&common.linetype)
+            {
+                report.issue(
+                    AuditIssueCode::DanglingReference,
+                    AuditSeverity::Error,
+                    AuditLocation::Reference {
+                        owner: common.handle,
+                        target: common.linetype_handle.unwrap_or(Handle::NULL),
+                    },
+                    common.linetype_handle,
+                    "entity linetype name does not resolve to a linetype table record",
+                    false,
+                );
+            }
             if !known_reference(&known, common.owner_handle) {
                 report.issue(
                     AuditIssueCode::DanglingReference,
@@ -671,9 +768,39 @@ impl CadDocument {
         if !null_entities.is_empty() {
             for index in null_entities.iter().copied() {
                 let handle = self.allocate_handle();
+                let (owner, old_membership) = {
+                    let common = self.entities[index].common();
+                    let owner = common.owner_handle;
+                    let membership = self
+                        .block_records
+                        .iter()
+                        .find(|block| block.handle == owner)
+                        .and_then(|block| {
+                            block.entity_handles.iter().copied().find(|candidate| {
+                                !self.entities.iter().any(|entity| {
+                                    entity.common().handle == *candidate
+                                })
+                            })
+                        });
+                    (owner, membership)
+                };
                 let common = std::sync::Arc::make_mut(&mut self.entities[index]).common_mut();
                 common.handle = handle;
                 common.raw_record = None;
+                if let Some(old) = old_membership {
+                    if let Some(block) = self
+                        .block_records
+                        .iter_mut()
+                        .find(|block| block.handle == owner)
+                    {
+                        for member in &mut block.entity_handles {
+                            if *member == old {
+                                *member = handle;
+                                break;
+                            }
+                        }
+                    }
+                }
             }
             actions.push(RepairAction::AssignEntityHandles {
                 count: null_entities.len(),
@@ -686,12 +813,19 @@ impl CadDocument {
         let object_keys: Vec<Handle> = self.objects.keys().copied().collect();
         let mut object_actions = Vec::new();
         for old in object_keys {
-            let Some(object) = self.objects.get_mut(&old) else {
-                continue;
+            let repaired = if let Some(object) = self.objects.get_mut(&old) {
+                if object.intrinsic_handle().is_null() && !old.is_null() {
+                    object.set_handle(old);
+                    invalidate_object_passthrough(object);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
             };
-            if object.intrinsic_handle().is_null() && !old.is_null() {
-                object.set_handle(old);
-                invalidate_object_passthrough(object);
+            if repaired {
+                migrate_object_side_data(self, old, old);
             }
         }
         let null_keys: Vec<Handle> = self
@@ -705,6 +839,7 @@ impl CadDocument {
                 let new = self.allocate_handle();
                 object.set_handle(new);
                 invalidate_object_passthrough(&mut object);
+                migrate_object_side_data(self, old, new);
                 self.objects.insert(new, object);
                 object_actions.push(RepairAction::ReindexObject { old, new });
             }
@@ -737,6 +872,11 @@ impl CadDocument {
                 count: owner_repairs,
             });
         }
+
+        // Apply the crate's exhaustive reference remapper after identity
+        // repairs so typed object references and side views follow the new
+        // handles as well.
+        self.resolve_references();
 
         if needs_reindex {
             self.entity_index.clear();
