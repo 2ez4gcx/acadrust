@@ -4388,7 +4388,9 @@ pub fn read_attribute_definition(
             let _application = reader.read_handle();
             let _unknown = reader.read_bit_short();
         }
-        text_data.value = mtext.value.clone();
+        if !mtext.value.is_empty() {
+            text_data.value = mtext.value.clone();
+        }
         Some(mtext)
     } else {
         None
@@ -4453,7 +4455,9 @@ pub fn read_attribute_entity(
             let _application = reader.read_handle();
             let _unknown = reader.read_bit_short();
         }
-        text_data.value = mtext.value.clone();
+        if !mtext.value.is_empty() {
+            text_data.value = mtext.value.clone();
+        }
         Some(mtext)
     } else {
         None
@@ -5105,20 +5109,14 @@ pub(super) fn read_extra_acis_data(
     reader: &mut DwgMergedReader,
     inline_end: Option<i64>,
 ) -> Option<crate::entities::solid3d::AcisData> {
-    // Both supported extra-body versions need an unknown bit and BS(1/2).
-    // Do not probe into a short trailing BL or byte padding.
-    if reader.main_remaining_bits() < 11 {
-        return None;
-    }
     let prefix_start = reader.position_in_bits();
     let _unknown = reader.read_bit();
     let extra_version = reader.read_bit_short();
 
     if extra_version == 2 {
         let data_start = reader.position_in_bits();
-        let remaining_bits = inline_end
-            .map(|end| (end - data_start).max(0).min(reader.main_remaining_bits()))
-            .unwrap_or_else(|| reader.main_remaining_bits()) as usize;
+        let remaining_bits =
+            (inline_end.unwrap_or_else(|| reader.handle_start()) - data_start).max(0) as usize;
         let probe = reader.read_bytes(remaining_bits / 8);
         // Newer modelers write an "ASM BinaryFile" header, also in the
         // extra modeler block of an AcDs-backed surface record.
@@ -5188,7 +5186,7 @@ pub fn read_acis_entity(
         version,
         dxf_version,
         has_ds_data,
-        true,
+        false,
         false,
         None,
     )
@@ -5346,9 +5344,8 @@ fn read_acis_entity_impl(
             // shared ACIS and surface subtype fields follow in the main stream.
             is_binary = true;
             let start = reader.main_mut().position_in_bits();
-            // The main stream ends before the optional text stream and its
-            // framing. A SAB probe must not include either of those streams.
-            let probe = reader.read_bytes(reader.remaining_bytes());
+            let remaining_bits = (reader.handle_start() - 1 - start).max(0) as usize;
+            let probe = reader.read_bytes(remaining_bits / 8);
             let used = crate::entities::acis::SabReader::read_with_consumed(&probe)
                 .map(|(_, used)| used)
                 .unwrap_or(probe.len());
@@ -5421,9 +5418,9 @@ fn read_acis_entity_impl(
         // the isoline-data gate above.
         let num_silhouettes = safe_count(reader.read_bit_long(), reader);
         for _ in 0..num_silhouettes {
-            // Native R2010+ silhouettes store a BLL viewport identity.
-            // Earlier records use BL, including compact zero identities.
-            let viewport_id = if version.r2010_plus() {
+            // R2004 and earlier store the silhouette viewport as a BL.  The
+            // R2013+ COMMON_3DSOLID layout widened it to BLL.
+            let viewport_id = if version.r2013_plus(dxf_version) {
                 reader.read_bit_long_long()
             } else {
                 i64::from(reader.read_bit_long())
@@ -5458,10 +5455,7 @@ fn read_acis_entity_impl(
     if inline_end.is_some() || wireframe_present || !version.r2013_plus(dxf_version) {
         acis_empty_bit = reader.read_bit();
     }
-    let extra_acis_data = if allow_extra
-        && !acis_empty_bit
-        && (inline_end.is_some() || wireframe_present || !version.r2013_plus(dxf_version))
-    {
+    let extra_acis_data = if allow_extra && !acis_empty_bit {
         read_extra_acis_data(reader, inline_end)
     } else {
         None

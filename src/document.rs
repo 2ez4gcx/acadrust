@@ -80,8 +80,6 @@ fn material_checker_texture(entries: &[XRecordEntry]) -> Option<MaterialTexture>
 
 mod semantic_inventory;
 pub use semantic_inventory::*;
-mod dynamic_properties;
-pub use dynamic_properties::DynamicBlockProperty;
 
 #[cfg(feature = "serde")]
 fn default_sketch_tolerance() -> f64 {
@@ -2200,9 +2198,6 @@ impl CadDocument {
         for handle in self.objects.keys() {
             include_handle!(*handle);
         }
-        for object in self.objects.values() {
-            include_handle!(object.intrinsic_handle());
-        }
 
         self.next_handle = next_handle;
         self.header.handle_seed = self.header.handle_seed.max(next_handle);
@@ -3513,12 +3508,6 @@ impl CadDocument {
             })
             .collect();
         for record in self.block_records.iter_mut() {
-            // Preserve an explicitly saved self-reference. AutoCAD leaves this
-            // unresolved when the drawing is loaded as an xref; callers can use
-            // the Layout's reverse link when opening it as the root drawing.
-            if record.layout == record.handle {
-                continue;
-            }
             if !matches!(self.objects.get(&record.layout), Some(ObjectType::Layout(_))) {
                 record.layout = owners.get(&record.handle).copied().unwrap_or(Handle::NULL);
             }
@@ -3852,34 +3841,6 @@ impl CadDocument {
     /// Project typed properties whose authoritative storage is a named
     /// XRecord onto their public object models.
     pub fn resolve_xrecord_backed_properties(&mut self) {
-        // Older DWG versions down-save multiline attributes as TEXT plus an
-        // ACAD_MLATT record. The outer tag may have an artificial _001 suffix;
-        // group 2 before the embedded object is the actual attribute tag.
-        let multiline_tags: HashMap<Handle, String> = self.objects.values().filter_map(|object| {
-            let ObjectType::Dictionary(dictionary) = object else { return None; };
-            let record = dictionary.get("ACAD_MLATT")?;
-            let Some(ObjectType::XRecord(record)) = self.objects.get(&record) else { return None; };
-            if !record.entries_complete { return None; }
-            record.entries.iter().take_while(|e| e.code != 1).find_map(|e| {
-                match (e.code, &e.value) {
-                    (2, crate::objects::XRecordValue::String(tag)) => Some((dictionary.owner, tag.clone())),
-                    _ => None,
-                }
-            })
-        }).collect();
-        if !multiline_tags.is_empty() {
-            for entity in self.entities_mut_keep_raw() {
-                match entity {
-                    EntityType::AttributeDefinition(a) => {
-                        if let Some(tag) = multiline_tags.get(&a.common.handle) { a.tag = tag.clone(); }
-                    }
-                    EntityType::Insert(i) => for a in &mut i.attributes {
-                        if let Some(tag) = multiline_tags.get(&a.common.handle) { a.tag = tag.clone(); }
-                    },
-                    _ => {},
-                }
-            }
-        }
         let advanced_values: HashMap<Handle, Vec<XRecordEntry>> = self
             .objects
             .values()
@@ -4303,7 +4264,6 @@ impl CadDocument {
             if let Some(name) = linetype {
                 common.linetype = name;
             }
-            common.raw_record = None;
         }
 
         // A layer's own linetype reference is a name too.

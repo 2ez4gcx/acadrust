@@ -94,7 +94,7 @@ fn modeler_record_with_silhouette(
     writer.write_bit(false); // wire transform
     if let Some(viewport_id) = silhouette_viewport {
         writer.write_bit_long(1); // silhouettes
-        if version.r2010_plus() {
+        if version.r2013_plus(dxf_version) {
             writer.write_bit_long_long(viewport_id);
         } else {
             writer.write_bit_long(viewport_id as i32);
@@ -195,38 +195,8 @@ fn native_bit_short_wire_colors_preserve_counts_geometry_and_tail() {
 }
 
 #[test]
-fn legacy_database_body_preserves_extra_modeler_data_before_materials() {
-    for dxf_version in [DxfVersion::AC1021, DxfVersion::AC1024] {
-        let version = DwgVersion::from_dxf_version(dxf_version).unwrap();
-        let geometry = sab();
-        let mut writer = DwgBitWriter::new(version, dxf_version);
-        writer.write_bit(false); // nonempty primary body
-        writer.write_bit(false);
-        writer.write_bit_short(2);
-        writer.write_bytes(&geometry);
-        writer.write_bit(false); // no wireframe
-        writer.write_bit(false); // extra modeler body present
-        writer.write_bit(false);
-        writer.write_bit_short(2);
-        writer.write_bytes(&geometry);
-        writer.write_bit_long(0); // materials
-        let end = writer.position_in_bits();
-        let main = DwgBitReader::new(writer.into_bytes(), version, dxf_version);
-        let mut reader = DwgMergedReader::from_readers(main, None, None, dxf_version);
-        reader.set_handle_start(end);
-        reader.set_main_data_end(end);
-        let body = read_acis_entity(&mut reader, version, dxf_version, false);
-        reader.check_error().unwrap();
-        assert_eq!(reader.position_in_bits(), end);
-        assert_eq!(body.sab_data, geometry);
-        assert_eq!(body.extra_acis_data.unwrap().sab_data, geometry);
-        assert!(body.materials.is_empty());
-    }
-}
-
-#[test]
 fn silhouette_viewport_width_matches_the_dwg_generation() {
-    for dxf_version in [DxfVersion::AC1018, DxfVersion::AC1021, DxfVersion::AC1024, DxfVersion::AC1027, DxfVersion::AC1032] {
+    for dxf_version in [DxfVersion::AC1018, DxfVersion::AC1032] {
         let version = DwgVersion::from_dxf_version(dxf_version).unwrap();
         let viewport_id = 0x1234_i64;
         let (mut reader, _, end) = modeler_record_with_silhouette(

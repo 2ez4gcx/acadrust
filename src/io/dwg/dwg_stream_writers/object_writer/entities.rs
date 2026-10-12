@@ -5762,7 +5762,7 @@ impl<'a> DwgObjectWriter<'a> {
 
             self.writer.write_bit_long(silhouettes.len() as i32);
             for sil in silhouettes {
-                if self.version.r2010_plus() {
+                if self.version.r2013_plus(self.dxf_version) {
                     self.writer.write_bit_long_long(sil.viewport_id);
                 } else {
                     self.writer.write_bit_long(sil.viewport_id as i32);

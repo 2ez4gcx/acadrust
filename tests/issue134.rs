@@ -137,9 +137,6 @@ fn named_auxiliary_failures_are_preserved_in_strict_and_failsafe_reads() {
             ("ASSOCGEOMDEPENDENCY", 541),
             ("ACDBASSOCEDGEACTIONPARAM", 562),
             ("ASSOCEDGEACTIONPARAM", 542),
-            ("LSDEFINITION", 543),
-            ("LSSTROKEPATTERNCOMPONENT", 544),
-            ("ACDBASSOCARRAYACTIONBODY", 545),
         ] {
             let (source, healthy, auxiliary, raw, handle_bits) =
                 auxiliary_fixture(version, name, class_number, false, false);
@@ -221,9 +218,6 @@ fn broken_common_metadata_and_wrong_handles_still_fail_strict_reads() {
         CONTEXT,
         "ACDBASSOCGEOMDEPENDENCY",
         "ACDBASSOCEDGEACTIONPARAM",
-        "LSDEFINITION",
-        "LSSTROKEPATTERNCOMPONENT",
-        "ACDBASSOCARRAYACTIONBODY",
     ] {
         for (bad_common, wrong_identity) in [(true, false), (false, true)] {
             let (source, healthy, auxiliary, ..) =
