@@ -4234,9 +4234,11 @@ impl CadDocument {
                 ("REFRACTION", &mut material.refraction_map),
                 ("NORMAL", &mut material.normal_map),
             ] {
+                // The checker texture comes from the asset XRecord; the
+                // native map fields stay as read, because the DWG writer
+                // re-emits them and a strict reader rejects a material
+                // record whose map source no longer matches its body.
                 if let Some(texture) = material_maps.get(&(dictionary, name)) {
-                    map.source = 2;
-                    map.file_name.clear();
                     map.texture = Some(texture.clone());
                 }
             }
