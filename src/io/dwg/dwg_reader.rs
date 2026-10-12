@@ -989,7 +989,35 @@ impl<R: Read + Seek> DwgReader<R> {
         if magic == *b"AC1009" || magic == *b"AD1009" {
             let mut bytes = Vec::new();
             self.stream.read_to_end(&mut bytes)?;
-            let mut document = crate::io::dwg::r12::read_document(&bytes)?;
+            let mut document = match crate::io::dwg::r12::read_document(&bytes) {
+                Ok(document) => document,
+                Err(error) if failsafe => {
+                    report_read_error(
+                        &mut self.notifications,
+                        &mut diagnostics,
+                        "legacy-read-failed",
+                        ReadStage::RecordStream,
+                        None,
+                        format!("Failsafe: legacy AC1009 read failed: {}", error),
+                    );
+                    let mut document = crate::document::CadDocument::default();
+                    document.notifications.extend(std::mem::take(&mut self.notifications));
+                    let stats = crate::io::read::ReadStats::from_document(
+                        &document,
+                        SourceFormat::Dwg,
+                        1,
+                        0,
+                        0,
+                        1,
+                        true,
+                        true,
+                        false,
+                        diagnostics,
+                    );
+                    return Ok(crate::io::read::ReadOutcome::new(document, stats));
+                }
+                Err(error) => return Err(error),
+            };
             if let Some(visit) = visit {
                 let handles: Vec<_> = document
                     .entities()
