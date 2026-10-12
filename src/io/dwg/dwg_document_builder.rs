@@ -3345,7 +3345,6 @@ impl DwgDocumentBuilder {
             .collect();
         let model_space = document.header.model_space_block_handle;
         let paper_space = document.header.paper_space_block_handle;
-        let model_is_valid = valid_owners.contains(&model_space);
         let paper_is_valid = valid_owners.contains(&paper_space);
         let memberships: Vec<Option<(Handle, Handle)>> =
             map_mut(&mut document.entities, |entity| {
@@ -3368,9 +3367,8 @@ impl DwgDocumentBuilder {
                         model_space
                     };
                 }
-                if !valid_owners.contains(&owner) && model_is_valid {
-                    owner = model_space;
-                }
+                // A non-null missing owner can be an erased anonymous dimension
+                // block. Keep its geometry orphaned rather than drawing it in model space.
                 if common.owner_handle != owner {
                     std::sync::Arc::make_mut(entity).common_mut().owner_handle = owner;
                 }
@@ -7345,6 +7343,118 @@ mod tests {
             ),
             "IRD_OBJ_RECORD"
         );
+    }
+
+    #[test]
+    fn missing_non_null_owner_is_left_out_of_block_membership() {
+        let mut document = CadDocument::new();
+        let model = document.header.model_space_block_handle;
+        let orphan_owner = Handle::new(0xDEAD);
+        let handle = document
+            .add_entity(EntityType::Line(Line::from_coords(
+                0.0, 0.0, 0.0, 1.0, 1.0, 0.0,
+            )))
+            .unwrap();
+        document
+            .get_entity_mut(handle)
+            .unwrap()
+            .common_mut()
+            .owner_handle = orphan_owner;
+
+        DwgDocumentBuilder::rebuild_block_membership(&mut document, None, None);
+
+        let model_block = document
+            .block_records
+            .iter()
+            .find(|record| record.handle == model)
+            .unwrap();
+        assert!(!model_block.entity_handles.contains(&handle));
+        assert_eq!(
+            document.get_entity(handle).unwrap().common().owner_handle,
+            orphan_owner
+        );
+    }
+
+    #[test]
+    fn null_owner_still_uses_model_space_fallback() {
+        let mut document = CadDocument::new();
+        let model = document.header.model_space_block_handle;
+        let handle = document
+            .add_entity(EntityType::Line(Line::from_coords(
+                0.0, 0.0, 0.0, 1.0, 1.0, 0.0,
+            )))
+            .unwrap();
+        document
+            .get_entity_mut(handle)
+            .unwrap()
+            .common_mut()
+            .owner_handle = Handle::NULL;
+
+        DwgDocumentBuilder::rebuild_block_membership(&mut document, None, None);
+
+        let model_block = document
+            .block_records
+            .iter()
+            .find(|record| record.handle == model)
+            .unwrap();
+        assert!(model_block.entity_handles.contains(&handle));
+        assert_eq!(
+            document.get_entity(handle).unwrap().common().owner_handle,
+            model
+        );
+    }
+
+    #[test]
+    fn null_owner_uses_paper_space_only_when_paper_space_exists() {
+        for missing_paper_space in [false, true] {
+            let mut document = CadDocument::new();
+            let expected = if missing_paper_space {
+                document.header.paper_space_block_handle = Handle::new(0xDEAD);
+                document.header.model_space_block_handle
+            } else {
+                document.header.paper_space_block_handle
+            };
+            let mut line = Line::new();
+            line.common.entity_mode = Some(1);
+            let handle = document.add_loaded_entity(EntityType::Line(line));
+
+            DwgDocumentBuilder::rebuild_block_membership(&mut document, None, None);
+
+            assert_eq!(
+                document.get_entity(handle).unwrap().common().owner_handle,
+                expected
+            );
+            let containing_blocks: Vec<_> = document
+                .block_records
+                .iter()
+                .filter(|block| block.entity_handles.contains(&handle))
+                .map(|block| block.handle)
+                .collect();
+            assert_eq!(containing_blocks, vec![expected]);
+        }
+    }
+
+    #[test]
+    fn canonical_binary_membership_can_resolve_a_stale_record_owner() {
+        let mut document = CadDocument::new();
+        let paper = document.header.paper_space_block_handle;
+        let model = document.header.model_space_block_handle;
+        let mut line = Line::new();
+        line.common.owner_handle = Handle::new(0xDEAD);
+        let handle = document.add_loaded_entity(EntityType::Line(line));
+        let mut binary_owners = foldhash::HashMap::default();
+        binary_owners.insert(handle, paper);
+
+        DwgDocumentBuilder::rebuild_block_membership(&mut document, Some(&binary_owners), None);
+
+        assert_eq!(
+            document.get_entity(handle).unwrap().common().owner_handle,
+            paper
+        );
+        assert!(document.block_records.iter().find(|block| block.handle == paper)
+            .unwrap().entity_handles.contains(&handle));
+        assert!(!document.block_records.iter().find(|block| block.handle == model)
+            .unwrap().entity_handles.contains(&handle));
     }
 
     #[test]
