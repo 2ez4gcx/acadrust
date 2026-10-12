@@ -5414,9 +5414,9 @@ fn read_acis_entity_impl(
         // the isoline-data gate above.
         let num_silhouettes = safe_count(reader.read_bit_long(), reader);
         for _ in 0..num_silhouettes {
-            // R2004 and earlier store the silhouette viewport as a BL.  The
-            // R2013+ COMMON_3DSOLID layout widened it to BLL.
-            let viewport_id = if version.r2013_plus(dxf_version) {
+            // Native R2010+ silhouettes store a BLL viewport identity.
+            // Earlier records use BL, including compact zero identities.
+            let viewport_id = if version.r2010_plus() {
                 reader.read_bit_long_long()
             } else {
                 i64::from(reader.read_bit_long())

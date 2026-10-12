@@ -94,7 +94,7 @@ fn modeler_record_with_silhouette(
     writer.write_bit(false); // wire transform
     if let Some(viewport_id) = silhouette_viewport {
         writer.write_bit_long(1); // silhouettes
-        if version.r2013_plus(dxf_version) {
+        if version.r2010_plus() {
             writer.write_bit_long_long(viewport_id);
         } else {
             writer.write_bit_long(viewport_id as i32);
@@ -196,7 +196,7 @@ fn native_bit_short_wire_colors_preserve_counts_geometry_and_tail() {
 
 #[test]
 fn silhouette_viewport_width_matches_the_dwg_generation() {
-    for dxf_version in [DxfVersion::AC1018, DxfVersion::AC1032] {
+    for dxf_version in [DxfVersion::AC1018, DxfVersion::AC1021, DxfVersion::AC1024, DxfVersion::AC1027, DxfVersion::AC1032] {
         let version = DwgVersion::from_dxf_version(dxf_version).unwrap();
         let viewport_id = 0x1234_i64;
         let (mut reader, _, end) = modeler_record_with_silhouette(
