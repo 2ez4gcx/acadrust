@@ -40,6 +40,11 @@ fn repair_fixes_unambiguous_identity_state_and_is_idempotent() {
 
     let repaired = document.repair();
     assert!(!repaired.actions.is_empty());
+    assert!(
+        repaired.after.is_clean(),
+        "repair left issues: {:?}",
+        repaired.after.issues
+    );
     let second = document.repair();
     assert_eq!(repaired.after, second.before);
     assert!(second.actions.iter().all(|action| {
@@ -119,4 +124,21 @@ fn audit_reports_raw_object_records_without_mutating_them() {
 
     assert_eq!(document, snapshot);
     assert_eq!(report.count(acadrust::AuditIssueCode::UnsupportedRecord), 1);
+}
+
+#[test]
+fn audit_reports_dangling_object_owner_and_layer_references() {
+    let mut document = CadDocument::new();
+    let handle = document
+        .add_entity(EntityType::Line(Line::from_coords(
+            0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+        )))
+        .unwrap();
+    let entity = document.get_entity_mut(handle).unwrap();
+    entity.common_mut().layer = "MISSING_LAYER".into();
+    entity.common_mut().owner_handle = Handle::new(0xdead);
+
+    let report = document.audit();
+
+    assert!(report.count(acadrust::AuditIssueCode::DanglingReference) >= 2);
 }
