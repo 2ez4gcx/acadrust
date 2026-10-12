@@ -466,13 +466,19 @@ fn encode_record(
             writer.byte(color as u8);
         }
         if flag & 2 != 0 {
-            writer.short(super::tables::linetype_index(tables, ltype)?);
-        }
-        if flag & 8 != 0 {
-            writer.double(record.number(39, 0.));
+            writer.byte(
+                (if ltype.eq_ignore_ascii_case("BYBLOCK") {
+                    -2
+                } else {
+                    lookup(&tables.linetypes, ltype, -1)?
+                }) as i8 as u8,
+            );
         }
         if flag & 4 != 0 {
             writer.double(elevation);
+        }
+        if flag & 8 != 0 {
+            writer.double(record.number(39, 0.));
         }
         if flag & 32 != 0 {
             let bytes = handle.to_be_bytes();
@@ -742,7 +748,7 @@ fn encode_dimension(w: &mut Writer, r: &EntityRecord, t: &EntityTables, o: u16) 
 pub(crate) fn decode_entities(
     bytes: &[u8],
     tables: &EntityTables,
-    base_address: u32,
+    _base_address: u32,
     code_page: &str,
 ) -> Result<Vec<EntityRecord>> {
     let mut records = Vec::new();
@@ -765,15 +771,7 @@ pub(crate) fn decode_entities(
             )));
         }
         if header[0] & 128 == 0 {
-            records.push(
-                decode_record(&raw[..size - 2], tables, code_page).map_err(|error| {
-                    invalid(format!(
-                        "R12 entity type {} at file offset {:#x}: {error}",
-                        header[0],
-                        u64::from(base_address) + offset as u64
-                    ))
-                })?,
-            );
+            records.push(decode_record(&raw[..size - 2], tables, code_page)?);
         }
         offset += size;
     }
@@ -805,18 +803,25 @@ fn decode_record(bytes: &[u8], t: &EntityTables, code_page: &str) -> Result<Enti
         out.put(62, r.byte()? as i8 as i16);
     }
     if flag & 2 != 0 {
-        let index = r.short()?;
-        out.put(6, super::tables::linetype_name(t, index)?);
+        let index = r.byte()? as i8 as i16;
+        out.put(
+            6,
+            match index {
+                -1 => "BYLAYER",
+                -2 => "BYBLOCK",
+                _ => table_name(&t.linetypes, index)?,
+            },
+        );
     }
     let is3d = matches!(kind, 1 | 2 | 21 | 22);
-    if flag & 8 != 0 {
-        out.put(39, r.double()?);
-    }
     let elevation = if flag & 4 != 0 && !is3d {
         r.double()?
     } else {
         0.
     };
+    if flag & 8 != 0 {
+        out.put(39, r.double()?);
+    }
     if flag & 32 != 0 {
         let size = r.byte()? as usize;
         if size > 8 {
@@ -1881,44 +1886,6 @@ mod tests {
         assert_eq!(decoded[0].number(20, -1.), 0.);
         assert_eq!(decoded[0].number(30, -1.), 0.);
         assert_eq!(decoded[0].number(40, 0.), 0.25);
-    }
-
-    #[test]
-    fn native_common_fields_use_short_linetype_indices_and_thickness_before_elevation() {
-        let mut tables = tables();
-        tables.linetypes = (0..300).map(|i| format!("L{i}")).collect();
-        // Independently assembled native CIRCLE: linetype 257, thickness 2,
-        // elevation 3, handle A5B6, center (4, 5), radius 6.
-        // Field layout: CC0-1.0 dwg_ac1009.ksy, entity_circle, in
-        // https://github.com/michal-josef-spacek/CAD-Format-DWG-AC1009
-        let mut raw = vec![3, 0x2e, 0, 0, 0, 0, 0, 0];
-        raw.extend_from_slice(&257i16.to_le_bytes());
-        raw.extend_from_slice(&2f64.to_le_bytes());
-        raw.extend_from_slice(&3f64.to_le_bytes());
-        raw.extend_from_slice(&[2, 0xa5, 0xb6]);
-        for value in [4f64, 5., 6.] {
-            raw.extend_from_slice(&value.to_le_bytes());
-        }
-        let length = (raw.len() + 2) as u16;
-        raw[2..4].copy_from_slice(&length.to_le_bytes());
-        let decoded = decode_record(&raw, &tables, "ANSI_1252").unwrap();
-        assert_eq!(decoded.string(6), "L257");
-        assert_eq!(decoded.string(5), "A5B6");
-        assert_eq!(decoded.number(39, 0.), 2.);
-        assert_eq!(decoded.number(30, 0.), 3.);
-        assert_eq!(decoded.number(40, 0.), 6.);
-        let encoded = encode_record(&decoded, &tables, 0, "ANSI_1252").unwrap();
-        assert_eq!(&encoded[..encoded.len() - 2], raw);
-        for (index, name) in [(32766i16, "BYBLOCK"), (32767, "BYLAYER")] {
-            raw[8..10].copy_from_slice(&index.to_le_bytes());
-            let decoded = decode_record(&raw, &tables, "ANSI_1252").unwrap();
-            assert_eq!(decoded.string(6), name);
-            assert_eq!(decoded.string(5), "A5B6");
-            if index == 32766 {
-                let encoded = encode_record(&decoded, &tables, 0, "ANSI_1252").unwrap();
-                assert_eq!(&encoded[..encoded.len() - 2], raw);
-            }
-        }
     }
 
     #[test]

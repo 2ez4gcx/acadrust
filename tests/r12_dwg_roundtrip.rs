@@ -10,42 +10,6 @@ use acadrust::{
 };
 
 #[test]
-fn ac1009_keeps_imported_layout_references_when_applying_legacy_header() {
-    use acadrust::objects::ObjectType;
-
-    let mut document = CadDocument::with_version(DxfVersion::AC1009);
-    document.header.model_space_insertion_base = Vector3::new(3.0, 7.0, 0.0);
-    document.header.ortho_mode = true;
-    let bytes = DwgWriter::write_to_vec(&document).unwrap();
-    let restored = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
-    assert_eq!(
-        restored.header.model_space_insertion_base,
-        Vector3::new(3.0, 7.0, 0.0)
-    );
-    assert!(restored.header.ortho_mode);
-    let ObjectType::Dictionary(layouts) =
-        &restored.objects[&restored.header.acad_layout_dict_handle]
-    else {
-        panic!("missing imported layout dictionary");
-    };
-    assert_eq!(layouts.entries.len(), 2);
-    for (_, handle) in &layouts.entries {
-        let ObjectType::Layout(layout) = &restored.objects[handle] else {
-            panic!("dangling layout dictionary entry");
-        };
-        assert!(restored
-            .block_records
-            .iter()
-            .any(|block| block.handle == layout.block_record));
-    }
-    assert!(!restored.header.model_space_block_handle.is_null());
-    assert!(!restored.header.paper_space_block_handle.is_null());
-    assert!(restored
-        .objects
-        .contains_key(&restored.header.named_objects_dict_handle));
-}
-
-#[test]
 fn ac1009_writer_roundtrips_a_line() {
     let mut document = CadDocument::with_version(DxfVersion::AC1009);
     document

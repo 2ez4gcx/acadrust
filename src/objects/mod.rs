@@ -548,43 +548,6 @@ impl ObjectType {
         }
     }
 
-    /// Drop opaque source bytes after changing an object's identity.
-    pub(crate) fn clear_storage_data(&mut self) {
-        match self {
-            ObjectType::XRecord(value) => {
-                value.raw_dwg_data = None;
-                value.raw_dwg_version = None;
-            }
-            ObjectType::TableStyle(value) => value.raw_dxf_codes = None,
-            ObjectType::SortEntitiesTable(value) => {
-                value.raw_dxf_codes = None;
-                value.raw_dxf_version = None;
-            }
-            ObjectType::ClassObject(value) => {
-                if let ClassObjectData::CsacDocumentOptions(options) = &mut value.data {
-                    options.raw_dwg_data = None;
-                    options.raw_dwg_version = None;
-                }
-            }
-            ObjectType::RegisteredClass(value) => {
-                value.raw_dwg_data = None;
-                value.raw_dwg_version = None;
-            }
-            ObjectType::Unknown {
-                raw_dxf_codes,
-                raw_dwg_data,
-                raw_dwg_version,
-                ..
-            } => {
-                *raw_dxf_codes = None;
-                *raw_dwg_data = None;
-                *raw_dwg_version = None;
-            }
-            ObjectType::Layout(value) => value.raw_plot_settings_codes = None,
-            _ => {}
-        }
-    }
-
     /// Restore storage-only data omitted from serde after editing an object's
     /// public representation. The source and destination must have the same
     /// variant and identity; callers remain responsible for that check.

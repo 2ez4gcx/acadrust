@@ -4617,26 +4617,26 @@ impl<'a> SectionReader<'a> {
                     .map(|index| BlockLookupColumn {
                         node_id: code0
                             .get(index)
-                            .and_then(|value| value.trim().parse().ok())
+                            .and_then(|value| value.parse().ok())
                             .unwrap_or(0),
                         value_type: code1
                             .get(index)
-                            .and_then(|value| value.trim().parse().ok())
+                            .and_then(|value| value.parse().ok())
                             .unwrap_or(0),
                         property_type: code2
                             .get(index)
-                            .and_then(|value| value.trim().parse().ok())
+                            .and_then(|value| value.parse().ok())
                             .unwrap_or(0),
                         unmatched_name: name2.get(index).copied().unwrap_or("").to_string(),
                         connection_name: name1.get(index).copied().unwrap_or("").to_string(),
                         lookup_property: flag282
                             .get(index)
-                            .and_then(|value| value.trim().parse::<i32>().ok())
+                            .and_then(|value| value.parse::<i32>().ok())
                             .unwrap_or(0)
                             != 0,
                         writable: flag281
                             .get(index)
-                            .and_then(|value| value.trim().parse::<i32>().ok())
+                            .and_then(|value| value.parse::<i32>().ok())
                             .unwrap_or(0)
                             != 0,
                     })
@@ -16200,16 +16200,8 @@ impl<'a> SectionReader<'a> {
                                 }
                             }
                             "SEQEND" => {
-                                // The sequence marker has its own persistent identity.
-                                while let Some(pair) = self.reader.read_pair()? {
-                                    if pair.code == 0 {
-                                        self.reader.push_back(pair);
-                                        break;
-                                    }
-                                    if pair.code == 5 {
-                                        insert.seqend_handle = pair.as_handle().map(Handle::new);
-                                    }
-                                }
+                                // Consume SEQEND contents and stop
+                                self.skip_entity()?;
                                 break;
                             }
                             _ => {

@@ -276,7 +276,7 @@ fn swap_style_flags(flag: u8) -> u8 {
     (flag & !5) | ((flag & 1) << 2) | ((flag & 4) >> 2)
 }
 
-pub(super) fn linetype_index(tables: &EntityTables, name: &str) -> Result<i16> {
+fn linetype_index(tables: &EntityTables, name: &str) -> Result<i16> {
     if name.eq_ignore_ascii_case("BYLAYER") {
         return Ok(32767);
     }
@@ -290,11 +290,11 @@ pub(super) fn linetype_index(tables: &EntityTables, name: &str) -> Result<i16> {
         .linetypes
         .iter()
         .position(|entry| entry.eq_ignore_ascii_case(name))
-        .ok_or_else(|| invalid(format!("AC1009 record references missing linetype {name:?}")))?;
+        .ok_or_else(|| invalid(format!("AC1009 layer references missing linetype {name:?}")))?;
     i16::try_from(index).map_err(|_| invalid("AC1009 linetype index exceeds 32767"))
 }
 
-pub(super) fn linetype_name(tables: &EntityTables, index: i16) -> Result<&str> {
+fn linetype_name(tables: &EntityTables, index: i16) -> Result<&str> {
     match index {
         32767 | -1 => Ok("BYLAYER"),
         32766 | -2 => Ok("BYBLOCK"),
