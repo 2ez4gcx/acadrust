@@ -5052,7 +5052,12 @@ impl DwgDocumentBuilder {
                     };
                     e.wires = data.wires;
                     e.silhouettes = data.silhouettes;
-                    if self.obj_reader.version().r2007_plus() && !e.common.has_ds_data {
+                    // Some native R2007 BODY records end after common handles
+                    // and contain only byte padding, with no history slot.
+                    if self.obj_reader.version().r2007_plus()
+                        && !e.common.has_ds_data
+                        && reader.handle_remaining_bits() >= 8
+                    {
                         let h = reader.read_handle();
                         if h != 0 {
                             e.history_handle = Some(Handle::new(h));
