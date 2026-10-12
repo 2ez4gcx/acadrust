@@ -4570,6 +4570,7 @@ impl<'a> SectionReader<'a> {
                             3
                         },
                     ),
+                    dwg_tail_byte: 0,
                 };
                 if dxf_name == "BLOCKROTATEACTION" {
                     DynamicBlockData::RotateAction(value)

@@ -761,6 +761,12 @@ pub struct BlockFlipAction {
 pub struct BlockBasePointAction {
     pub action: BlockActionWithBasePoint,
     pub connections: Vec<BlockConnection>,
+    /// DWG-only byte after a scale action's connections (zero in every
+    /// sample seen; rotate actions carry none, and DXF has no group for
+    /// it). Strict readers read it, so a record written without it is
+    /// rejected as improperly read.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub dwg_tail_byte: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -1408,4 +1414,59 @@ pub struct SolidHistoryRevolve {
     pub flag_290: bool,
     pub close_to_axis: bool,
     pub sweep_entity: Option<crate::entities::EmbeddedEntity>,
+}
+
+/// Whether a DXF class name is a dynamic-block object record (parameters,
+/// actions, grips, the evaluation graph and its helpers) — the names the DWG
+/// dynamic-block reader decodes. Entity classes are not included.
+pub fn is_dynamic_block_object_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+            "ACAD_EVALUATION_GRAPH"
+            | "ACDBBLOCKPARAMDEPENDENCYBODY"
+            | "ACDB_BLOCKREPRESENTATION_DATA"
+            | "ACDB_DYNAMICBLOCKPROXYNODE"
+            | "ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION"
+            | "BLOCKALIGNEDCONSTRAINTPARAMETER"
+            | "BLOCKALIGNMENTGRIP"
+            | "BLOCKALIGNMENTPARAMETER"
+            | "BLOCKANGULARCONSTRAINTPARAMETER"
+            | "BLOCKARRAYACTION"
+            | "BLOCKBASEPOINTPARAMETER"
+            | "BLOCKDIAMETRICCONSTRAINTPARAMETER"
+            | "BLOCKFLIPACTION"
+            | "BLOCKFLIPGRIP"
+            | "BLOCKFLIPPARAMETER"
+            | "BLOCKGRIPLOCATIONCOMPONENT"
+            | "BLOCKHORIZONTALCONSTRAINTPARAMETER"
+            | "BLOCKLINEARCONSTRAINTPARAMETER"
+            | "BLOCKLINEARGRIP"
+            | "BLOCKLINEARPARAMETER"
+            | "BLOCKLOOKUPACTION"
+            | "BLOCKLOOKUPGRIP"
+            | "BLOCKLOOKUPPARAMETER"
+            | "BLOCKMOVEACTION"
+            | "BLOCKPARAMDEPENDENCYBODY"
+            | "BLOCKPOINTPARAMETER"
+            | "BLOCKPOLARGRIP"
+            | "BLOCKPOLARPARAMETER"
+            | "BLOCKPOLARSTRETCHACTION"
+            | "BLOCKPROPERTIESTABLE"
+            | "BLOCKPROPERTIESTABLEGRIP"
+            | "BLOCKRADIALCONSTRAINTPARAMETER"
+            | "BLOCKREPRESENTATION"
+            | "BLOCKROTATEACTION"
+            | "BLOCKROTATIONGRIP"
+            | "BLOCKROTATIONPARAMETER"
+            | "BLOCKSCALEACTION"
+            | "BLOCKSTRETCHACTION"
+            | "BLOCKUSERPARAMETER"
+            | "BLOCKVERTICALCONSTRAINTPARAMETER"
+            | "BLOCKVISIBILITYGRIP"
+            | "BLOCKXYGRIP"
+            | "BLOCKXYPARAMETER"
+            | "DYNAMICBLOCKPROXYNODE"
+            | "DYNAMICBLOCKPURGEPREVENTER"
+            | "EVALUATION_GRAPH"
+    )
 }

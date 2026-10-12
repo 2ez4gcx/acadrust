@@ -797,6 +797,7 @@ pub fn read_dynamic_block_data(
         "BLOCKROTATEACTION" => DynamicBlockData::RotateAction(BlockBasePointAction {
             action: read_action_with_base(reader),
             connections: vec![read_connection(reader)],
+            dwg_tail_byte: 0,
         }),
         "BLOCKSCALEACTION" => DynamicBlockData::ScaleAction(BlockBasePointAction {
             action: read_action_with_base(reader),
@@ -805,6 +806,11 @@ pub fn read_dynamic_block_data(
                 read_connection(reader),
                 read_connection(reader),
             ],
+            dwg_tail_byte: if reader.main_remaining_bits() >= 8 {
+                reader.read_byte()
+            } else {
+                0
+            },
         }),
         "BLOCKARRAYACTION" => DynamicBlockData::ArrayAction(BlockArrayAction {
             action: read_action(reader),

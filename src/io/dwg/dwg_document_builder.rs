@@ -1787,9 +1787,15 @@ impl DwgDocumentBuilder {
                             continue;
                         }
                     };
+                    // Dynamic-block and associative records keep their source
+                    // bytes: the writer copies them verbatim while the modeled
+                    // object still equals its read-time snapshot, since the
+                    // models do not cover every bit strict readers expect.
                     if capture_raw
                         || class_names.dxf.get(&raw_type_code).is_some_and(|name| {
                             matches!(name.as_str(), "ACSH_EXTRUSION_CLASS" | "DIMASSOC")
+                                || crate::objects::is_associative_object_name(name)
+                                || crate::objects::is_dynamic_block_object_name(name)
                         })
                     {
                         chunk.raw_records.push((

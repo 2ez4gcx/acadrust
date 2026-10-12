@@ -524,11 +524,18 @@ impl<'a> DwgObjectWriter<'a> {
                     self.write_dynamic_connection(connection);
                 }
             }
-            DynamicBlockData::RotateAction(value) | DynamicBlockData::ScaleAction(value) => {
+            DynamicBlockData::RotateAction(value) => {
                 self.write_dynamic_action_with_base(&value.action);
                 for connection in &value.connections {
                     self.write_dynamic_connection(connection);
                 }
+            }
+            DynamicBlockData::ScaleAction(value) => {
+                self.write_dynamic_action_with_base(&value.action);
+                for connection in &value.connections {
+                    self.write_dynamic_connection(connection);
+                }
+                self.writer.write_byte(value.dwg_tail_byte);
             }
             DynamicBlockData::ArrayAction(value) => {
                 self.write_dynamic_action(&value.action);
