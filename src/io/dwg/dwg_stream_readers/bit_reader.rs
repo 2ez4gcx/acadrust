@@ -635,6 +635,29 @@ impl DwgBitReader {
         reference_handle: u64,
         ref_type: &mut DwgReferenceType,
     ) -> u64 {
+        // The non-strict path never rejects, so `None` is unreachable here.
+        self.read_handle_parts(reference_handle, ref_type, false)
+            .unwrap_or(0)
+    }
+
+    /// Like [`read_handle_reference`], but returns `None` when the handle's
+    /// value bytes extend past the end of the stream, so callers can reject a
+    /// present but truncated handle prefix instead of accepting a
+    /// zero-padded value.
+    pub fn try_read_handle_reference(
+        &mut self,
+        reference_handle: u64,
+        ref_type: &mut DwgReferenceType,
+    ) -> Option<u64> {
+        self.read_handle_parts(reference_handle, ref_type, true)
+    }
+
+    fn read_handle_parts(
+        &mut self,
+        reference_handle: u64,
+        ref_type: &mut DwgReferenceType,
+        reject_truncated: bool,
+    ) -> Option<u64> {
         // |CODE (4 bits)|COUNTER (4 bits)|HANDLE or OFFSET|
         let form = self.read_byte();
         let code = form >> 4;
@@ -649,7 +672,14 @@ impl DwgBitReader {
             _ => DwgReferenceType::Undefined,
         };
 
-        if code <= 0x5 {
+        if reject_truncated && counter > 0 && (code <= 0x5 || code == 0xA || code == 0xC) {
+            let remaining_bits = self.data_len() as i64 * 8 - self.position_in_bits();
+            if remaining_bits < counter as i64 * 8 {
+                return None;
+            }
+        }
+
+        Some(if code <= 0x5 {
             // 0x2..0x5: just read offset and use it as result
             self.read_handle_bytes(counter)
         } else if code == 0x6 {
@@ -669,7 +699,7 @@ impl DwgBitReader {
         } else {
             // Invalid code — return 0
             0
-        }
+        })
     }
 
     /// Read `length` big-endian handle bytes and convert to u64.
