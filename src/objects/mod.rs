@@ -501,6 +501,53 @@ pub enum ObjectType {
 }
 
 impl ObjectType {
+    /// Return the handle encoded in this object's payload.
+    ///
+    /// The document stores objects in a handle-indexed map, but decoded
+    /// payloads also carry their intrinsic handle. This read-only accessor
+    /// lets integrity checks compare the two identities without reaching into
+    /// every object variant.
+    pub fn intrinsic_handle(&self) -> Handle {
+        match self {
+            ObjectType::Dictionary(value) => value.handle,
+            ObjectType::Layout(value) => value.handle,
+            ObjectType::XRecord(value) => value.handle,
+            ObjectType::Group(value) => value.handle,
+            ObjectType::MLineStyle(value) => value.handle,
+            ObjectType::ImageDefinition(value) => value.handle,
+            ObjectType::UnderlayDefinition(value) => value.handle,
+            ObjectType::PlotSettings(value) => value.handle,
+            ObjectType::MultiLeaderStyle(value) => value.handle,
+            ObjectType::TableStyle(value) => value.handle,
+            ObjectType::TableContent(value) => value.common.handle,
+            ObjectType::Scale(value) => value.handle,
+            ObjectType::ObjectContextData(value) => value.handle,
+            ObjectType::SortEntitiesTable(value) => value.handle,
+            ObjectType::DictionaryVariable(value) => value.handle,
+            ObjectType::VisualStyle(value) => value.handle,
+            ObjectType::Material(value) => value.handle,
+            ObjectType::ImageDefinitionReactor(value) => value.handle,
+            ObjectType::GeoData(value) => value.handle,
+            ObjectType::SpatialFilter(value) => value.handle,
+            ObjectType::RasterVariables(value) => value.handle,
+            ObjectType::BookColor(value) => value.handle,
+            ObjectType::PlaceHolder(value) => value.handle,
+            ObjectType::DictionaryWithDefault(value) => value.handle,
+            ObjectType::WipeoutVariables(value) => value.handle,
+            ObjectType::BlockVisibilityParameter(value) => value.handle,
+            ObjectType::DynamicBlock(value) => value.handle,
+            ObjectType::Associative(value) => value.handle,
+            ObjectType::ClassObject(value) => value.handle,
+            ObjectType::DataObject(value) => value.handle,
+            ObjectType::Field(value) => value.handle,
+            ObjectType::FieldList(value) => value.handle,
+            ObjectType::RegisteredClass(value) => value.handle,
+            ObjectType::DgnLineStyle(value) => value.handle,
+            ObjectType::ProxyObject(value) => value.handle,
+            ObjectType::Unknown { handle, .. } => *handle,
+        }
+    }
+
     /// Restore storage-only data omitted from serde after editing an object's
     /// public representation. The source and destination must have the same
     /// variant and identity; callers remain responsible for that check.

@@ -53,6 +53,10 @@ pub enum DxfError {
     #[error("Invalid file format: {0}")]
     InvalidFormat(String),
 
+    /// Recovery did not produce usable drawing data.
+    #[error("Recovery failed: {0}")]
+    RecoveryFailed(String),
+
     /// Invalid sentinel in file
     #[error("Invalid sentinel: {0}")]
     InvalidSentinel(String),

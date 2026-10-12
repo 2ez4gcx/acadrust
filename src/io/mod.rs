@@ -13,6 +13,7 @@ pub mod dxf;
 mod loft_parameters;
 mod loft_surface_curves;
 pub mod read;
+pub mod recover;
 mod surface_history;
 
 #[cfg(feature = "import")]
@@ -24,3 +25,4 @@ pub use read::{
     push_read_diagnostic, ReadDiagnostic, ReadOutcome, ReadStage, ReadStats, SourceFormat,
     MAX_READ_DIAGNOSTICS,
 };
+pub use recover::RecoverOutcome;

@@ -929,6 +929,15 @@ impl<R: Read + Seek> DwgReader<R> {
         self.read_with_stats().map(|outcome| outcome.document)
     }
 
+    /// Recover as much usable drawing data as possible and apply conservative
+    /// document repairs. Recovery always enables failsafe parsing.
+    pub fn recover(
+        &mut self,
+    ) -> std::result::Result<crate::io::recover::RecoverOutcome, DxfError> {
+        self.options.failsafe = true;
+        crate::io::recover::RecoverOutcome::from_read_outcome(self.read_with_stats()?)
+    }
+
     /// Like [`read`], but each pass-2 entity is offered to `visit` before it
     /// is stored on the document. Return `None` to keep it out of
     /// `CadDocument::entities` (the visitor may consume the value).
