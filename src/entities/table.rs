@@ -1572,7 +1572,12 @@ impl Table {
         self.merged_ranges = ranges;
     }
 
-    fn canonical_merged_ranges(&self) -> Vec<CellRange> {
+    pub(crate) fn sync_cells_from_merged_ranges(&mut self) {
+        let ranges = self.canonical_merged_ranges();
+        self.set_merged_ranges(ranges);
+    }
+
+    pub(crate) fn canonical_merged_ranges(&self) -> Vec<CellRange> {
         let row_count = self.rows.len();
         let column_count = self.columns.len();
         if row_count == 0 || column_count == 0 {
@@ -1624,15 +1629,32 @@ impl Table {
             for cell in &mut row.cells {
                 cell.merge_width = 1;
                 cell.merge_height = 1;
+                cell.merged = 0;
             }
         }
         self.merged_ranges = ranges;
         for range in &self.merged_ranges {
+            for row in self
+                .rows
+                .iter_mut()
+                .take(range.bottom_row + 1)
+                .skip(range.top_row)
+            {
+                for cell in row
+                    .cells
+                    .iter_mut()
+                    .take(range.right_col + 1)
+                    .skip(range.left_col)
+                {
+                    cell.merged = 1;
+                }
+            }
             if let Some(cell) = self
                 .rows
                 .get_mut(range.top_row)
                 .and_then(|row| row.cells.get_mut(range.left_col))
             {
+                cell.merged = 0;
                 cell.merge_width = range.col_count() as i32;
                 cell.merge_height = range.row_count() as i32;
             }

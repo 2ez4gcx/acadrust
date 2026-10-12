@@ -267,6 +267,11 @@ pub struct DwgPageCrcInfo {
 /// * Missing pages in a section are skipped instead of aborting.
 /// * Skipped records and sections are reported through the
 ///   [`CadDocument::notifications`](crate::document::CadDocument::notifications) collection.
+///
+/// MLeader annotation contexts, associative geometry dependencies, and edge
+/// action parameters with unsupported payload layouts are preserved as raw DWG
+/// objects with diagnostics even in strict mode, if their framing and common
+/// object metadata are valid. Same-version DWG saves retain those records.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DwgReadOptions {
@@ -687,7 +692,7 @@ fn section_name_from_field(name_buf: &[u8; 64]) -> String {
 /// integrity checksums including the AC1021 Header CRC-64.
 /// Read one `T16` string (2-byte character-count prefix). R2007+ stores the
 /// characters as UTF-16LE; earlier versions as one byte per character.
-fn read_t16(cur: &mut &[u8], utf16: bool, encoding: &'static encoding_rs::Encoding) -> String {
+fn read_t16(cur: &mut &[u8], utf16: bool, encoding: crate::io::dxf::code_page::LegacyEncoding) -> String {
     if cur.len() < 2 {
         *cur = &[];
         return String::new();
@@ -779,7 +784,7 @@ fn decode_block_units_xdata(document: &mut crate::document::CadDocument) {
 fn parse_summary_info(
     buf: &[u8],
     utf16: bool,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
 ) -> crate::document::SummaryInfo {
     let mut cur: &[u8] = buf;
     let mut si = crate::document::SummaryInfo {
@@ -965,6 +970,49 @@ impl<R: Read + Seek> DwgReader<R> {
         let mut diagnostics = Vec::new();
         self.report_progress(0);
 
+        // AC1009/R12 predates the section-map/object-stream model used by the
+        // normal DWG reader. Dispatch it to the byte-aligned pre-R13 codec
+        // before attempting the R13+ file-header parser.
+        self.stream.seek(SeekFrom::Start(0))?;
+        let mut magic = [0u8; 6];
+        self.stream.read_exact(&mut magic)?;
+        self.stream.seek(SeekFrom::Start(0))?;
+        if magic == *b"AC1009" || magic == *b"AD1009" {
+            let mut bytes = Vec::new();
+            self.stream.read_to_end(&mut bytes)?;
+            let mut document = crate::io::dwg::r12::read_document(&bytes)?;
+            if let Some(visit) = visit {
+                let handles: Vec<_> = document
+                    .entities()
+                    .map(|entity| entity.common().handle)
+                    .collect();
+                for handle in handles {
+                    let Some(entity) = document.get_entity(handle).cloned() else {
+                        continue;
+                    };
+                    let replacement = visit(&document, entity);
+                    document.remove_entity(handle);
+                    if let Some(entity) = replacement {
+                        document.add_entity(entity)?;
+                    }
+                }
+            }
+            self.report_progress(1000);
+            let stats = crate::io::read::ReadStats::from_document(
+                &document,
+                SourceFormat::Dwg,
+                1,
+                document.entities().count(),
+                document.entities().count(),
+                0,
+                true,
+                false,
+                true,
+                diagnostics,
+            );
+            return Ok(crate::io::read::ReadOutcome::new(document, stats));
+        }
+
         // 1. Read the DWG file header and section map
         let stage_started = web_time::Instant::now();
         let info = match self.read_file_header() {
@@ -1056,6 +1104,7 @@ impl<R: Read + Seek> DwgReader<R> {
                     crate::io::dxf::code_page::encoding_from_dwg_code_page(info.code_page),
                 ) {
                     Ok(header_vars) => document.header = header_vars,
+                    Err(e) if !failsafe => return Err(e),
                     Err(e) => report_read_error(
                         &mut self.notifications,
                         &mut diagnostics,
@@ -1171,6 +1220,12 @@ impl<R: Read + Seek> DwgReader<R> {
                         };
                         decoded_source_records = build_outcome.decoded_records;
                         skipped_source_records = build_outcome.skipped_records;
+                        if !failsafe && skipped_source_records != 0 {
+                            return Err(DxfError::Parse(build_outcome.diagnostics.iter()
+                                .find(|diagnostic| diagnostic.code != "auxiliary-object-preserved")
+                                .map(|diagnostic| diagnostic.message.clone())
+                                .unwrap_or_else(|| "Invalid DWG object records".to_string())));
+                        }
                         diagnostics.extend(build_outcome.diagnostics);
                         self.notifications.extend(build_outcome.notifications);
                     },
@@ -1464,6 +1519,25 @@ impl<R: Read + Seek> DwgReader<R> {
         };
 
         match version {
+            DwgVersion::AC9 => {
+                self.stream.seek(SeekFrom::Start(0))?;
+                let mut bytes = Vec::new();
+                self.stream.read_to_end(&mut bytes)?;
+                let r12 = crate::io::dwg::r12::header::read_header(&bytes)?;
+                info.acad_maintenance_version = r12.maintenance_version;
+                info.section_locators = r12
+                    .tables
+                    .iter()
+                    .enumerate()
+                    .map(|(index, table)| {
+                        (
+                            crate::io::dwg::r12::header::TABLE_NAMES[index].to_owned(),
+                            (table.address as i64, (table.record_size as u32 * table.count as u32) as i64),
+                        )
+                    })
+                    .collect();
+                info.objects_base_offset = r12.layout.entities_start as i64;
+            }
             DwgVersion::AC21 => {
                 self.read_file_metadata(&mut info)?;
                 self.read_file_header_ac21(&mut info)?;
@@ -3047,10 +3121,14 @@ pub(crate) fn recover_roundtrip_gradients(document: &mut crate::document::CadDoc
                 crate::entities::hatch::GradientColorEntry {
                     value: 0.0,
                     color: Color::from_index(c1 as i16),
+                    color_name: None,
+                    book_name: None,
                 },
                 crate::entities::hatch::GradientColorEntry {
                     value: 1.0,
                     color: Color::from_index(c2 as i16),
+                    color_name: None,
+                    book_name: None,
                 },
             ];
             h.gradient_color.name = name;

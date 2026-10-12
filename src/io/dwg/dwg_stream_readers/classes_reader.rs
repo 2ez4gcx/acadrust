@@ -47,7 +47,7 @@ pub fn read_classes_with_encoding(
     data: &[u8],
     version: DxfVersion,
     maintenance_version: u8,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
 ) -> Result<DxfClassCollection> {
     let dwg = DwgVersion::from_dxf_version(version)?;
 

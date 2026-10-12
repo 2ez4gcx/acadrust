@@ -74,6 +74,11 @@ pub(crate) fn read_embedded_entity_bits(
     version: DwgVersion,
     dxf_version: DxfVersion,
 ) -> Option<EmbeddedEntity> {
+    if reader.checked_main_count(i64::try_from(bit_length).unwrap_or(i64::MAX), 1)
+        != i64::try_from(bit_length).unwrap_or(i64::MAX)
+    {
+        return None;
+    }
     let mut bytes = vec![0u8; bit_length.div_ceil(8)];
     for bit_index in 0..bit_length {
         if reader.read_bit() {
@@ -94,11 +99,15 @@ pub(crate) fn decode_embedded_entity(
     if type_code == 0 || bit_length == 0 {
         return None;
     }
+    if bit_length > bytes.len().saturating_mul(8) {
+        return None;
+    }
     bytes.truncate(bit_length.div_ceil(8));
     let preserved_bytes = bytes.clone();
     let bit_reader = DwgBitReader::new(bytes, version, dxf_version);
     let mut reader = DwgMergedReader::from_readers(bit_reader, None, None, dxf_version);
-    match type_code as i16 {
+    reader.set_main_data_end(bit_length as i64);
+    let entity = match type_code as i16 {
         common::OBJ_REGION => {
             let preserve_unknown = || EmbeddedEntity::Unknown {
                 type_code,
@@ -248,8 +257,26 @@ pub(crate) fn decode_embedded_entity(
         _ => Some(EmbeddedEntity::Unknown {
             type_code,
             bit_count: bit_length,
-            bytes: preserved_bytes,
+            bytes: preserved_bytes.clone(),
         }),
+    };
+    if reader.check_error().is_err() {
+        Some(EmbeddedEntity::Unknown { type_code, bit_count: bit_length, bytes: preserved_bytes })
+    } else {
+        entity
+    }
+}
+
+#[cfg(test)]
+mod malformed_tests {
+    use super::*;
+
+    #[test]
+    fn truncated_embedded_curves_remain_opaque() {
+        for type_code in [common::OBJ_LINE, common::OBJ_SPLINE, common::OBJ_LWPOLYLINE] {
+            let decoded = decode_embedded_entity(type_code as i32, 1, vec![0], DwgVersion::AC24, DxfVersion::AC1024);
+            assert!(matches!(decoded, Some(EmbeddedEntity::Unknown { .. })));
+        }
     }
 }
 

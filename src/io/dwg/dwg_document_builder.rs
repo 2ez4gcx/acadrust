@@ -39,6 +39,12 @@ use crate::types::Handle;
 use crate::types::LineWeight;
 use std::collections::{HashMap, HashSet};
 
+fn linetype_segment_is_complex(segment: &tables::LinetypeSegment, shape_handle: u64) -> bool {
+    // Scale, rotation and offsets have no meaning on a plain dash; native
+    // writers commonly store scale 0 instead of 1 (issue #128).
+    segment.dwg_flags & 0x06 != 0 || segment.shape_number != 0 || shape_handle != 0
+}
+
 fn boundary_path_from_dwg(path: entities::HatchBoundaryPath) -> crate::entities::BoundaryPath {
     use crate::entities::hatch::*;
 
@@ -100,13 +106,13 @@ fn read_hatch_scale_context_data(
     version: crate::io::dwg::DwgVersion,
 ) -> crate::objects::HatchScaleContext {
     let mut pattern_lines = Vec::new();
-    for _ in 0..reader.read_bit_short().max(0).min(10_000) {
+    for _ in 0..reader.read_short_count() {
         let angle = reader.read_bit_double();
         let base_point =
             crate::types::Vector2::new(reader.read_bit_double(), reader.read_bit_double());
         let offset = crate::types::Vector2::new(reader.read_bit_double(), reader.read_bit_double());
         let mut dash_lengths = Vec::new();
-        for _ in 0..reader.read_bit_short().max(0).min(10_000) {
+        for _ in 0..reader.read_short_count() {
             dash_lengths.push(reader.read_bit_double());
         }
         pattern_lines.push(crate::entities::HatchPatternLine {
@@ -123,7 +129,7 @@ fn read_hatch_scale_context_data(
         reader.read_bit_double(),
     );
     let mut loops = Vec::new();
-    for _ in 0..reader.read_bit_long().max(0).min(100_000) {
+    for _ in 0..reader.read_count() {
         let loop_type = reader.read_bit_long();
         let supports_context = reader.read_bit();
         let boundary = (!supports_context).then(|| {
@@ -172,6 +178,7 @@ struct Pass2Output {
     version: crate::types::DxfVersion,
     header: Pass2Header,
     entities: Vec<std::sync::Arc<EntityType>>,
+    entity_next_handles: HashMap<Handle, Handle>,
     objects: HashMap<Handle, crate::objects::ObjectType>,
     eed_by_handle: HashMap<Handle, Vec<(u64, Vec<u8>)>>,
     xdic_by_handle: HashMap<Handle, Handle>,
@@ -202,6 +209,7 @@ impl Pass2Output {
                 paper_space_block_handle,
             },
             entities: Vec::with_capacity(capacity),
+            entity_next_handles: HashMap::new(),
             objects: HashMap::with_capacity(capacity / 8),
             eed_by_handle: HashMap::new(),
             xdic_by_handle: HashMap::new(),
@@ -223,6 +231,23 @@ impl Pass2Output {
         let handle = entity.common().handle;
         self.entities.push(std::sync::Arc::new(entity));
         Ok(handle)
+    }
+
+    fn discard_record(&mut self, handle: Handle) {
+        self.entity_next_handles.remove(&handle);
+        self.objects.remove(&handle);
+        self.eed_by_handle.remove(&handle);
+        self.xdic_by_handle.remove(&handle);
+        self.reactors_by_handle.remove(&handle);
+        self.dwg_data_store_handles.remove(&handle);
+        self.context_scales.remove(&handle);
+        self.block_visibility_params.remove(&handle);
+        self.block_representations.remove(&handle);
+        self.fields.remove(&handle);
+        self.dgn_ls_definitions.remove(&handle);
+        self.dgn_ls_components.remove(&handle);
+        self.view_rep_refs.remove(&handle);
+        self.section_view_reps.retain(|h| *h != handle);
     }
 }
 
@@ -262,6 +287,8 @@ struct RecordFailure {
     handle: u64,
     offset: usize,
     type_code: i16,
+    /// True when a failed auxiliary payload was retained as a validated raw record.
+    recoverable: bool,
     message: String,
 }
 
@@ -508,17 +535,28 @@ impl DwgDocumentBuilder {
         .ok()
     }
 
-    fn number_active_viewports(document: &mut CadDocument) {
-        let Some(paper) = document.block_records.get("*Paper_Space") else {
-            return;
-        };
-        let mut next_id = 1i16;
-        for handle in paper.entity_handles.clone() {
-            if let Some(EntityType::Viewport(viewport)) = document.get_entity_mut(handle) {
-                if viewport.id == 0 {
-                    viewport.id = next_id;
+    fn number_paper_space_viewports(document: &mut CadDocument) {
+        let blocks: Vec<Vec<Handle>> = document
+            .block_records
+            .iter()
+            .filter(|block| block.is_paper_space())
+            .map(|block| block.entity_handles.clone())
+            .collect();
+        for handles in blocks {
+            let used_ids: HashSet<i16> = handles
+                .iter()
+                .filter_map(|handle| match document.get_entity(*handle) {
+                    Some(EntityType::Viewport(viewport)) if viewport.id > 0 => Some(viewport.id),
+                    _ => None,
+                })
+                .collect();
+            let mut available_ids = (1..=i16::MAX).filter(|id| !used_ids.contains(id));
+            for handle in handles {
+                if let Some(EntityType::Viewport(viewport)) = document.get_entity_mut(handle) {
+                    if viewport.id == 0 {
+                        viewport.id = available_ids.next().unwrap_or(0);
+                    }
                 }
-                next_id = next_id.saturating_add(1);
             }
         }
     }
@@ -759,17 +797,18 @@ impl DwgDocumentBuilder {
                 }));
                 let (obj_handle, type_code, eed_raw_pass1, xdic_pass1, reactors_pass1) =
                     match result {
-                        Ok(v) => v,
-                        Err(_) => {
+                        Ok(v) if reader.check_error().is_ok() => v,
+                        _ => {
                             skipped_pass1 += 1;
                             let message = format!(
-                                "Skipped corrupt table record at handle {:#X} (panic in common data)",
-                                handle
+                                "Invalid table common data at handle {handle:#X}: {}",
+                                reader.check_error().err().map(|e| e.to_string())
+                                    .unwrap_or_else(|| "record decoder panicked".to_string())
                             );
                             self.notifications
                                 .notify(NotificationType::Error, message.clone());
                             let mut diagnostic = ReadDiagnostic::new(
-                                "record-decode-panicked",
+                                "record-decode-failed",
                                 ReadStage::RecordStream,
                                 message,
                             );
@@ -934,7 +973,7 @@ impl DwgDocumentBuilder {
                     }
                 }));
                 match table_result {
-                    Ok(Some(entry)) => {
+                    Ok(Some(entry)) if reader.check_error().is_ok() => {
                         // Populate handle→name maps (needed by Pass 2)
                         match &entry {
                             ParsedEntry::Layer(h, data) => {
@@ -994,8 +1033,8 @@ impl DwgDocumentBuilder {
                             parsed_entries.push(entry);
                         }
                     }
-                    Ok(None) => {}
-                    Err(_) => {
+                    Ok(None) if reader.check_error().is_ok() => {}
+                    _ => {
                         skipped_pass1 += 1;
                         let message = format!(
                             "Skipped corrupt table record at handle {:#X}, type_code={}",
@@ -1202,8 +1241,11 @@ impl DwgDocumentBuilder {
                             if bytes.first() == Some(&71) && bytes.len() >= 5 {
                                 let raw =
                                     i32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
-                                layer.transparency =
-                                    crate::types::Transparency::from_alpha_value(raw as u32);
+                                if let Some(transparency) =
+                                    crate::types::Transparency::from_layer_alpha_value(raw as u32)
+                                {
+                                    layer.transparency = transparency;
+                                }
                             }
                         }
                     }
@@ -1341,13 +1383,7 @@ impl DwgDocumentBuilder {
                             use crate::tables::linetype::{
                                 LineTypeComplexContent, LineTypeComplexData, LineTypeElement,
                             };
-                            let is_complex = s.dwg_flags != 0
-                                || s.offset_x.abs() > 1e-12
-                                || s.offset_y.abs() > 1e-12
-                                || (s.scale - 1.0).abs() > 1e-12
-                                || s.rotation.abs() > 1e-12
-                                || s.shape_number != 0
-                                || sh != 0;
+                            let is_complex = linetype_segment_is_complex(s, sh);
                             let complex = if is_complex {
                                 let content = if s.dwg_flags & 0x02 != 0 {
                                     LineTypeComplexContent::Text {
@@ -1364,6 +1400,7 @@ impl DwgDocumentBuilder {
                                     scale: s.scale,
                                     rotation: s.rotation,
                                     absolute_rotation: s.dwg_flags & 0x01 != 0,
+                                    source_flags: s.dwg_flags as u8,
                                     offset: [s.offset_x, s.offset_y],
                                 })
                             } else {
@@ -1657,9 +1694,9 @@ impl DwgDocumentBuilder {
         }
 
         // Build a reverse map: entity_handle → block_record_handle
-        // from the canonical entity_handles read from the DWG binary
-        // (R2004+).  This is needed because entity_mode=1 only says
-        // "paper space" without specifying WHICH paper space.
+        // from the canonical entity_handles (R2004+). R13-R2000 chains
+        // are resolved after Pass 2 supplies their entity links below.
+        // entity_mode=1 identifies paper space but not a particular layout.
         let mut binary_entity_owner: foldhash::HashMap<Handle, Handle> =
             foldhash::HashMap::default();
         for entry in &parsed_entries {
@@ -1706,6 +1743,7 @@ impl DwgDocumentBuilder {
         };
         // Pending attribute entities keyed by owner (INSERT) handle.
         let mut pending_attributes: HashMap<u64, Vec<AttributeEntity>> = HashMap::new();
+        let mut entity_next_handles = HashMap::new();
         let pass2_records: Vec<(u64, usize, i16, i16)> = record_catalog
             .iter()
             .copied()
@@ -1773,7 +1811,7 @@ impl DwgDocumentBuilder {
                     records.len(),
                 );
                 for &(handle, offset, raw_type_code, type_code) in records {
-                    let (_, reader) = match self.obj_reader.read_record_at(offset) {
+                    let (_, mut reader) = match self.obj_reader.read_record_at(offset) {
                         Ok(record) => record,
                         Err(error) => {
                             chunk.failures.push(RecordFailure {
@@ -1781,6 +1819,7 @@ impl DwgDocumentBuilder {
                                     handle,
                                     offset,
                                     type_code,
+                                    recoverable: false,
                                     message: format!(
                                         "Could not read record at handle {handle:#X}, type_code={type_code}: {error}"
                                     ),
@@ -1800,12 +1839,15 @@ impl DwgDocumentBuilder {
                             reader.get_handle_bits(),
                         ));
                     }
+                    let entity_start = chunk.output.entities.len();
+                    let section_style = chunk.output.section_view_style.clone();
+                    let section_reps = chunk.output.section_view_reps.len();
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         self.process_pass2_record(
                             handle,
                             raw_type_code,
                             type_code,
-                            reader,
+                            &mut reader,
                             &mut chunk.output,
                             &maps,
                             &mut chunk.pending,
@@ -1815,16 +1857,85 @@ impl DwgDocumentBuilder {
                             photometric_lighting,
                         );
                     }));
-                    if result.is_err() {
-                        chunk.failures.push(RecordFailure {
-                                code: "record-decode-panicked",
-                                handle,
-                                offset,
-                                type_code,
-                                message: format!(
-                                    "Skipped corrupt record at handle {handle:#X}, type_code={type_code} (panic recovered)"
-                                ),
+                    if let Some(message) = reader.check_error().err().map(|e| e.to_string())
+                        .or_else(|| result.err().map(|_| "Record decoder panicked".to_string()))
+                    {
+                        let recovered = (raw_type_code >= 500
+                            && !entity_class_numbers.contains(&raw_type_code)
+                            && !is_entity_type(type_code)
+                            && Self::is_recoverable_auxiliary_class(
+                                &class_names, raw_type_code, type_code,
+                            ))
+                        .then(|| {
+                            self.recover_auxiliary_object(
+                                handle, raw_type_code, type_code, offset, &class_names,
+                            )
+                        })
+                        .flatten();
+                        let recoverable = recovered.is_some();
+                        // Never commit fabricated entities or expose them to visitors.
+                        chunk.output.entities.truncate(entity_start);
+                        chunk.output.section_view_style = section_style;
+                        chunk.output.section_view_reps.truncate(section_reps);
+                        chunk.output.discard_record(Handle::from(handle));
+                        chunk.pending.polylines.retain(|(h, _)| *h != handle);
+                        for vertices in chunk.pending.vertices.values_mut() {
+                            vertices.retain(|vertex| match vertex {
+                                PendingVertex::V2D(data) => data.handle.value() != handle,
+                                PendingVertex::V3D(data, _) => data.handle.value() != handle,
+                                PendingVertex::PfaceFace(data, _) => data.handle.value() != handle,
                             });
+                        }
+                        chunk.pending.seqends.retain(|_, h| h.value() != handle);
+                        for attributes in chunk.pending_attributes.values_mut() {
+                            attributes.retain(|attribute| attribute.common.handle.value() != handle);
+                        }
+                        chunk.raw_records.retain(|(h, ..)| *h != handle);
+                        if let Some((object, common, scale)) = recovered {
+                            let object_handle = Handle::from(handle);
+                            if !common.common.eed_raw.is_empty() {
+                                chunk.output.eed_by_handle
+                                    .insert(object_handle, common.common.eed_raw.clone());
+                            }
+                            if let Some(xdic) = common.xdictionary_handle {
+                                chunk.output.xdic_by_handle
+                                    .insert(object_handle, Handle::from(xdic));
+                            }
+                            if !common.reactors.is_empty() {
+                                chunk.output.reactors_by_handle.insert(
+                                    object_handle,
+                                    common.reactors.iter().copied().map(Handle::from).collect(),
+                                );
+                            }
+                            if common.has_ds_data {
+                                chunk.output.dwg_data_store_handles.insert(object_handle);
+                            }
+                            if let Some(scale) = scale {
+                                chunk.output.context_scales.insert(object_handle, scale);
+                            }
+                            chunk.output.objects.insert(object_handle, object);
+                        }
+                        chunk.failures.push(RecordFailure {
+                            code: if recoverable {
+                                "auxiliary-object-preserved"
+                            } else {
+                                "record-decode-failed"
+                            },
+                            handle,
+                            offset,
+                            type_code,
+                            recoverable,
+                            message: if recoverable {
+                                let name = Self::unknown_object_type_name(&class_names, raw_type_code);
+                                format!(
+                                    "Preserved auxiliary object {name} at handle {handle:#X}, type_code={raw_type_code} as raw DWG data after decode failure: {message}"
+                                )
+                            } else {
+                                format!(
+                                    "Invalid record at handle {handle:#X}, type_code={type_code}: {message}"
+                                )
+                            },
+                        });
                     }
                 }
                 chunk
@@ -1911,6 +2022,7 @@ impl DwgDocumentBuilder {
                     document.section_view_style = chunk.output.section_view_style.take();
                 }
                 document.objects.extend(chunk.output.objects.drain());
+                entity_next_handles.extend(chunk.output.entity_next_handles.drain());
                 if let Some(visit) = visit.as_deref_mut() {
                     accept_loaded_entity_batch(document, visit, &mut chunk.output.entities);
                 } else {
@@ -1932,7 +2044,9 @@ impl DwgDocumentBuilder {
                         .append(&mut attributes);
                 }
                 for failure in chunk.failures {
-                    skipped_pass2 += 1;
+                    if !failure.recoverable {
+                        skipped_pass2 += 1;
+                    }
                     self.notifications
                         .notify(NotificationType::Error, failure.message.clone());
                     let mut diagnostic =
@@ -2263,9 +2377,8 @@ impl DwgDocumentBuilder {
         // The DWG entity_mode=1 flag means "paper space entity" but does
         // NOT specify WHICH paper space.  During Pass 2, all entity_mode=1
         // entities were routed to the single *Paper_Space block record.
-        // Use the canonical entity_handle lists from the binary block
-        // records (R2004+) to correct ownership for entities that belong
-        // to non-active paper spaces (*Paper_Space0, *Paper_Space1, etc.).
+        // Use the block's entity list (R2004+) or first/last linked chain
+        // (R13-R2000) to identify each paper space and restore its order.
         if perf {
             eprintln!(
                 "[perf] dwg-build post={:.1}ms",
@@ -2274,6 +2387,22 @@ impl DwgDocumentBuilder {
         }
         self.report_progress(925);
         let ownership_started = web_time::Instant::now();
+        if !self.obj_reader.version().r2004_plus() {
+            for entry in &parsed_entries {
+                if let ParsedEntry::Block(handle, data) = entry {
+                    let owner = Handle::from(*handle);
+                    let chain = Self::block_entity_chain(
+                        data.first_entity_handle.unwrap_or(0),
+                        data.last_entity_handle.unwrap_or(0),
+                        &entity_next_handles,
+                    );
+                    for entity in &chain {
+                        binary_entity_owner.insert(*entity, owner);
+                    }
+                    document.block_entity_handles.insert(owner, chain);
+                }
+            }
+        }
         // Rebuild block membership in O(entities + blocks). The ordinary
         // add-entity path scans every block record for every entity, which
         // dominates load time in block-heavy drawings. Owner correction and
@@ -2799,8 +2928,9 @@ impl DwgDocumentBuilder {
                 for (handle, blocks) in &document.eed_by_handle {
                     match document.objects.get(handle) {
                         // FIELD decodes its XDATA onto `Field::xdata` itself.
-                        None | Some(crate::objects::ObjectType::Field(_)) => continue,
-                        Some(_) => {}
+                        Some(crate::objects::ObjectType::Field(_)) => continue,
+                        None if document.get_entity(*handle).is_some() => continue,
+                        _ => {}
                     }
                     let mut xdata = crate::xdata::ExtendedData::default();
                     for (app_handle, bytes) in blocks {
@@ -3205,7 +3335,7 @@ impl DwgDocumentBuilder {
         // its own BlockRecord. Copy the record's value across now that both
         // are assembled.
         Self::hydrate_block_markers(document);
-        Self::number_active_viewports(document);
+        Self::number_paper_space_viewports(document);
         document.ensure_model_layout();
 
         document.original_objects = document
@@ -3273,6 +3403,30 @@ impl DwgDocumentBuilder {
         }
     }
 
+    fn block_entity_chain(
+        first: u64,
+        last: u64,
+        next_handles: &HashMap<Handle, Handle>,
+    ) -> Vec<Handle> {
+        let mut chain = Vec::new();
+        let mut visited = HashSet::new();
+        let mut current = Handle::from(first);
+        if first == 0 || last == 0 {
+            return chain;
+        }
+        while !current.is_null() && visited.insert(current) {
+            let Some(next) = next_handles.get(&current) else {
+                break;
+            };
+            chain.push(current);
+            if current.value() == last {
+                break;
+            }
+            current = *next;
+        }
+        chain
+    }
+
     fn rebuild_block_membership(
         document: &mut CadDocument,
         binary_entity_owner: Option<&foldhash::HashMap<Handle, Handle>>,
@@ -3285,7 +3439,6 @@ impl DwgDocumentBuilder {
             .collect();
         let model_space = document.header.model_space_block_handle;
         let paper_space = document.header.paper_space_block_handle;
-        let model_is_valid = valid_owners.contains(&model_space);
         let paper_is_valid = valid_owners.contains(&paper_space);
         let memberships: Vec<Option<(Handle, Handle)>> =
             map_mut(&mut document.entities, |entity| {
@@ -3308,9 +3461,8 @@ impl DwgDocumentBuilder {
                         model_space
                     };
                 }
-                if !valid_owners.contains(&owner) && model_is_valid {
-                    owner = model_space;
-                }
+                // A non-null missing owner can be an erased anonymous dimension
+                // block. Keep its geometry orphaned rather than drawing it in model space.
                 if common.owner_handle != owner {
                     std::sync::Arc::make_mut(entity).common_mut().owner_handle = owner;
                 }
@@ -3353,7 +3505,7 @@ impl DwgDocumentBuilder {
         handle: u64,
         raw_type_code: i16,
         type_code: i16,
-        mut reader: crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader,
+        mut reader: &mut crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader,
         document: &mut Pass2Output,
         maps: &HandleMaps,
         pending: &mut PendingPolylines,
@@ -3374,6 +3526,21 @@ impl DwgDocumentBuilder {
             let entity_data = self
                 .obj_reader
                 .read_common_entity_data(&mut reader, type_code);
+            if entity_data.common.handle != handle {
+                reader.invalidate("DWG entity handle disagrees with handle map");
+            }
+            if reader.check_error().is_err() {
+                return;
+            }
+            if !self.obj_reader.version().r2004_plus() {
+                let next = entity_data
+                    .next_entity_handle
+                    .unwrap_or_else(|| entity_data.common.handle.saturating_add(1));
+                document.entity_next_handles.insert(
+                    Handle::from(entity_data.common.handle),
+                    Handle::from(next),
+                );
+            }
             let mut entity_common = map_entity_common(
                 &entity_data,
                 maps,
@@ -3445,7 +3612,7 @@ impl DwgDocumentBuilder {
                     e.shadow_map_softness = data.shadow_map_softness;
                     e.photometric_mode = data.photometric_mode;
                     e.photometric_data = data.photometric_data;
-                    let _ = document.add_entity(EntityType::Light(e));
+                    let _ = document.add_entity(EntityType::Light(Box::new(e)));
                 }
                 OBJ_CAMERA
                 | OBJ_SECTIONOBJECT
@@ -3659,6 +3826,7 @@ impl DwgDocumentBuilder {
                     e.field_handles = data.field_handles;
                     e.base_style = data.base_style;
                     e.merged_ranges = data.merged_ranges;
+                    e.sync_cells_from_merged_ranges();
                     e.break_options = BreakOptionFlags::from_bits_retain(data.break_options as u32);
                     e.break_flow_direction =
                         BreakFlowDirection::from(data.break_flow_direction as u8);
@@ -3818,7 +3986,7 @@ impl DwgDocumentBuilder {
                         self.obj_reader.dxf_version(),
                     );
                     let e = mtext_from_data(data, entity_common, &maps);
-                    let _ = document.add_entity(EntityType::MText(e));
+                    let _ = document.add_entity(EntityType::MText(Box::new(e)));
                 }
                 OBJ_LEADER => {
                     let data = entities::read_leader(
@@ -3942,9 +4110,13 @@ impl DwgDocumentBuilder {
                         .gradient_colors
                         .into_iter()
                         .map(
-                            |(value, color)| crate::entities::hatch::GradientColorEntry {
+                            |(value, color, color_name, book_name)| {
+                                crate::entities::hatch::GradientColorEntry {
                                 value,
                                 color,
+                                color_name,
+                                book_name,
+                            }
                             },
                         )
                         .collect();
@@ -3958,7 +4130,7 @@ impl DwgDocumentBuilder {
                             }
                         }
                     }
-                    let _ = document.add_entity(EntityType::Hatch(e));
+                    let _ = document.add_entity(EntityType::Hatch(Box::new(e)));
                 }
                 OBJ_VIEWPORT => {
                     let data = entities::read_viewport(
@@ -4061,7 +4233,7 @@ impl DwgDocumentBuilder {
                             e.sun_handle = Handle::new(sun);
                         }
                     }
-                    let _ = document.add_entity(EntityType::Viewport(e));
+                    let _ = document.add_entity(EntityType::Viewport(Box::new(e)));
                 }
                 OBJ_POLYLINE_2D => {
                     let data = entities::read_polyline2d(&mut reader, self.obj_reader.version());
@@ -4107,7 +4279,7 @@ impl DwgDocumentBuilder {
                     dim.base.definition_point = data.definition_point;
                     dim.rotation = data.rotation;
                     dim.ext_line_rotation = data.ext_line_rotation;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Linear(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Linear(dim))));
                 }
                 OBJ_DIMENSION_ALIGNED => {
                     let data = entities::read_dimension_aligned(
@@ -4121,7 +4293,7 @@ impl DwgDocumentBuilder {
                     dim.definition_point = data.definition_point;
                     dim.base.definition_point = data.definition_point;
                     dim.ext_line_rotation = data.ext_line_rotation;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Aligned(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Aligned(dim))));
                 }
                 OBJ_DIMENSION_RADIUS => {
                     let data = entities::read_dimension_radius(
@@ -4134,7 +4306,7 @@ impl DwgDocumentBuilder {
                     map_dimension_common(&mut dim.base, &data.common, &maps);
                     dim.base.definition_point = data.definition_point;
                     dim.leader_length = data.leader_length;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Radius(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Radius(dim))));
                 }
                 OBJ_DIMENSION_DIAMETER => {
                     let data = entities::read_dimension_diameter(
@@ -4147,7 +4319,7 @@ impl DwgDocumentBuilder {
                     map_dimension_common(&mut dim.base, &data.common, &maps);
                     dim.base.definition_point = data.definition_point;
                     dim.leader_length = data.leader_length;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Diameter(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Diameter(dim))));
                 }
                 OBJ_DIMENSION_ANG_2LN => {
                     let data = entities::read_dimension_angular_2ln(
@@ -4165,7 +4337,7 @@ impl DwgDocumentBuilder {
                     dim.angle_vertex = data.angle_vertex;
                     dim.definition_point = data.definition_point;
                     dim.base.definition_point = data.definition_point;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Angular2Ln(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Angular2Ln(dim))));
                 }
                 OBJ_DIMENSION_ANG_3PT => {
                     let data = entities::read_dimension_angular_3pt(
@@ -4181,7 +4353,7 @@ impl DwgDocumentBuilder {
                     dim.angle_vertex = data.angle_vertex;
                     dim.definition_point = data.definition_point;
                     dim.base.definition_point = data.definition_point;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Angular3Pt(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Angular3Pt(dim))));
                 }
                 OBJ_DIMENSION_ORDINATE => {
                     let data = entities::read_dimension_ordinate(
@@ -4199,7 +4371,7 @@ impl DwgDocumentBuilder {
                     dim.definition_point = data.definition_point;
                     dim.base.definition_point = data.definition_point;
                     dim.refresh_measurement();
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Ordinate(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Ordinate(dim))));
                 }
                 OBJ_ARC_DIMENSION => {
                     let data = entities::read_dimension_arc(
@@ -4221,7 +4393,7 @@ impl DwgDocumentBuilder {
                     dim.has_leader = data.has_leader;
                     dim.first_leader_point = data.first_leader_point;
                     dim.second_leader_point = data.second_leader_point;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::Arc(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::Arc(dim))));
                 }
                 OBJ_LARGE_RADIAL_DIMENSION => {
                     let data = entities::read_dimension_large_radial(
@@ -4238,7 +4410,7 @@ impl DwgDocumentBuilder {
                     dim.jog_angle = data.jog_angle;
                     dim.override_center = data.override_center;
                     dim.jog_point = data.jog_point;
-                    let _ = document.add_entity(EntityType::Dimension(Dimension::LargeRadial(dim)));
+                    let _ = document.add_entity(EntityType::Dimension(Box::new(Dimension::LargeRadial(dim))));
                 }
 
                 OBJ_MLINE => {
@@ -4727,7 +4899,7 @@ impl DwgDocumentBuilder {
                     e.dwg_mode = data.mode;
                     e.is_paper_space = data.mode == 1;
                     e.lock_aspect = data.lock_aspect;
-                    let _ = document.add_entity(EntityType::Ole2Frame(e));
+                    let _ = document.add_entity(EntityType::Ole2Frame(Box::new(e)));
                 }
 
                 // ── Polygon mesh (POLYLINE with mesh flag) ──────────
@@ -5132,6 +5304,12 @@ impl DwgDocumentBuilder {
                 .obj_reader
                 .read_common_non_entity_data(&mut reader, type_code);
             let owner_handle = Handle::from(non_entity_data.owner_handle);
+            if non_entity_data.common.handle != handle {
+                reader.invalidate("DWG object handle disagrees with handle map");
+            }
+            if reader.check_error().is_err() {
+                return;
+            }
             if non_entity_data.has_ds_data {
                 document
                     .dwg_data_store_handles
@@ -5994,6 +6172,7 @@ impl DwgDocumentBuilder {
                     obj.field_handles = field_handles;
                     obj.base_style = base_style;
                     obj.merged_ranges = merged_ranges;
+                    obj.sync_cells_from_merged_ranges();
                     obj.table_style_handle = (style_handle != 0)
                         .then(|| Handle::from(style_handle));
                     document.objects.insert(
@@ -6716,7 +6895,7 @@ impl DwgDocumentBuilder {
                                     // EED preface, but retains the non-entity common
                                     // tail before AcDbObjectContextData.
                                     let embedded_reactor_count =
-                                        reader.read_bit_long().max(0).min(100_000)
+                                        reader.read_count()
                                             as usize;
                                     let embedded_no_xdic = reader.read_bit();
                                     let embedded_has_binary_data = if self
@@ -6862,7 +7041,7 @@ impl DwgDocumentBuilder {
                                 let class_version = reader.read_bit_short();
                                 let is_default = reader.read_bit();
                                 let mut points = Vec::new();
-                                for _ in 0..reader.read_bit_long().max(0).min(100_000) {
+                                for _ in 0..reader.read_count() {
                                     points.push(reader.read_3bit_double());
                                 }
                                 let x_direction = reader.read_3bit_double();
@@ -7192,6 +7371,74 @@ impl DwgDocumentBuilder {
         }
     }
 
+    /// Limit opaque recovery to the auxiliary schemas reported in #134.
+    fn is_recoverable_auxiliary_class(
+        class_names: &ClassNames,
+        raw_type_code: i16,
+        type_code: i16,
+    ) -> bool {
+        let name = class_names
+            .dxf
+            .get(&raw_type_code)
+            .or_else(|| class_names.dxf.get(&type_code))
+            .map(|name| name.to_ascii_uppercase());
+        matches!(
+            name.as_deref(),
+            Some(
+                "ACDB_MLEADEROBJECTCONTEXTDATA_CLASS"
+                    | "ACDBASSOCGEOMDEPENDENCY"
+                    | "ASSOCGEOMDEPENDENCY"
+                    | "ACDBASSOCEDGEACTIONPARAM"
+                    | "ASSOCEDGEACTIONPARAM"
+            )
+        )
+    }
+
+    /// Validate framing and common metadata independently of the failed payload.
+    fn recover_auxiliary_object(
+        &self,
+        handle: u64,
+        raw_type_code: i16,
+        type_code: i16,
+        offset: usize,
+        class_names: &ClassNames,
+    ) -> Option<(
+        crate::objects::ObjectType,
+        crate::io::dwg::dwg_stream_readers::object_reader::NonEntityCommonData,
+        Option<Handle>,
+    )> {
+        let (actual_type, mut reader) = self.obj_reader.read_record_at(offset).ok()?;
+        if actual_type != raw_type_code {
+            return None;
+        }
+        let common = self
+            .obj_reader
+            .read_common_non_entity_data(&mut reader, type_code);
+        if common.common.handle != handle || reader.check_error().is_err() {
+            return None;
+        }
+        // The scale is the first class-specific handle; reading it does not
+        // depend on the MLeader context's data-stream layout.
+        let scale = class_names
+            .dxf
+            .get(&raw_type_code)
+            .filter(|name| name.eq_ignore_ascii_case("ACDB_MLEADEROBJECTCONTEXTDATA_CLASS"))
+            .and_then(|_| {
+                let scale = Handle::from(reader.read_handle());
+                (reader.check_error().is_ok() && !scale.is_null()).then_some(scale)
+            });
+        let object = crate::objects::ObjectType::Unknown {
+            type_name: Self::unknown_object_type_name(class_names, raw_type_code),
+            handle: Handle::from(handle),
+            owner: Handle::from(common.owner_handle),
+            raw_dxf_codes: None,
+            raw_dwg_data: Some(reader.raw_merged_data()),
+            raw_dwg_handle_bits: reader.get_handle_bits(),
+            raw_dwg_version: Some(self.obj_reader.dxf_version()),
+        };
+        Some((object, common, scale))
+    }
+
     /// Name an unsupported object by its CLASSES-section dxfname when the
     /// drawing's class map knows it, falling back to the positional code.
     fn unknown_object_type_name(class_names: &ClassNames, raw_type_code: i16) -> String {
@@ -7258,6 +7505,146 @@ mod tests {
             ),
             "IRD_OBJ_RECORD"
         );
+    }
+
+    #[test]
+    fn missing_non_null_owner_is_left_out_of_block_membership() {
+        let mut document = CadDocument::new();
+        let model = document.header.model_space_block_handle;
+        let orphan_owner = Handle::new(0xDEAD);
+        let handle = document
+            .add_entity(EntityType::Line(Line::from_coords(
+                0.0, 0.0, 0.0, 1.0, 1.0, 0.0,
+            )))
+            .unwrap();
+        document
+            .get_entity_mut(handle)
+            .unwrap()
+            .common_mut()
+            .owner_handle = orphan_owner;
+
+        DwgDocumentBuilder::rebuild_block_membership(&mut document, None, None);
+
+        let model_block = document
+            .block_records
+            .iter()
+            .find(|record| record.handle == model)
+            .unwrap();
+        assert!(!model_block.entity_handles.contains(&handle));
+        assert_eq!(
+            document.get_entity(handle).unwrap().common().owner_handle,
+            orphan_owner
+        );
+    }
+
+    #[test]
+    fn null_owner_still_uses_model_space_fallback() {
+        let mut document = CadDocument::new();
+        let model = document.header.model_space_block_handle;
+        let handle = document
+            .add_entity(EntityType::Line(Line::from_coords(
+                0.0, 0.0, 0.0, 1.0, 1.0, 0.0,
+            )))
+            .unwrap();
+        document
+            .get_entity_mut(handle)
+            .unwrap()
+            .common_mut()
+            .owner_handle = Handle::NULL;
+
+        DwgDocumentBuilder::rebuild_block_membership(&mut document, None, None);
+
+        let model_block = document
+            .block_records
+            .iter()
+            .find(|record| record.handle == model)
+            .unwrap();
+        assert!(model_block.entity_handles.contains(&handle));
+        assert_eq!(
+            document.get_entity(handle).unwrap().common().owner_handle,
+            model
+        );
+    }
+
+    #[test]
+    fn null_owner_uses_paper_space_only_when_paper_space_exists() {
+        for missing_paper_space in [false, true] {
+            let mut document = CadDocument::new();
+            let expected = if missing_paper_space {
+                document.header.paper_space_block_handle = Handle::new(0xDEAD);
+                document.header.model_space_block_handle
+            } else {
+                document.header.paper_space_block_handle
+            };
+            let mut line = Line::new();
+            line.common.entity_mode = Some(1);
+            let handle = document.add_loaded_entity(EntityType::Line(line));
+
+            DwgDocumentBuilder::rebuild_block_membership(&mut document, None, None);
+
+            assert_eq!(
+                document.get_entity(handle).unwrap().common().owner_handle,
+                expected
+            );
+            let containing_blocks: Vec<_> = document
+                .block_records
+                .iter()
+                .filter(|block| block.entity_handles.contains(&handle))
+                .map(|block| block.handle)
+                .collect();
+            assert_eq!(containing_blocks, vec![expected]);
+        }
+    }
+
+    #[test]
+    fn canonical_binary_membership_can_resolve_a_stale_record_owner() {
+        let mut document = CadDocument::new();
+        let paper = document.header.paper_space_block_handle;
+        let model = document.header.model_space_block_handle;
+        let mut line = Line::new();
+        line.common.owner_handle = Handle::new(0xDEAD);
+        let handle = document.add_loaded_entity(EntityType::Line(line));
+        let mut binary_owners = foldhash::HashMap::default();
+        binary_owners.insert(handle, paper);
+
+        DwgDocumentBuilder::rebuild_block_membership(&mut document, Some(&binary_owners), None);
+
+        assert_eq!(
+            document.get_entity(handle).unwrap().common().owner_handle,
+            paper
+        );
+        assert!(document.block_records.iter().find(|block| block.handle == paper)
+            .unwrap().entity_handles.contains(&handle));
+        assert!(!document.block_records.iter().find(|block| block.handle == model)
+            .unwrap().entity_handles.contains(&handle));
+    }
+
+    #[test]
+    fn auxiliary_class_filter_is_narrow() {
+        let mut document = CadDocument::new();
+        document.classes.clear();
+        for (number, name) in [
+            (540, "ACDB_MLEADEROBJECTCONTEXTDATA_CLASS"),
+            (541, "ACDBASSOCGEOMDEPENDENCY"),
+            (542, "ACDBASSOCEDGEACTIONPARAM"),
+        ] {
+            let mut class = DxfClass::new(name, name);
+            class.class_number = number;
+            document.classes.push_preserving(class);
+        }
+        let names = ClassNames::from_document(&document);
+        assert!(DwgDocumentBuilder::is_recoverable_auxiliary_class(
+            &names, 540, 540
+        ));
+        assert!(DwgDocumentBuilder::is_recoverable_auxiliary_class(
+            &names, 541, 541
+        ));
+        assert!(DwgDocumentBuilder::is_recoverable_auxiliary_class(
+            &names, 542, 542
+        ));
+        assert!(!DwgDocumentBuilder::is_recoverable_auxiliary_class(
+            &names, 543, 543
+        ));
     }
 
     #[test]
@@ -7560,6 +7947,37 @@ mod dedupe_block_names_tests {
     use super::*;
 
     #[test]
+    fn issue128_plain_dash_metadata_does_not_create_a_shape() {
+        let mut segment = tables::LinetypeSegment {
+            length: 1.27,
+            shape_number: 0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            scale: 0.0,
+            rotation: 0.0,
+            dwg_flags: 0,
+            text: String::new(),
+        };
+        assert!(!linetype_segment_is_complex(&segment, 0));
+        for scale in [0.0, 1.0, 2.5] {
+            segment.scale = scale;
+            segment.offset_x = 4.0;
+            segment.offset_y = -2.0;
+            segment.rotation = 1.0;
+            segment.dwg_flags = 0x01 | 0x80;
+            assert!(!linetype_segment_is_complex(&segment, 0));
+        }
+        for flags in [0x02, 0x04, 0x05, 0x82] {
+            segment.dwg_flags = flags;
+            assert!(linetype_segment_is_complex(&segment, 0));
+        }
+        segment.dwg_flags = 0;
+        assert!(linetype_segment_is_complex(&segment, 42));
+        segment.shape_number = 7;
+        assert!(linetype_segment_is_complex(&segment, 0));
+    }
+
+    #[test]
     fn anonymous_names_follow_live_control_order_including_named_blocks() {
         let names = [(30, "*U"), (10, "Named"), (20, "*D"), (40, "*U99")]
             .into_iter()
@@ -7738,6 +8156,48 @@ fn map_entity_common(
     // right modeler entity in object-stream order.
     common.has_ds_data = data.has_ds_data;
     common
+}
+
+#[cfg(test)]
+mod block_entity_chain_tests {
+    use super::DwgDocumentBuilder;
+    use crate::types::Handle;
+    use std::collections::HashMap;
+
+    #[test]
+    fn damaged_block_entity_chains_terminate_at_cycles_nulls_and_missing_records() {
+        for next in [10, 0, 30] {
+            let links = HashMap::from([
+                (Handle::new(10), Handle::new(20)),
+                (Handle::new(20), Handle::new(next)),
+            ]);
+            assert_eq!(
+                DwgDocumentBuilder::block_entity_chain(10, 40, &links),
+                [Handle::new(10), Handle::new(20)]
+            );
+        }
+        let links = HashMap::from([(Handle::new(10), Handle::new(20))]);
+        assert!(DwgDocumentBuilder::block_entity_chain(0, 10, &links).is_empty());
+        assert!(DwgDocumentBuilder::block_entity_chain(10, 0, &links).is_empty());
+        assert!(DwgDocumentBuilder::block_entity_chain(30, 40, &links).is_empty());
+    }
+
+    #[test]
+    fn block_entity_chain_stops_at_last_even_when_a_next_link_exists() {
+        let links = HashMap::from([
+            (Handle::new(10), Handle::new(20)),
+            (Handle::new(20), Handle::new(30)),
+            (Handle::new(30), Handle::NULL),
+        ]);
+        assert_eq!(
+            DwgDocumentBuilder::block_entity_chain(10, 10, &links),
+            [Handle::new(10)]
+        );
+        assert_eq!(
+            DwgDocumentBuilder::block_entity_chain(10, 20, &links),
+            [Handle::new(10), Handle::new(20)]
+        );
+    }
 }
 
 #[cfg(test)]

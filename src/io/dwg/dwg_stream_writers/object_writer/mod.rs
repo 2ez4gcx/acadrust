@@ -787,16 +787,13 @@ impl<'a> DwgObjectWriter<'a> {
 
     fn write_layer(&mut self, layer: &crate::tables::Layer) {
         let transparency_app = self.document.app_ids.get("AcCmTransparency");
-        let had_transparency_eed = transparency_app.is_some_and(|app| {
-            self.document
-                .eed_by_handle
-                .get(&layer.handle)
-                .is_some_and(|blocks| {
-                    blocks
-                        .iter()
-                        .any(|(app_handle, _)| *app_handle == app.handle.value())
+        let had_transparency_eed = self
+            .existing_xdata_values(layer.handle, "AcCmTransparency")
+            .is_some_and(|values| {
+                values.iter().any(|value| {
+                    matches!(value, crate::xdata::XDataValue::Integer32(_))
                 })
-        });
+            });
         let transparency_eed = transparency_app.and_then(|app| {
             (!layer.transparency.is_opaque() || had_transparency_eed).then(|| {
                 let mut bytes = vec![71];
@@ -813,7 +810,14 @@ impl<'a> DwgObjectWriter<'a> {
             .app_ids
             .get(crate::tables::layer::LAYER_DESCRIPTION_APP)
             .and_then(|app| {
-                (!layer.description.is_empty()).then(|| {
+                let had_description = self
+                    .existing_xdata_values(layer.handle, crate::tables::layer::LAYER_DESCRIPTION_APP)
+                    .is_some_and(|values| {
+                        values.iter().filter(|value| {
+                            matches!(value, crate::xdata::XDataValue::String(_))
+                        }).count() >= 2
+                    });
+                (!layer.description.is_empty() || had_description).then(|| {
                     let code_page = crate::io::dxf::code_page::dwg_code_page_index(
                         &self.document.header.code_page,
                     );
@@ -944,7 +948,7 @@ impl<'a> DwgObjectWriter<'a> {
 
     fn write_text_style(&mut self, style: &crate::tables::TextStyle) {
         let mut eed: Vec<(u64, Vec<u8>)> =
-            self.annotative_eed_block(style.annotative).into_iter().collect();
+            self.annotative_eed_block_for_handle(style.handle, style.annotative).into_iter().collect();
         // The TrueType typeface goes in `ACAD` EED; the record has no field.
         if !style.true_type_font.trim().is_empty() {
             if let Some(app) = self.document.app_ids.get("ACAD") {
@@ -1059,7 +1063,8 @@ impl<'a> DwgObjectWriter<'a> {
         for seg in &ltype.elements {
             let c = seg.complex.as_ref();
             let flags = if let Some(ref cx) = c {
-                let mut f: i16 = 0;
+                let mut f: i16 = cx.source_flags as i16;
+                f &= !(0x01 | 0x02 | 0x04);
                 if cx.is_absolute_rotation() {
                     f |= 0x01;
                 }
@@ -1525,7 +1530,7 @@ impl<'a> DwgObjectWriter<'a> {
         let dimtfillclr_color = ds
             .dimtfillclr_true_color
             .unwrap_or_else(|| crate::types::Color::from_index(ds.dimtfillclr));
-        let anno = self.annotative_eed_block(ds.annotative);
+        let anno = self.annotative_eed_block_for_handle(ds.handle, ds.annotative);
         self.write_common_non_entity_data_eed(
             common::OBJ_DIMSTYLE,
             ds.handle,
@@ -1687,7 +1692,7 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit_double(ds.dimfxl);
             // DIMJOGANG BD 50 — clamp to valid range [5°..90°]
             self.writer
-                .write_bit_double(ds.dimjogang.clamp(0.0872665, 1.5708));
+                .write_bit_double(ds.dimjogang.clamp(0.0873, 1.5708));
             // DIMTFILL BS 69
             self.writer.write_bit_short(ds.dimtfill);
             // DIMTFILLCLR CMC 70
@@ -2108,7 +2113,14 @@ impl<'a> DwgObjectWriter<'a> {
     fn write_block_header_with_handles(&mut self, record: &BlockRecord, entity_handles: &[Handle]) {
         // Before R2007 the block record has no insertion-units field; the
         // units travel in the ACAD `DesignCenter Data` EED (version 1).
-        let extra = if self.version.r2007_plus() || record.units == 0 {
+        let had_units = self
+            .existing_xdata_values(record.handle, "ACAD")
+            .is_some_and(|values| {
+                values.iter().any(|value| {
+                    matches!(value, crate::xdata::XDataValue::String(label) if label == "DesignCenter Data")
+                })
+            });
+        let extra = if self.version.r2007_plus() || (record.units == 0 && !had_units) {
             Vec::new()
         } else {
             let mut units = crate::xdata::ExtendedDataRecord::new("ACAD");

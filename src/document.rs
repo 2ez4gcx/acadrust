@@ -1250,7 +1250,9 @@ pub struct CadDocument {
     /// Keyed by the object/table-entry handle. Not serialized.
     pub(crate) eed_by_handle: HashMap<Handle, Vec<(u64, Vec<u8>)>>,
 
-    pub(crate) object_xdata: HashMap<Handle, crate::xdata::ExtendedData>,
+    /// Structured XDATA for objects and symbol-table records, keyed by handle.
+    /// Entity XDATA lives in `EntityCommon::extended_data`.
+    pub object_xdata: HashMap<Handle, crate::xdata::ExtendedData>,
 
     /// Non-entity object xdictionary handles — populated during DWG read, consumed during DWG write.
     pub(crate) xdic_by_handle: HashMap<Handle, Handle>,
@@ -3479,7 +3481,7 @@ impl CadDocument {
         self.record_entity_before(overall_vp_handle, None);
         let idx = self.entities.len();
         self.entities
-            .push(Arc::new(EntityType::Viewport(overall_vp)));
+            .push(Arc::new(EntityType::Viewport(Box::new(overall_vp))));
         self.entity_index.insert(overall_vp_handle, idx);
 
         // Register in ACAD_LAYOUT dictionary
@@ -5494,8 +5496,7 @@ impl CadDocument {
             return;
         }
 
-        for entity in self.entities_mut_keep_raw() {   // derived colour names only; record bytes untouched
-            let common = entity.common_mut();
+        let resolve = |common: &mut EntityCommon| {
             let resolved = common
                 .color_book_handle
                 .and_then(|handle| colors.iter().find(|entry| entry.0 == handle))
@@ -5514,6 +5515,14 @@ impl CadDocument {
                 common.color = *color;
                 common.color_name =
                     crate::io::dxf::join_color_book_name(Some(book_name), Some(color_name));
+            }
+        };
+        for entity in self.entities_mut_keep_raw() {
+            resolve(entity.common_mut());
+            if let EntityType::Insert(insert) = entity {
+                for attribute in &mut insert.attributes {
+                    resolve(&mut attribute.common);
+                }
             }
         }
     }

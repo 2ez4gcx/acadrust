@@ -39,7 +39,7 @@ pub struct DwgBitWriter {
     /// Saved bit position for size patching
     saved_position_in_bits: i64,
     /// Text encoding for non-Unicode strings
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
 }
 
 impl DwgBitWriter {
@@ -53,7 +53,7 @@ impl DwgBitWriter {
             version,
             dxf_version,
             saved_position_in_bits: -1,
-            encoding: encoding_rs::WINDOWS_1252,
+            encoding: encoding_rs::WINDOWS_1252.into(),
         }
     }
 
@@ -61,10 +61,10 @@ impl DwgBitWriter {
     pub fn with_encoding(
         version: DwgVersion,
         dxf_version: DxfVersion,
-        encoding: &'static encoding_rs::Encoding,
+        encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
     ) -> Self {
         let mut w = Self::new(version, dxf_version);
-        w.encoding = encoding;
+        w.encoding = encoding.into();
         w
     }
 

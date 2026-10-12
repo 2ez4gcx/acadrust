@@ -1,6 +1,6 @@
 [package]
 name = "acadrust"
-version = "0.6.1"
+version = "0.6.4"
 edition = "2021"
 authors = ["Hakan AK"]
 description = "A pure Rust library for reading and writing CAD files in DXF format (ASCII and Binary) and DWG format (Binary)."
@@ -35,6 +35,7 @@ foldhash = "0.2"
 
 # Encoding
 encoding_rs = "0.8"
+oem_cp = "2.1"
 
 # Serialization (optional)
 serde = { version = "1", features = ["derive", "rc"], optional = true }

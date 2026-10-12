@@ -6,7 +6,6 @@ use crate::objects::{
 };
 use crate::types::Handle;
 
-const MAX_COMPONENT_ITEMS: i32 = 100_000;
 
 pub fn read_dgn_line_style_data(
     reader: &mut DwgMergedReader,
@@ -48,7 +47,7 @@ pub fn read_dgn_line_style_data(
             block: Handle::from(reader.read_handle()),
         }),
         DgnLsComponentType::Compound => {
-            let count = safe_count(reader.read_bit_long());
+            let count = safe_count(reader.read_bit_long(), reader);
             let offsets = (0..count)
                 .map(|_| reader.read_bit_double())
                 .collect::<Vec<_>>();
@@ -63,7 +62,7 @@ pub fn read_dgn_line_style_data(
         }
         DgnLsComponentType::Stroke => DgnLsComponentData::Stroke(read_stroke_pattern(reader)),
         DgnLsComponentType::Point => {
-            let count = safe_count(reader.read_bit_long());
+            let count = safe_count(reader.read_bit_long(), reader);
             let mut symbols = Vec::with_capacity(count as usize);
             for _ in 0..count {
                 symbols.push(DgnLsSymbolReference {
@@ -127,8 +126,8 @@ fn read_byte(reader: &mut DwgMergedReader) -> u8 {
     reader.read_bytes(1).first().copied().unwrap_or(0)
 }
 
-fn safe_count(value: i32) -> i32 {
-    value.clamp(0, MAX_COMPONENT_ITEMS)
+fn safe_count(value: i32, reader: &DwgMergedReader) -> i32 {
+    reader.checked_count(i64::from(value)) as i32
 }
 
 fn read_stroke_pattern(reader: &mut DwgMergedReader) -> DgnLsStrokePattern {
@@ -139,7 +138,7 @@ fn read_stroke_pattern(reader: &mut DwgMergedReader) -> DgnLsStrokePattern {
     let phase = reader.read_bit_double();
     let phase_mode =
         DgnLsPhaseMode::from_code(((reader.read_bit() as u8) << 1) | reader.read_bit() as u8);
-    let count = safe_count(reader.read_bit_long());
+    let count = safe_count(reader.read_bit_long(), reader);
     let mut strokes = Vec::with_capacity(count as usize);
     for _ in 0..count {
         strokes.push(DgnLsStroke {

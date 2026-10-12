@@ -14,6 +14,7 @@ pub struct DxfBinaryWriter<W: Write> {
     writer: W,
     /// Stack buffer for formatting handles without heap allocation.
     hex_buf: [u8; 17],
+    encoding: Option<crate::io::dxf::code_page::LegacyEncoding>,
 }
 
 impl<W: Write> DxfBinaryWriter<W> {
@@ -24,7 +25,13 @@ impl<W: Write> DxfBinaryWriter<W> {
         Ok(Self {
             writer,
             hex_buf: [0u8; 17],
+            encoding: None,
         })
+    }
+
+    /// Select the declared code page for a pre-2007 DXF.
+    pub fn set_encoding(&mut self, encoding: crate::io::dxf::code_page::LegacyEncoding) {
+        self.encoding = Some(encoding);
     }
 
     /// Write a DXF code as 16-bit little-endian
@@ -35,7 +42,14 @@ impl<W: Write> DxfBinaryWriter<W> {
 
     /// Write a null-terminated string
     fn write_null_string(&mut self, value: &str) -> Result<()> {
-        self.writer.write_all(value.as_bytes())?;
+        if let Some(encoding) = self.encoding {
+            self.writer
+                .write_all(&crate::io::dxf::code_page::encode_legacy_string(
+                    value, encoding,
+                ))?;
+        } else {
+            self.writer.write_all(value.as_bytes())?;
+        }
         self.writer.write_u8(0)?;
         Ok(())
     }

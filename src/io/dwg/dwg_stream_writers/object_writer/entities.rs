@@ -1868,7 +1868,11 @@ impl<'a> DwgObjectWriter<'a> {
                 .write_bit_long(e.gradient_color.colors.len() as i32);
             for entry in &e.gradient_color.colors {
                 self.writer.write_bit_double(entry.value);
-                self.writer.write_cm_color(&entry.color);
+                self.writer.write_cm_color_with_names(
+                    &entry.color,
+                    entry.color_name.as_deref(),
+                    entry.book_name.as_deref(),
+                );
             }
 
             self.writer.write_variable_text(&e.gradient_color.name);
@@ -1964,7 +1968,11 @@ impl<'a> DwgObjectWriter<'a> {
                 .write_bit_long(e.gradient_color.colors.len() as i32);
             for entry in &e.gradient_color.colors {
                 self.writer.write_bit_double(entry.value);
-                self.writer.write_cm_color(&entry.color);
+                self.writer.write_cm_color_with_names(
+                    &entry.color,
+                    entry.color_name.as_deref(),
+                    entry.book_name.as_deref(),
+                );
             }
             self.writer.write_variable_text(&e.gradient_color.name);
         }
@@ -5754,7 +5762,11 @@ impl<'a> DwgObjectWriter<'a> {
 
             self.writer.write_bit_long(silhouettes.len() as i32);
             for sil in silhouettes {
-                self.writer.write_bit_long_long(sil.viewport_id);
+                if self.version.r2013_plus(self.dxf_version) {
+                    self.writer.write_bit_long_long(sil.viewport_id);
+                } else {
+                    self.writer.write_bit_long(sil.viewport_id as i32);
+                }
                 self.writer.write_3bit_double(sil.target);
                 self.writer.write_3bit_double(sil.view_direction);
                 self.writer.write_3bit_double(sil.up_vector);
@@ -5775,7 +5787,7 @@ impl<'a> DwgObjectWriter<'a> {
 
     /// Write a single wire struct (shared by wires and silhouette wires).
     /// Field order/types per LibreDWG `Dwg_3DSOLID_wire` (mirrors the reader):
-    /// RC type, BLd selection_marker, BS/BL color, BLd acis_index, BL num_points.
+    /// RC type, BLd selection_marker, BS color, BLd acis_index, BL num_points.
     fn write_wire(&mut self, wire: &Wire) {
         self.writer.write_byte(wire.wire_type as u8);
         self.writer.write_bit_long(wire.selection_marker);
@@ -5785,11 +5797,7 @@ impl<'a> DwgObjectWriter<'a> {
             crate::types::Color::Index(idx) => idx as i16,
             _ => 256,
         };
-        if self.version.r2004_plus() {
-            self.writer.write_bit_long(color_val as i32);
-        } else {
-            self.writer.write_bit_short(color_val);
-        }
+        self.writer.write_bit_short(color_val);
         self.writer.write_bit_long(wire.acis_index);
         self.writer.write_bit_long(wire.points.len() as i32);
         for pt in &wire.points {
@@ -5814,7 +5822,7 @@ mod tests {
     use super::*;
     use crate::document::CadDocument;
     use crate::entities::{EntityCommon, Line, Point};
-    use crate::types::{Handle, Vector3};
+    use crate::types::{DxfVersion, Handle, Vector3};
 
     fn make_doc_with_entity(entity: EntityType) -> CadDocument {
         let mut doc = CadDocument::new();
@@ -5826,6 +5834,63 @@ mod tests {
             br.entity_handles.push(handle);
         }
         doc
+    }
+
+    #[test]
+    fn wire_color_uses_bit_short_in_every_dwg_version() {
+        use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+
+        for dxf_version in [
+            DxfVersion::AC1012,
+            DxfVersion::AC1014,
+            DxfVersion::AC1015,
+            DxfVersion::AC1018,
+            DxfVersion::AC1021,
+            DxfVersion::AC1024,
+            DxfVersion::AC1027,
+            DxfVersion::AC1032,
+        ] {
+            let document = CadDocument::with_version(dxf_version);
+            for color in [
+                Color::ByBlock,
+                Color::Index(1),
+                Color::Index(255),
+                Color::ByLayer,
+            ] {
+                let mut writer = DwgObjectWriter::new(&document).unwrap();
+                let wire = Wire {
+                    color,
+                    selection_marker: -1,
+                    acis_index: 0x80FA,
+                    points: vec![Vector3::ZERO, Vector3::UNIT_X],
+                    ..Wire::default()
+                };
+                writer.write_wire(&wire);
+                let mut reader = DwgBitReader::new(
+                    writer.writer.main().to_bytes_snapshot(),
+                    writer.version,
+                    dxf_version,
+                );
+                assert_eq!(reader.read_byte(), wire.wire_type as u8);
+                assert_eq!(reader.read_bit_long(), -1);
+                assert_eq!(
+                    reader.read_bit_short(),
+                    match color {
+                        Color::ByBlock => 0,
+                        Color::ByLayer => 256,
+                        Color::Index(index) => i16::from(index),
+                        _ => unreachable!(),
+                    },
+                    "{dxf_version:?} {color:?}"
+                );
+                assert_eq!(reader.read_bit_long(), wire.acis_index);
+                assert_eq!(reader.read_bit_long(), 2);
+                assert_eq!(reader.read_3bit_double(), Vector3::ZERO);
+                assert_eq!(reader.read_3bit_double(), Vector3::UNIT_X);
+                assert!(!reader.read_bit());
+                reader.check_error().unwrap();
+            }
+        }
     }
 
     #[test]

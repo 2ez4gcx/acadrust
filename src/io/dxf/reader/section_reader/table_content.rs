@@ -726,6 +726,7 @@ impl<'a> SectionReader<'a> {
                 _ => {}
             }
         }
+        table.sync_cells_from_merged_ranges();
         Ok(Some(table))
     }
 }

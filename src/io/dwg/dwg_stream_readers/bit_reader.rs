@@ -36,7 +36,7 @@ pub struct DwgBitReader {
     /// Exact DXF version (for R2013+/R2018+ sub-version checks).
     dxf_version: DxfVersion,
     /// Text encoding for non-Unicode strings.
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
     /// Whether the text stream is empty (R2007+ flag).
     pub is_empty: bool,
     /// Text stream bit position for R2007+ three-stream merge.
@@ -44,6 +44,10 @@ pub struct DwgBitReader {
     text_stream_pos: i64,
     /// One-past-the-end bit position of the R2007+ text stream.
     text_stream_end_pos: i64,
+    /// Exclusive boundary of this stream, which may end inside a byte.
+    end_bit: i64,
+    /// First decoding error; checked before accepting a decoded record.
+    error: std::sync::OnceLock<String>,
 }
 
 impl DwgBitReader {
@@ -57,13 +61,15 @@ impl DwgBitReader {
     /// sharing avoids three full record copies per cursor set.
     pub fn from_shared(data: Arc<[u8]>, version: DwgVersion, dxf_version: DxfVersion) -> Self {
         Self {
+            end_bit: (data.len() as i64).saturating_mul(8),
+            error: std::sync::OnceLock::new(),
             data,
             position: 0,
             bit_shift: 0,
             last_byte: 0,
             version,
             dxf_version,
-            encoding: encoding_rs::WINDOWS_1252,
+            encoding: encoding_rs::WINDOWS_1252.into(),
             is_empty: false,
             text_stream_pos: -1,
             text_stream_end_pos: -1,
@@ -74,10 +80,10 @@ impl DwgBitReader {
         data: Arc<[u8]>,
         version: DwgVersion,
         dxf_version: DxfVersion,
-        encoding: &'static encoding_rs::Encoding,
+        encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
     ) -> Self {
         let mut reader = Self::from_shared(data, version, dxf_version);
-        reader.encoding = encoding;
+        reader.encoding = encoding.into();
         reader
     }
 
@@ -86,10 +92,10 @@ impl DwgBitReader {
         data: Vec<u8>,
         version: DwgVersion,
         dxf_version: DxfVersion,
-        encoding: &'static encoding_rs::Encoding,
+        encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
     ) -> Self {
         let mut r = Self::new(data, version, dxf_version);
-        r.encoding = encoding;
+        r.encoding = encoding.into();
         r
     }
 
@@ -136,6 +142,64 @@ impl DwgBitReader {
         self.data.len()
     }
 
+    /// Check the accumulated stream error without changing cursor state.
+    pub fn check_error(&self) -> crate::error::Result<()> {
+        match self.error.get() {
+            Some(message) => Err(crate::error::DxfError::Parse(message.clone())),
+            None => Ok(()),
+        }
+    }
+
+    pub(crate) fn has_error(&self) -> bool {
+        self.error.get().is_some()
+    }
+
+    pub(crate) fn invalidate(&self, message: impl Into<String>) {
+        self.error.get_or_init(|| message.into());
+    }
+
+    pub(crate) fn set_end_bit(&mut self, end: i64) {
+        if end < 0 || end > (self.data.len() as i64).saturating_mul(8) {
+            self.invalidate("DWG stream boundary exceeds record data");
+        } else {
+            self.end_bit = end;
+        }
+    }
+
+    pub fn remaining_bits(&self) -> i64 {
+        if self.has_error() {
+            return 0;
+        }
+        self.end_bit.saturating_sub(self.position_in_bits()).max(0)
+    }
+
+    #[inline]
+    fn require_bits(&self, bits: usize) -> bool {
+        if self.has_error() {
+            return false;
+        }
+        if self.position_in_bits() < 0 || bits as u128 > self.remaining_bits() as u128 {
+            self.invalidate(format!(
+                "Truncated DWG stream at bit {}: requested {} bits, {} remain",
+                self.position_in_bits(),
+                bits,
+                self.remaining_bits()
+            ));
+            return false;
+        }
+        true
+    }
+
+    fn require_bytes(&self, length: usize) -> bool {
+        match length.checked_mul(8) {
+            Some(bits) => self.require_bits(bits),
+            None => {
+                self.invalidate("DWG byte length overflows stream bounds");
+                false
+            }
+        }
+    }
+
     /// Clone the entire underlying data buffer.
     ///
     /// Used to extract the raw merged-stream record bytes for
@@ -146,12 +210,20 @@ impl DwgBitReader {
 
     /// Set the stream position (byte-level) and reset bit shift.
     pub fn set_position(&mut self, pos: usize) {
+        if pos > self.data.len() {
+            self.invalidate("DWG seek exceeds input data");
+            return;
+        }
         self.position = pos;
         self.bit_shift = 0;
     }
 
     /// Set position by bit offset.
     pub fn set_position_in_bits(&mut self, pos: i64) {
+        if pos < 0 || pos > (self.data.len() as i64).saturating_mul(8) {
+            self.invalidate("DWG bit seek exceeds input data");
+            return;
+        }
         self.position = (pos >> 3) as usize;
         self.bit_shift = (pos & 7) as u8;
 
@@ -171,6 +243,7 @@ impl DwgBitReader {
             self.last_byte = self.data[self.position];
             self.position += 1;
         } else {
+            self.invalidate("Read past the end of DWG data");
             self.last_byte = 0;
         }
     }
@@ -187,6 +260,9 @@ impl DwgBitReader {
     ///
     /// Port of `DwgStreamReaderBase.ReadByte`.
     pub fn read_byte(&mut self) -> u8 {
+        if !self.require_bits(8) {
+            return 0;
+        }
         if self.bit_shift == 0 {
             self.advance_byte();
             self.last_byte
@@ -199,6 +275,9 @@ impl DwgBitReader {
 
     /// Read `length` bytes, applying the current bit shift.
     pub fn read_bytes(&mut self, length: usize) -> Vec<u8> {
+        if !self.require_bytes(length) {
+            return Vec::new();
+        }
         let mut arr = vec![0u8; length];
         self.apply_shift_to_arr(&mut arr);
         arr
@@ -215,6 +294,9 @@ impl DwgBitReader {
 
     /// Read a single bit (B type).
     pub fn read_bit(&mut self) -> bool {
+        if !self.require_bits(1) {
+            return false;
+        }
         if self.bit_shift == 0 {
             self.advance_byte();
             let result = (self.last_byte & 128) == 128;
@@ -239,6 +321,9 @@ impl DwgBitReader {
 
     /// Read a 2-bit value (BB type).
     pub fn read_2bits(&mut self) -> u8 {
+        if !self.require_bits(2) {
+            return 0;
+        }
         if self.bit_shift == 0 {
             self.advance_byte();
             let value = self.last_byte >> 6;
@@ -549,6 +634,10 @@ impl DwgBitReader {
             loop {
                 shift += 7;
                 let b = self.read_byte();
+                if shift >= 64 || (b & 0x7F) as u64 > (u64::MAX >> shift) {
+                    self.invalidate("DWG modular char overflow");
+                    return 0;
+                }
                 value |= ((b & 0x7F) as u64) << shift;
                 if (b & 0x80) == 0 {
                     break;
@@ -581,6 +670,10 @@ impl DwgBitReader {
             loop {
                 total_shift += 7;
                 let b = self.read_byte();
+                if total_shift >= 63 {
+                    self.invalidate("DWG signed modular char overflow");
+                    return 0;
+                }
                 if (b & 0x80) != 0 {
                     sum |= ((b & 0x7F) as i64) << total_shift;
                 } else {
@@ -603,6 +696,10 @@ impl DwgBitReader {
         let mut value = (b1 as i32) | (((b2 & 0x7F) as i32) << 8);
 
         while !flag {
+            if shift > 16 {
+                self.invalidate("DWG modular short overflow");
+                return 0;
+            }
             let b1 = self.read_byte();
             let b2 = self.read_byte();
             flag = (b2 & 0x80) == 0;
@@ -674,14 +771,16 @@ impl DwgBitReader {
 
     /// Read `length` big-endian handle bytes and convert to u64.
     fn read_handle_bytes(&mut self, length: usize) -> u64 {
-        // Handle values are at most 8 bytes (u64). If counter > 8
-        // we're reading corrupt data; clamp to avoid panics.
-        let length = length.min(8);
+        // Handle values are at most 8 bytes (u64). Reject a corrupt length.
+        if length > 8 {
+            self.invalidate("DWG handle exceeds 64 bits");
+            return 0;
+        }
         let raw = self.read_bytes(length);
         // Convert from big-endian to u64
         let mut arr = [0u8; 8];
-        for i in 0..length {
-            arr[length - 1 - i] = raw[i];
+        for (i, byte) in raw.iter().enumerate() {
+            arr[length - 1 - i] = *byte;
         }
         u64::from_le_bytes(arr)
     }
@@ -976,9 +1075,15 @@ impl DwgBitReader {
             // String stream present
             let (length, size) = self.apply_flag_to_position(position);
             let start_pos = length - size;
+            if start_pos < 0 || length > position || position >= self.end_bit {
+                self.invalidate("Invalid DWG text-stream size");
+                self.is_empty = true;
+                return 0;
+            }
             self.text_stream_pos = start_pos;
             self.text_stream_end_pos = length;
             self.set_position_in_bits(start_pos);
+            self.set_end_bit(length);
             start_pos
         } else {
             // No string stream — mark as empty and go to end
@@ -993,7 +1098,7 @@ impl DwgBitReader {
 
     /// Bits remaining in the separate R2007+ text stream.
     pub fn text_stream_remaining_bits(&self) -> i64 {
-        if self.text_stream_pos < 0 || self.text_stream_end_pos < 0 {
+        if self.has_error() || self.text_stream_pos < 0 || self.text_stream_end_pos < 0 {
             0
         } else {
             (self.text_stream_end_pos - self.text_stream_pos).max(0)
@@ -1038,6 +1143,10 @@ impl DwgBitReader {
     /// Apply the current bit shift to a raw byte array read from the stream.
     fn apply_shift_to_arr(&mut self, arr: &mut [u8]) {
         let length = arr.len();
+        if !self.require_bytes(length) {
+            arr.fill(0);
+            return;
+        }
         // Read raw bytes from stream
         let start = self.position;
         if start >= self.data.len() {
