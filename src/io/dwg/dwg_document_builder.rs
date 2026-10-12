@@ -7371,7 +7371,8 @@ impl DwgDocumentBuilder {
         }
     }
 
-    /// Limit opaque recovery to the auxiliary schemas reported in #134.
+    /// Preserve unsupported auxiliary payload variants only after separately
+    /// validating their record framing, identity and common object metadata.
     fn is_recoverable_auxiliary_class(
         class_names: &ClassNames,
         raw_type_code: i16,
@@ -7390,6 +7391,9 @@ impl DwgDocumentBuilder {
                     | "ASSOCGEOMDEPENDENCY"
                     | "ACDBASSOCEDGEACTIONPARAM"
                     | "ASSOCEDGEACTIONPARAM"
+                    | "LSDEFINITION"
+                    | "LSSTROKEPATTERNCOMPONENT"
+                    | "ACDBASSOCARRAYACTIONBODY"
             )
         )
     }
