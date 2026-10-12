@@ -2198,6 +2198,9 @@ impl CadDocument {
         for handle in self.objects.keys() {
             include_handle!(*handle);
         }
+        for object in self.objects.values() {
+            include_handle!(object.intrinsic_handle());
+        }
 
         self.next_handle = next_handle;
         self.header.handle_seed = self.header.handle_seed.max(next_handle);
@@ -4264,6 +4267,7 @@ impl CadDocument {
             if let Some(name) = linetype {
                 common.linetype = name;
             }
+            common.raw_record = None;
         }
 
         // A layer's own linetype reference is a name too.
