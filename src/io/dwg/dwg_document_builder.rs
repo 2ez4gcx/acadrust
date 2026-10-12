@@ -2896,6 +2896,7 @@ impl DwgDocumentBuilder {
             let mut source_ucss = HashSet::new();
             let mut source_vports = HashSet::new();
             let mut source_app_ids = HashSet::new();
+            let mut source_app_id_names = std::collections::HashMap::new();
             for entry in &parsed_entries {
                 match entry {
                     ParsedEntry::View(handle, _) => {
@@ -2907,8 +2908,9 @@ impl DwgDocumentBuilder {
                     ParsedEntry::VPort(handle, _) => {
                         source_vports.insert(*handle);
                     }
-                    ParsedEntry::AppId(handle, _) => {
+                    ParsedEntry::AppId(handle, data) => {
                         source_app_ids.insert(*handle);
+                        source_app_id_names.insert(*handle, data.name.to_uppercase());
                     }
                     _ => {}
                 }
@@ -3053,18 +3055,25 @@ impl DwgDocumentBuilder {
                 }
             }
 
-            let app_id_collisions: Vec<Handle> = document
+            // A retained default (e.g. AcadAnnotative, absent from older files)
+            // can sit on the handle of a different source application id (e.g.
+            // ACAD). Same table, so `collides` exempts it; compare names and move
+            // only the default.
+            let app_id_collisions: Vec<String> = document
                 .app_ids
                 .iter()
-                .filter(|entry| collides(entry.handle, &source_app_ids))
-                .map(|entry| entry.handle)
+                .filter(|entry| {
+                    collides(entry.handle, &source_app_ids)
+                        || source_app_id_names
+                            .get(&entry.handle.value())
+                            .is_some_and(|name| *name != entry.name.to_uppercase())
+                })
+                .map(|entry| entry.name.clone())
                 .collect();
-            for old in app_id_collisions {
+            for name in app_id_collisions {
                 let new = document.allocate_handle();
-                for entry in document.app_ids.iter_mut() {
-                    if entry.handle == old {
-                        entry.handle = new;
-                    }
+                if let Some(entry) = document.app_ids.get_mut(&name) {
+                    entry.handle = new;
                 }
             }
         }
