@@ -1341,7 +1341,22 @@ dxf_entity_roundtrip!(
         "{\\Fgdt;p}%%v0.5"
     ))
 );
-dxf_entity_roundtrip!(dxf_rt_viewport, EntityType::Viewport(Viewport::new()));
+#[test]
+fn dxf_rt_viewport() {
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let mut viewport = Viewport::new();
+    viewport.id = 2;
+    doc.add_entity_to_layout(EntityType::Viewport(viewport), "Layout1")
+        .unwrap();
+    let restored = dxf_roundtrip(doc.clone());
+    assert_eq!(restored.entity_count(), doc.entity_count());
+    let report = compare_documents(&doc, &restored);
+    assert!(
+        report.is_empty(),
+        "DXF viewport roundtrip failed:\n{}",
+        report.summary()
+    );
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  DWG ROUNDTRIP TESTS

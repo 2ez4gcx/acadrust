@@ -17088,8 +17088,12 @@ impl<'a> SectionReader<'a> {
         );
         // Group 68 says whether the viewport is on (0 = off); group 90 bit
         // 0x8000 is only "always enabled", which some writers leave clear.
-        if let Some(status) = status_field {
-            vp.status.is_on = status != 0 && !vp.status.is_off;
+        // Explicit off already controls visibility; retain its independent
+        // stored enable bit rather than discarding it during readback.
+        if !vp.status.is_off {
+            if let Some(status) = status_field {
+                vp.status.is_on = status != 0;
+            }
         }
 
         Ok(Some(vp))
