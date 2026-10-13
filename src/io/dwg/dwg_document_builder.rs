@@ -152,6 +152,23 @@ enum PendingVertex {
     PfaceFace(entities::PfaceFaceData, EntityCommon),
 }
 
+impl PendingVertex {
+    fn handle(&self) -> Handle {
+        match self {
+            PendingVertex::V2D(data) => data.handle,
+            PendingVertex::V3D(data, _) => data.handle,
+            PendingVertex::PfaceFace(data, _) => data.handle,
+        }
+    }
+}
+
+/// The child handles an R2004+ polyline lists, in drawing order. Records
+/// arrive in handle order, so a vertex inserted later would otherwise land
+/// at the end of the outline.
+fn read_owned_vertex_handles(reader: &mut DwgMergedReader, owned_count: i32) -> Vec<u64> {
+    (0..owned_count.clamp(0, 1 << 24)).map(|_| reader.read_handle()).collect()
+}
+
 /// Pending polyline entities awaiting vertex assembly.
 #[derive(Default)]
 struct PendingPolylines {
@@ -159,6 +176,8 @@ struct PendingPolylines {
     vertices: HashMap<u64, Vec<PendingVertex>>,
     /// SEQEND handle keyed by owner (parent polyline) handle.
     seqends: HashMap<u64, crate::types::Handle>,
+    /// Owned vertex handles, in list order, keyed by owner (parent polyline) handle.
+    vertex_order: HashMap<u64, Vec<u64>>,
     /// Polyline entities awaiting vertex assembly, keyed by their handle.
     polylines: Vec<(u64, EntityType)>,
 }
@@ -1698,11 +1717,7 @@ impl DwgDocumentBuilder {
         }
 
         // ── Pass 2: Read entities and non-table objects ────────────────
-        let mut pending = PendingPolylines {
-            vertices: HashMap::new(),
-            seqends: HashMap::new(),
-            polylines: Vec::new(),
-        };
+        let mut pending = PendingPolylines::default();
         // Pending attribute entities keyed by owner (INSERT) handle.
         let mut pending_attributes: HashMap<u64, Vec<AttributeEntity>> = HashMap::new();
         let pass2_records: Vec<(u64, usize, i16, i16)> = record_catalog
@@ -1841,12 +1856,7 @@ impl DwgDocumentBuilder {
                 if capture_raw {
                     for (&owner, vertices) in &chunk.pending.vertices {
                         for vertex in vertices {
-                            let handle = match vertex {
-                                PendingVertex::V2D(data) => data.handle,
-                                PendingVertex::V3D(data, _) => data.handle,
-                                PendingVertex::PfaceFace(data, _) => data.handle,
-                            };
-                            document.raw_record_owners.insert(handle.value(), owner);
+                            document.raw_record_owners.insert(vertex.handle().value(), owner);
                         }
                     }
                     for (&owner, handle) in &chunk.pending.seqends {
@@ -1929,6 +1939,7 @@ impl DwgDocumentBuilder {
                         .append(&mut vertices);
                 }
                 pending.seqends.extend(chunk.pending.seqends.drain());
+                pending.vertex_order.extend(chunk.pending.vertex_order.drain());
                 pending.polylines.append(&mut chunk.pending.polylines);
                 for (owner, mut attributes) in chunk.pending_attributes.drain() {
                     pending_attributes
@@ -1970,7 +1981,14 @@ impl DwgDocumentBuilder {
 
         // ── Post-pass: Assemble polyline vertices and add to document ──
         for (poly_handle, mut entity) in pending.polylines {
-            if let Some(verts) = pending.vertices.remove(&poly_handle) {
+            if let Some(mut verts) = pending.vertices.remove(&poly_handle) {
+                if let Some(order) = pending.vertex_order.get(&poly_handle) {
+                    let rank: HashMap<u64, usize> =
+                        order.iter().enumerate().map(|(i, h)| (*h, i)).collect();
+                    verts.sort_by_key(|v| {
+                        rank.get(&v.handle().value()).copied().unwrap_or(usize::MAX)
+                    });
+                }
                 match &mut entity {
                     EntityType::Polyline2D(ref mut e) => {
                         e.vertices = verts
@@ -4080,6 +4098,8 @@ impl DwgDocumentBuilder {
                     e.start_width = data.start_width;
                     e.end_width = data.end_width;
                     let h = e.common.handle.value();
+                    let order = read_owned_vertex_handles(&mut reader, data.owned_count);
+                    pending.vertex_order.insert(h, order);
                     pending.polylines.push((h, EntityType::Polyline2D(e)));
                 }
                 OBJ_POLYLINE_3D => {
@@ -4095,6 +4115,8 @@ impl DwgDocumentBuilder {
                         );
                     e.flags.spline_fit = data.smooth_type != 0;
                     let h = e.common.handle.value();
+                    let order = read_owned_vertex_handles(&mut reader, data.owned_count);
+                    pending.vertex_order.insert(h, order);
                     pending.polylines.push((h, EntityType::Polyline3D(e)));
                 }
 
@@ -4306,11 +4328,13 @@ impl DwgDocumentBuilder {
                 }
 
                 OBJ_POLYLINE_PFACE => {
-                    let (_num_verts, _num_faces, _owned_count) =
+                    let (_num_verts, _num_faces, owned_count) =
                         entities::read_polyface_mesh(&mut reader, self.obj_reader.version());
                     let mut e = PolyfaceMesh::new();
                     e.common = entity_common;
                     let h = e.common.handle.value();
+                    let order = read_owned_vertex_handles(&mut reader, owned_count);
+                    pending.vertex_order.insert(h, order);
                     pending.polylines.push((h, EntityType::PolyfaceMesh(e)));
                 }
 
@@ -4737,7 +4761,7 @@ impl DwgDocumentBuilder {
 
                 // ── Polygon mesh (POLYLINE with mesh flag) ──────────
                 OBJ_POLYLINE_MESH => {
-                    let (flags, smooth_type, m_count, n_count, m_smooth, n_smooth, _owned_count) =
+                    let (flags, smooth_type, m_count, n_count, m_smooth, n_smooth, owned_count) =
                         entities::read_polygon_mesh(&mut reader, self.obj_reader.version());
                     let mut e = PolygonMeshEntity::new();
                     e.common = entity_common;
@@ -4749,6 +4773,8 @@ impl DwgDocumentBuilder {
                     e.smooth_type = SurfaceSmoothType::from_i16(smooth_type);
                     // Vertices will be assembled from VERTEX_MESH records
                     let poly_handle = entity_data.common.handle;
+                    let order = read_owned_vertex_handles(&mut reader, owned_count);
+                    pending.vertex_order.insert(poly_handle, order);
                     pending
                         .polylines
                         .push((poly_handle, EntityType::PolygonMesh(e)));
