@@ -1,12 +1,16 @@
 use acadrust::{
     objects::{BlockEvalValue, DynamicBlockData, ObjectType},
-    DwgReader, EntityType,
+    CadDocument, DwgReader, EntityType,
 };
+use std::io::Cursor;
 
-fn fixture(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/dynamic-properties")
-        .join(format!("{name}.dwg"))
+#[path = "support/dynamic_property_fixtures.rs"]
+mod fixture_data;
+
+fn read_fixture(name: &str) -> CadDocument {
+    DwgReader::from_stream(Cursor::new(fixture_data::fixture(name)))
+        .read()
+        .unwrap()
 }
 
 #[test]
@@ -37,9 +41,8 @@ fn saved_parameters_and_definition_defaults_match_autocad() {
         ),
     ];
     for (file, property, expected_default, instance, expected_saved) in cases {
-        let path = fixture(file);
-        let bytes = std::fs::read(&path).unwrap();
-        let doc = DwgReader::from_file(&path).unwrap().read().unwrap();
+        let bytes = fixture_data::fixture(file);
+        let doc = read_fixture(file);
         let handle = acadrust::Handle::new(u64::from_str_radix(instance, 16).unwrap());
         let definition = doc.dynamic_definition_for_insert(handle).unwrap();
         for (insert, expected) in [(None, expected_default), (Some(handle), expected_saved)] {
@@ -53,7 +56,7 @@ fn saved_parameters_and_definition_defaults_match_autocad() {
                 "{file} {property}: {actual} != {expected}"
             );
         }
-        assert_eq!(std::fs::read(path).unwrap(), bytes);
+        assert_eq!(fixture_data::fixture(file), bytes);
     }
 }
 
@@ -67,7 +70,7 @@ fn visibility_and_flip_are_typed_choices_with_saved_states() {
         ),
         ("BLOCKFLIPPARAMETER", 0x28B, BlockEvalValue::Short(1)),
     ] {
-        let doc = DwgReader::from_file(fixture(file)).unwrap().read().unwrap();
+        let doc = read_fixture(file);
         let handle = acadrust::Handle::new(instance);
         let definition = doc.dynamic_definition_for_insert(handle).unwrap();
         let values = doc
@@ -85,10 +88,7 @@ fn visibility_and_flip_are_typed_choices_with_saved_states() {
 
 #[test]
 fn lookup_descriptors_are_per_column_and_preserve_choices_and_custom_labels() {
-    let doc = DwgReader::from_file(fixture("BLOCKLOOKUPPARAMETER"))
-        .unwrap()
-        .read()
-        .unwrap();
+    let doc = read_fixture("BLOCKLOOKUPPARAMETER");
     let action = doc
         .objects
         .values()
@@ -135,10 +135,7 @@ fn lookup_descriptors_are_per_column_and_preserve_choices_and_custom_labels() {
 
 #[test]
 fn scale_changes_distances_but_not_definition_defaults() {
-    let mut doc = DwgReader::from_file(fixture("BLOCKLINEARPARAMETER"))
-        .unwrap()
-        .read()
-        .unwrap();
+    let mut doc = read_fixture("BLOCKLINEARPARAMETER");
     let handle = acadrust::Handle::new(0x284);
     let definition = doc.dynamic_definition_for_insert(handle).unwrap();
     for (x, y, z, expected) in [
@@ -176,10 +173,7 @@ fn scale_changes_distances_but_not_definition_defaults() {
 
 #[test]
 fn older_drawings_restore_dynamic_definition_names() {
-    let doc = DwgReader::from_file(fixture("LOOKUP_R2004"))
-        .unwrap()
-        .read()
-        .unwrap();
+    let doc = read_fixture("LOOKUP_R2004");
     let definition = doc.block_records.get("My_Look_Block").unwrap();
     assert!(!definition.flags.anonymous);
     assert!(doc.is_dynamic_block(definition.handle));
@@ -191,10 +185,7 @@ fn older_drawings_restore_dynamic_definition_names() {
     );
     // Cached representations can carry the same true-name XData; do not create
     // extra named definitions from those copies.
-    let polar = DwgReader::from_file(fixture("BLOCKPOLARPARAMETER"))
-        .unwrap()
-        .read()
-        .unwrap();
+    let polar = read_fixture("BLOCKPOLARPARAMETER");
     assert_eq!(
         polar
             .block_records
@@ -207,10 +198,7 @@ fn older_drawings_restore_dynamic_definition_names() {
 
 #[test]
 fn rotation_angles_above_pi_are_not_folded() {
-    let doc = DwgReader::from_file(fixture("ROTATION_270"))
-        .unwrap()
-        .read()
-        .unwrap();
+    let doc = read_fixture("ROTATION_270");
     let insert = acadrust::Handle::new(0x27C);
     let definition = doc.dynamic_definition_for_insert(insert).unwrap();
     let properties = doc
@@ -224,10 +212,7 @@ fn rotation_angles_above_pi_are_not_folded() {
 
 #[test]
 fn stale_marker_suffixes_do_not_override_autocad_reopen_names() {
-    let doc = DwgReader::from_file(fixture("LOOKUP_REOPEN"))
-        .unwrap()
-        .read()
-        .unwrap();
+    let doc = read_fixture("LOOKUP_REOPEN");
     for (handle, expected) in [
         (0x254, "*U2"),
         (0x38C, "*U3"),
@@ -250,10 +235,7 @@ fn stale_marker_suffixes_do_not_override_autocad_reopen_names() {
 #[test]
 fn reflected_rotation_keeps_its_parameter_orientation_and_rejects_broken_caches() {
     use acadrust::{objects::*, Handle};
-    let mut doc = DwgReader::from_file(fixture("ROTATION_270"))
-        .unwrap()
-        .read()
-        .unwrap();
+    let mut doc = read_fixture("ROTATION_270");
     let insert = Handle::new(0x27C);
     let definition = doc.dynamic_definition_for_insert(insert).unwrap();
     let parameter = doc
@@ -358,7 +340,7 @@ fn lookup_and_axis_descriptors_survive_dwg_and_dxf_roundtrips() {
         "BLOCKPOLARPARAMETER",
         "BLOCKXYPARAMETER",
     ] {
-        let doc = DwgReader::from_file(fixture(name)).unwrap().read().unwrap();
+        let doc = read_fixture(name);
         let dwg = DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(&doc).unwrap()))
             .read()
             .unwrap();
