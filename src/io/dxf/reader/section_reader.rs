@@ -16877,6 +16877,7 @@ impl<'a> SectionReader<'a> {
         let mut ucs_origin = PointReader::new();
         let mut ucs_x_axis = PointReader::new();
         let mut ucs_y_axis = PointReader::new();
+        let mut status_field: Option<i16> = None;
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -16908,7 +16909,10 @@ impl<'a> SectionReader<'a> {
                         vp.status = crate::entities::viewport::ViewportStatusFlags::from_bits(v);
                     }
                 }
-                68 => vp.off_screen = pair.as_i16() == Some(-1),
+                68 => {
+                    status_field = pair.as_i16();
+                    vp.off_screen = status_field == Some(-1);
+                }
                 69 => {
                     if let Some(v) = pair.as_i16() {
                         vp.id = v;
@@ -17082,6 +17086,11 @@ impl<'a> SectionReader<'a> {
             grid_spacing_y.unwrap_or(10.0),
             0.0,
         );
+        // Group 68 says whether the viewport is on (0 = off); group 90 bit
+        // 0x8000 is only "always enabled", which some writers leave clear.
+        if let Some(status) = status_field {
+            vp.status.is_on = status != 0 && !vp.status.is_off;
+        }
 
         Ok(Some(vp))
     }
