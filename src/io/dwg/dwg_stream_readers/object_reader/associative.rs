@@ -25,7 +25,9 @@ fn read_edge_curve(
                 out.push(real(reader));
             }
         }
-        23 => {
+        // An unbounded line (a point and its direction) and a line segment
+        // (its two ends).
+        19 | 23 => {
             out.push(point(reader));
             out.push(point(reader));
         }
@@ -473,6 +475,11 @@ fn read_array_action_body(
     let item_class = reader.read_variable_text();
     let mut items = Vec::with_capacity(count as usize);
     for _ in 0..count {
+        // Some writers declare more items than the record holds; reading on
+        // would turn the following streams into items.
+        if reader.main_remaining_bits() <= 0 {
+            break;
+        }
         items.push(read_array_item(reader));
     }
     for item in &mut transform {
