@@ -22022,9 +22022,13 @@ mod tests {
 
         let mut doc = CadDocument::new();
         let h = crate::types::Handle::new(0xC1);
-        doc.objects
-            .insert(h, ObjectType::SpatialFilter(crate::objects::SpatialFilter::new()));
-        let bytes = crate::io::dxf::writer::DxfWriter::new(&doc).write_to_vec().unwrap();
+        doc.objects.insert(
+            h,
+            ObjectType::SpatialFilter(crate::objects::SpatialFilter::new()),
+        );
+        let bytes = crate::io::dxf::writer::DxfWriter::new(&doc)
+            .write_to_vec()
+            .unwrap();
         let text = String::from_utf8(bytes).unwrap();
         // Swap the written object body for AutoCAD's: keep every line up to the
         // SPATIAL_FILTER type line and from its next group-0 line on.
@@ -22038,9 +22042,22 @@ mod tests {
             .expect("object end");
         let mut body = String::from("  5\nC1\n100\nAcDbFilter\n100\nAcDbSpatialFilter\n");
         for (code, value) in [
-            ("70", "3"), ("10", "5.0"), ("20", "5.0"), ("10", "12.0"), ("20", "5.0"),
-            ("10", "8.5"), ("20", "12.0"), ("210", "0.0"), ("220", "0.0"), ("230", "1.0"),
-            ("11", "0.0"), ("21", "0.0"), ("31", "0.0"), ("71", "1"), ("72", "0"), ("73", "0"),
+            ("70", "3"),
+            ("10", "5.0"),
+            ("20", "5.0"),
+            ("10", "12.0"),
+            ("20", "5.0"),
+            ("10", "8.5"),
+            ("20", "12.0"),
+            ("210", "0.0"),
+            ("220", "0.0"),
+            ("230", "1.0"),
+            ("11", "0.0"),
+            ("21", "0.0"),
+            ("31", "0.0"),
+            ("71", "1"),
+            ("72", "0"),
+            ("73", "0"),
         ] {
             body.push_str(&format!("{code:>3}\n{value}\n"));
         }
@@ -22068,7 +22085,10 @@ mod tests {
         let block: Vec<_> = sf
             .boundary_points
             .iter()
-            .map(|p| sf.inverse_block_transform.transform_point(Vector3::new(p.x, p.y, 0.0)))
+            .map(|p| {
+                sf.inverse_block_transform
+                    .transform_point(Vector3::new(p.x, p.y, 0.0))
+            })
             .collect();
         assert_eq!(
             block.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
