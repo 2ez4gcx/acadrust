@@ -88,6 +88,15 @@ impl<'a> DxfWriter<'a> {
         // so entity layer/linetype lookups miss and reference a name the
         // written table no longer defines (issue #80).
         crate::io::dwg::dwg_writer::prepare_table_keys(&mut prepared);
+        // Table entries added after the document was built or read
+        // (`Layer::new` + `layers.add`, `AppId::new` + `app_ids.add`) still
+        // carry NULL handles. Written as they are, each becomes a `5 / 0`
+        // record, a duplicate of the others, and each also claims the root
+        // dictionary (owned by NULL) as its extension dictionary. Assign them
+        // on the output copy, as the DWG writer does.
+        if prepared.has_null_table_entries() {
+            prepared.to_mut().assign_table_entry_handles();
+        }
         self.write_prepared_dxf(writer, prepared.as_ref())
     }
 
