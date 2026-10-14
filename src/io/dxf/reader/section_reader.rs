@@ -9659,11 +9659,14 @@ impl<'a> SectionReader<'a> {
                     document.header.block_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "BLOCK_RECORD" {
-                if let Some((block_record, reactors)) = self.read_block_record_entry()? {
+                if let Some((block_record, reactors, xdata)) = self.read_block_record_entry()? {
                     if !reactors.is_empty() && !block_record.handle.is_null() {
                         document
                             .reactors_by_handle
                             .insert(block_record.handle, reactors);
+                    }
+                    if !xdata.is_empty() && !block_record.handle.is_null() {
+                        document.object_xdata.insert(block_record.handle, xdata);
                     }
                     let name = block_record.name.clone();
                     if let Err(_) = document.block_records.add(block_record.clone()) {
@@ -9720,36 +9723,33 @@ impl<'a> SectionReader<'a> {
 
     /// Read a single BLOCK_RECORD entry and its reactors
     /// (`{ACAD_REACTORS`, e.g. the dependencies of an associative array).
-    fn read_block_record_entry(&mut self) -> Result<Option<(BlockRecord, Vec<Handle>)>> {
+    fn read_block_record_entry(
+        &mut self,
+    ) -> Result<Option<(BlockRecord, Vec<Handle>, ExtendedData)>> {
         let mut block_record = BlockRecord::new("*Model_Space");
         let mut reactors = Vec::new();
         let mut group = String::new();
-        // Pre-R2007 files carry the units as ACAD `DesignCenter Data`
-        // xdata `{ <version> <units> }` instead of group 70.
         let mut units_seen = false;
-        let mut design_center: Option<Vec<i16>> = None;
+        let mut xdata = ExtendedData::new();
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
                 self.reader.push_back(pair);
                 break;
             }
-
-            match pair.code {
-                1001 => design_center = None,
-                1000 if pair.value_string == "DesignCenter Data" => {
-                    design_center = Some(Vec::new())
+            // XDATA closes the record: the dynamic-block tags of a block
+            // (AcDbDynamicBlockTrueName / GUID, AcDbBlockRepBTag) live there.
+            if pair.code == 1001 {
+                self.reader.push_back(pair);
+                let (read, next) = self.read_extended_data()?;
+                if let Some(next) = next {
+                    self.reader.push_back(next);
                 }
-                1070 => {
-                    if let (Some(values), Some(value)) = (design_center.as_mut(), pair.as_i16()) {
-                        values.push(value);
-                        if values.len() == 2 && !units_seen {
-                            block_record.units = value;
-                        }
-                    }
-                }
-                70 => units_seen = true,
-                _ => {}
+                xdata = read;
+                break;
+            }
+            if pair.code == 70 {
+                units_seen = true;
             }
 
             match pair.code {
@@ -9810,7 +9810,29 @@ impl<'a> SectionReader<'a> {
             }
         }
 
-        Ok(Some((block_record, reactors)))
+        // Pre-R2007 files carry the units as ACAD `DesignCenter Data` xdata
+        // `{ <version> <units> }` instead of group 70; that record becomes the
+        // field and is written again from it.
+        let design_center = xdata.get_record("ACAD").and_then(|record| {
+            let mut values = record.values.iter();
+            matches!(values.next(), Some(XDataValue::String(text)) if text == "DesignCenter Data")
+                .then(|| {
+                    values
+                        .filter_map(|value| match value {
+                            XDataValue::Integer16(value) => Some(*value),
+                            _ => None,
+                        })
+                        .nth(1)
+                })
+        });
+        if let Some(units) = design_center {
+            if let Some(units) = units.filter(|_| !units_seen) {
+                block_record.units = units;
+            }
+            xdata.remove_record("ACAD");
+        }
+
+        Ok(Some((block_record, reactors, xdata)))
     }
 
     /// Read DIMSTYLE table

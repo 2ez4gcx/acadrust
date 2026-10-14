@@ -2818,11 +2818,15 @@ impl DwgDocumentBuilder {
                 // Objects keep their EED in `eed_by_handle`; decode it the
                 // same way so the DXF writer can write it after the object.
                 let mut object_xdata = HashMap::new();
+                let block_records: HashSet<Handle> =
+                    document.block_records.iter().map(|record| record.handle).collect();
                 for (handle, blocks) in &document.eed_by_handle {
                     match document.objects.get(handle) {
                         // FIELD decodes its XDATA onto `Field::xdata` itself.
-                        None | Some(crate::objects::ObjectType::Field(_)) => continue,
-                        Some(_) => {}
+                        Some(crate::objects::ObjectType::Field(_)) => continue,
+                        // A block record keeps its dynamic-block tags here.
+                        None if !block_records.contains(handle) => continue,
+                        _ => {}
                     }
                     let mut xdata = crate::xdata::ExtendedData::default();
                     for (app_handle, bytes) in blocks {

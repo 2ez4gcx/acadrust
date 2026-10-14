@@ -3982,6 +3982,54 @@ impl CadDocument {
 
     /// Resolve the extension dictionary attached to an entity, table record or
     /// non-graphical object.
+    /// The XDATA of a non-entity object or table record (a block record's
+    /// dynamic-block tags, for one), when it has any.
+    pub fn object_xdata(&self, handle: Handle) -> Option<&crate::xdata::ExtendedData> {
+        self.object_xdata.get(&handle)
+    }
+
+    /// Store `record` as object `handle`'s XDATA for its application. An
+    /// earlier record and any verbatim DWG EED of that application go, so the
+    /// new values are the ones written.
+    pub fn set_object_xdata_record(
+        &mut self,
+        handle: Handle,
+        record: crate::xdata::ExtendedDataRecord,
+    ) {
+        self.drop_object_raw_eed(handle, &record.application_name);
+        self.object_xdata
+            .entry(handle)
+            .or_default()
+            .upsert_record(record);
+    }
+
+    /// Remove object `handle`'s XDATA for application `app`, verbatim DWG EED
+    /// included. True when there was any.
+    pub fn remove_object_xdata_record(&mut self, handle: Handle, app: &str) -> bool {
+        let raw = self.drop_object_raw_eed(handle, app);
+        let record = self
+            .object_xdata
+            .get_mut(&handle)
+            .and_then(|xdata| xdata.remove_record(app))
+            .is_some();
+        if self.object_xdata.get(&handle).is_some_and(|xdata| xdata.is_empty()) {
+            self.object_xdata.remove(&handle);
+        }
+        raw || record
+    }
+
+    fn drop_object_raw_eed(&mut self, handle: Handle, app: &str) -> bool {
+        let Some(app_handle) = self.app_ids.get(app).map(|entry| entry.handle.value()) else {
+            return false;
+        };
+        let Some(raw) = self.eed_by_handle.get_mut(&handle) else {
+            return false;
+        };
+        let before = raw.len();
+        raw.retain(|(owner, _)| *owner != app_handle);
+        raw.len() != before
+    }
+
     pub fn extension_dictionary_handle(&self, owner: Handle) -> Option<Handle> {
         // A record without a handle owns nothing; the search below would
         // otherwise return the root dictionary, whose owner is NULL too.

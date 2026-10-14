@@ -1870,14 +1870,22 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer
                 .write_i16(281, if block_record.scale_uniformly { 1 } else { 0 })?;
         }
+        let mut xdata = ExtendedData::new();
         if self.dxf_version < DxfVersion::AC1021 && block_record.units != 0 {
             // Older files keep the units in ACAD `DesignCenter Data` xdata.
             let mut units = crate::xdata::ExtendedDataRecord::new("ACAD");
             units.values = crate::tables::block_record::design_center_units_values(block_record.units);
-            let mut xdata = ExtendedData::new();
             xdata.add_record(units);
-            self.write_xdata(&xdata)?;
         }
+        // The record's own XDATA (a dynamic block's tags, for one).
+        if let Some(own) = document.object_xdata.get(&block_record.handle) {
+            for record in own.records() {
+                if xdata.get_record(&record.application_name).is_none() {
+                    xdata.add_record(record.clone());
+                }
+            }
+        }
+        self.write_xdata(&xdata)?;
 
         Ok(())
     }
