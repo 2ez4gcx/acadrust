@@ -5070,6 +5070,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         let status = match (viewport.is_on(), viewport.off_screen) {
             (false, _) => 0,
             (true, true) => -1,
+            (true, false) if viewport.stacking > 0 => viewport.stacking,
             (true, false) => id,
         };
         self.writer.write_i16(68, status)?;

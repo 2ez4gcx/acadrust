@@ -1358,6 +1358,32 @@ fn dxf_rt_viewport() {
     );
 }
 
+/// A DXF viewport's positive status (stacking rank, 1 = active) is kept
+/// apart from its ID through a round trip (#105).
+#[test]
+fn dxf_viewport_stacking_rank_is_not_its_id() {
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let mut ranked = Viewport::new();
+    ranked.id = 2;
+    ranked.stacking = 1;
+    let ranked = doc
+        .add_entity_to_layout(EntityType::Viewport(ranked), "Layout1")
+        .unwrap();
+    let mut unranked = Viewport::new();
+    unranked.id = 3;
+    let unranked = doc
+        .add_entity_to_layout(EntityType::Viewport(unranked), "Layout1")
+        .unwrap();
+    let restored = dxf_roundtrip(doc);
+    let read = |handle| match restored.get_entity(handle) {
+        Some(EntityType::Viewport(viewport)) => (viewport.id, viewport.stacking),
+        other => panic!("viewport expected, got {other:?}"),
+    };
+    assert_eq!(read(ranked), (2, 1));
+    // Without a known rank the writer ranks by ID; reading it back keeps 0.
+    assert_eq!(read(unranked), (3, 0));
+}
+
 /// A layout saved with a model viewport entered links that viewport as its
 /// last active one; the overall viewport must still read back as ID 1.
 #[test]

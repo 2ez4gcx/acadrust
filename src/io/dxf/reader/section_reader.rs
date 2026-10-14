@@ -17143,6 +17143,10 @@ impl<'a> SectionReader<'a> {
                 vp.status.is_on = status != 0;
             }
         }
+        // A rank equal to the ID is what the writer derives anyway.
+        vp.stacking = status_field
+            .filter(|status| *status > 0 && *status != vp.id)
+            .unwrap_or(0);
 
         Ok(Some(vp))
     }
