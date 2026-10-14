@@ -185,6 +185,12 @@ impl DxfClassCollection {
         self.name_index.get(&key).map(|&idx| &self.entries[idx])
     }
 
+    /// The class registered under `dxf_name`, to change its flags.
+    pub fn get_mut_by_name(&mut self, dxf_name: &str) -> Option<&mut DxfClass> {
+        let index = *self.name_index.get(&dxf_name.to_uppercase())?;
+        self.entries.get_mut(index)
+    }
+
     /// Check if a class with the given DXF name exists
     pub fn contains(&self, dxf_name: &str) -> bool {
         self.name_index.contains_key(&dxf_name.to_uppercase())

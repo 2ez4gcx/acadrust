@@ -6711,6 +6711,18 @@ impl<'a> SectionReader<'a> {
                                 ObjectType::BlockVisibilityParameter(parameter.clone()),
                             );
                         } else {
+                            // An evaluated reference names the dynamic block
+                            // it came from, as the DWG reader records it.
+                            if let DynamicBlockData::Representation(data) = &object.data {
+                                if matches!(
+                                    name.to_ascii_uppercase().as_str(),
+                                    "ACDB_BLOCKREPRESENTATION_DATA" | "BLOCKREPRESENTATION"
+                                ) {
+                                    document
+                                        .block_representations
+                                        .insert(object.handle, data.block);
+                                }
+                            }
                             document
                                 .objects
                                 .insert(object.handle, ObjectType::DynamicBlock(object));
