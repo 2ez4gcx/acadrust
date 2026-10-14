@@ -543,8 +543,10 @@ impl DwgDocumentBuilder {
     /// DWG keeps no viewport IDs; a consumer telling the overall viewport from
     /// the authored ones needs them (#67). Other layouts keep 0.
     ///
-    /// The overall viewport is the one the layout links to, else the first of
-    /// the layout's viewport list — it need not come first in entity order.
+    /// The overall viewport heads the layout's viewport list; the layout's
+    /// own link only stands in without that list (pre-R2004), as it names the
+    /// LAST ACTIVE viewport — a model viewport when the drawing was saved with
+    /// one entered. It need not come first in entity order.
     fn number_active_viewports(document: &mut CadDocument) {
         let Some(paper) = document.block_records.get("*Paper_Space") else {
             return;
@@ -562,8 +564,12 @@ impl DwgDocumentBuilder {
         });
         let overall = layout
             .and_then(|layout| {
-                std::iter::once(layout.viewport)
-                    .chain(layout.viewports.first().copied())
+                layout
+                    .viewports
+                    .first()
+                    .copied()
+                    .into_iter()
+                    .chain(std::iter::once(layout.viewport))
                     .find(|handle| viewports.contains(handle))
             })
             .or_else(|| viewports.first().copied());
