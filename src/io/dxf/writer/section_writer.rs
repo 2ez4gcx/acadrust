@@ -8885,16 +8885,17 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         if let Some(d) = obj.back_clip {
             self.writer.write_double(41, d)?;
         }
-        self.write_matrix_column_major(&obj.inverse_block_transform)?;
-        self.write_matrix_column_major(&obj.clip_bound_transform)?;
+        self.write_matrix_4x3(&obj.inverse_block_transform)?;
+        self.write_matrix_4x3(&obj.clip_bound_transform)?;
         Ok(())
     }
 
-    /// Write a 4×3 transform as 12 code-40 doubles in DXF column-major order
-    /// (4 columns of 3 rows; the bottom matrix row is implied).
-    fn write_matrix_column_major(&mut self, m: &crate::types::Matrix4) -> Result<()> {
-        for col in 0..4 {
-            for row in 0..3 {
+    /// Write a `SPATIAL_FILTER` transform as 12 code-40 doubles the way
+    /// AutoCAD does: one matrix row per group of four, translation last
+    /// (the bottom row is implied). See `matrix_from_dxf_4x3` in the reader.
+    fn write_matrix_4x3(&mut self, m: &crate::types::Matrix4) -> Result<()> {
+        for row in 0..3 {
+            for col in 0..4 {
                 self.writer.write_double(40, m.m[row][col])?;
             }
         }

@@ -17,21 +17,23 @@ use crate::tables::*;
 use crate::types::*;
 use crate::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
 
-/// Build a [`Matrix4`] from 12 doubles holding a 4×3 transform in DXF
-/// column-major order (4 columns of 3 rows each: X axis, Y axis, Z axis,
-/// translation). The implied bottom row is `[0, 0, 0, 1]`.
+/// Build a [`Matrix4`] from the 12 group-40 doubles of a `SPATIAL_FILTER`
+/// transform. The implied bottom row is `[0, 0, 0, 1]`.
 ///
-/// Per the Autodesk DXF reference, `SPATIAL_FILTER` group-40 matrices are
-/// written column-major: `[c00, c10, c20, c01, c11, c21, c02, c12, c22,
-/// Tx, Ty, Tz]`. [`Matrix4`] stores row-major, so this maps columns into
-/// rows: row 0 = `[v0, v3, v6, v9]`, row 1 = `[v1, v4, v7, v10]`,
-/// row 2 = `[v2, v5, v8, v11]`.
-fn matrix_from_column_major(v: &[f64]) -> Matrix4 {
+/// The Autodesk reference calls this a "4x3 matrix written out in column
+/// major order": four rows by three columns, each column carrying four
+/// values. In the [`Matrix4`] (column-vector) convention that is one
+/// matrix row per group of four, translation last:
+/// `[m00, m01, m02, Tx, m10, m11, m12, Ty, m20, m21, m22, Tz]`.
+/// AutoCAD writes an XCLIP of an insert at (5, 5) as
+/// `[1, 0, 0, -5, 0, 1, 0, -5, 0, 0, 1, 0]`; reading it as four columns of
+/// three turns `y` into a constant and collapses the boundary to a line.
+fn matrix_from_dxf_4x3(v: &[f64]) -> Matrix4 {
     Matrix4 {
         m: [
-            [v[0], v[3], v[6], v[9]],
-            [v[1], v[4], v[7], v[10]],
-            [v[2], v[5], v[8], v[11]],
+            [v[0], v[1], v[2], v[3]],
+            [v[4], v[5], v[6], v[7]],
+            [v[8], v[9], v[10], v[11]],
             [0.0, 0.0, 0.0, 1.0],
         ],
     }
@@ -8834,10 +8836,10 @@ impl<'a> SectionReader<'a> {
             }
         }
         if mat.len() >= 12 {
-            obj.inverse_block_transform = matrix_from_column_major(&mat[0..12]);
+            obj.inverse_block_transform = matrix_from_dxf_4x3(&mat[0..12]);
         }
         if mat.len() >= 24 {
-            obj.clip_bound_transform = matrix_from_column_major(&mat[12..24]);
+            obj.clip_bound_transform = matrix_from_dxf_4x3(&mat[12..24]);
         }
         Ok(Some(obj))
     }
@@ -21984,34 +21986,94 @@ mod tests {
         }
     }
 
-    /// SPATIAL_FILTER group-40 matrices are column-major on disk:
-    /// `[c00, c10, c20, c01, c11, c21, c02, c12, c22, Tx, Ty, Tz]`.
-    /// A pure translation (-200, -150, 0) must land in the last column,
-    /// not scattered across row 2 (the old row-major misread collapsed
-    /// every 2D boundary point onto the x == y diagonal).
+    /// The inverse block transform AutoCAD 2013 (AC1027) writes for an XCLIP
+    /// of an insert at (5, 5): one matrix row per group of four, translation
+    /// last. Source: ezdxf `exploration/BlockClipped.dxf`, SPATIAL_FILTER #C1.
     #[test]
-    fn spatial_filter_matrix_is_column_major() {
+    fn spatial_filter_matrix_reads_autocad_order() {
         let v = [
-            1.0, 0.0, 0.0, // col 0 (X axis)
-            0.0, 1.0, 0.0, // col 1 (Y axis)
-            0.0, 0.0, 1.0, // col 2 (Z axis)
-            -200.0, -150.0, 0.0, // col 3 (translation)
+            1.0, 0.0, 0.0, -5.0, // row 0
+            0.0, 1.0, 0.0, -5.0, // row 1
+            0.0, 0.0, 1.0, 0.0, // row 2
         ];
-        let m = matrix_from_column_major(&v);
+        let m = matrix_from_dxf_4x3(&v);
         assert_eq!(
             m.m,
             [
-                [1.0, 0.0, 0.0, -200.0],
-                [0.0, 1.0, 0.0, -150.0],
+                [1.0, 0.0, 0.0, -5.0],
+                [0.0, 1.0, 0.0, -5.0],
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ]
         );
-        // A boundary point maps through the inverse then the insert
-        // transform back to itself: (210, 160) -> (-200,-150) -> + (200,150).
-        let p = m.transform_point(Vector3::new(210.0, 160.0, 0.0));
-        assert!((p.x - 10.0).abs() < 1e-9, "x={}", p.x);
-        assert!((p.y - 10.0).abs() < 1e-9, "y={}", p.y);
+        // The boundary corner (12, 5) lies at (7, 0) in block coordinates.
+        // Reading the values as four columns of three would map every
+        // boundary point to y == 1 and clip the whole insert away.
+        let p = m.transform_point(Vector3::new(12.0, 5.0, 0.0));
+        assert!((p.x - 7.0).abs() < 1e-9, "x={}", p.x);
+        assert!(p.y.abs() < 1e-9, "y={}", p.y);
+    }
+
+    /// Reads a complete AutoCAD SPATIAL_FILTER object (values from the same
+    /// AC1027 file) through the DXF reader.
+    #[test]
+    fn spatial_filter_from_autocad_dxf_keeps_its_boundary_area() {
+        use crate::objects::ObjectType;
+
+        let mut doc = CadDocument::new();
+        let h = crate::types::Handle::new(0xC1);
+        doc.objects
+            .insert(h, ObjectType::SpatialFilter(crate::objects::SpatialFilter::new()));
+        let bytes = crate::io::dxf::writer::DxfWriter::new(&doc).write_to_vec().unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        // Swap the written object body for AutoCAD's: keep every line up to the
+        // SPATIAL_FILTER type line and from its next group-0 line on.
+        let lines: Vec<&str> = text.lines().collect();
+        let start = (1..lines.len())
+            .find(|&i| lines[i - 1].trim() == "0" && lines[i].trim() == "SPATIAL_FILTER")
+            .expect("filter written");
+        let end = (start + 1..lines.len())
+            .step_by(2)
+            .find(|&i| lines[i].trim() == "0")
+            .expect("object end");
+        let mut body = String::from("  5\nC1\n100\nAcDbFilter\n100\nAcDbSpatialFilter\n");
+        for (code, value) in [
+            ("70", "3"), ("10", "5.0"), ("20", "5.0"), ("10", "12.0"), ("20", "5.0"),
+            ("10", "8.5"), ("20", "12.0"), ("210", "0.0"), ("220", "0.0"), ("230", "1.0"),
+            ("11", "0.0"), ("21", "0.0"), ("31", "0.0"), ("71", "1"), ("72", "0"), ("73", "0"),
+        ] {
+            body.push_str(&format!("{code:>3}\n{value}\n"));
+        }
+        for value in [
+            1.0, 0.0, 0.0, -5.0, 0.0, 1.0, 0.0, -5.0, 0.0, 0.0, 1.0, 0.0, // inverse block
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, // clip bound
+        ] {
+            body.push_str(&format!(" 40\n{value:?}\n"));
+        }
+        let text = format!(
+            "{}\n{}{}\n",
+            lines[..=start].join("\n"),
+            body,
+            lines[end..].join("\n")
+        );
+
+        let cursor = std::io::Cursor::new(text.into_bytes());
+        let doc2 = crate::io::dxf::reader::DxfReader::from_reader(cursor)
+            .unwrap()
+            .read()
+            .unwrap();
+        let Some(ObjectType::SpatialFilter(sf)) = doc2.objects.get(&h) else {
+            panic!("expected the SPATIAL_FILTER to be read");
+        };
+        let block: Vec<_> = sf
+            .boundary_points
+            .iter()
+            .map(|p| sf.inverse_block_transform.transform_point(Vector3::new(p.x, p.y, 0.0)))
+            .collect();
+        assert_eq!(
+            block.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
+            [(0.0, 0.0), (7.0, 0.0), (3.5, 7.0)]
+        );
     }
 
     /// A SPATIAL_FILTER with a translated inverse must survive a DXF
