@@ -3983,6 +3983,11 @@ impl CadDocument {
     /// Resolve the extension dictionary attached to an entity, table record or
     /// non-graphical object.
     pub fn extension_dictionary_handle(&self, owner: Handle) -> Option<Handle> {
+        // A record without a handle owns nothing; the search below would
+        // otherwise return the root dictionary, whose owner is NULL too.
+        if owner.is_null() {
+            return None;
+        }
         if let Some(entity) = self.get_entity(owner) {
             if let Some(handle) = entity.common().xdictionary_handle {
                 return (!handle.is_null()).then_some(handle);
