@@ -41,6 +41,16 @@ impl Transparency {
         }
     }
 
+    /// Decode a layer's packed transparency. A layer has nothing to inherit
+    /// from, so the method-0/1 values that read as ByLayer / ByBlock on an
+    /// entity are the layer's default: fully opaque (#104).
+    pub fn from_layer_value(value: u32) -> Self {
+        match Self::from_alpha_value(value) {
+            Self::ByLayer | Self::ByBlock => Self::OPAQUE,
+            explicit => explicit,
+        }
+    }
+
     /// Return the explicit amount, or zero for inherited values.
     pub const fn alpha(&self) -> u8 {
         match self {
@@ -145,6 +155,18 @@ pub(crate) const fn opaque() -> Transparency {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_layer_reads_method_zero_as_opaque() {
+        assert_eq!(Transparency::from_layer_value(0), Transparency::OPAQUE);
+        assert_eq!(Transparency::from_layer_value(0x0100_0000), Transparency::OPAQUE);
+        assert_eq!(
+            Transparency::from_layer_value(0x0200_0080),
+            Transparency::from_alpha_value(0x0200_0080)
+        );
+        // An entity still inherits.
+        assert_eq!(Transparency::from_alpha_value(0), Transparency::ByLayer);
+    }
 
     #[test]
     fn explicit_amounts() {

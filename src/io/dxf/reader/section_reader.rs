@@ -9365,7 +9365,7 @@ impl<'a> SectionReader<'a> {
                         })
                     }) {
                         layer.transparency =
-                            crate::types::Transparency::from_alpha_value(value as u32);
+                            crate::types::Transparency::from_layer_value(value as u32);
                     }
                     // The description is the *second* string under
                     // `AcAecLayerStandard`; the first is an empty placeholder.

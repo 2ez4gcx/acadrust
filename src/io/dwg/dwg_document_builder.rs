@@ -1227,7 +1227,7 @@ impl DwgDocumentBuilder {
                                 let raw =
                                     i32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
                                 layer.transparency =
-                                    crate::types::Transparency::from_alpha_value(raw as u32);
+                                    crate::types::Transparency::from_layer_value(raw as u32);
                             }
                         }
                     }
