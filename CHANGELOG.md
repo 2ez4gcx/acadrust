@@ -2,6 +2,8 @@
 
 ### 0.6.4
 
+- **AC1009 import parity** - Incorporates Ottosson's explicit legacy code-page
+  override and AutoCAD-compatible plot defaults for synthesized layouts.
 - **DXF header fidelity (issue #127)** - Writes and round-trips angle base,
   angle direction, elevation, thickness, fillet, and chamfer settings.
 - **DWG linetype fidelity (issue #128)** - Plain dashed elements with native
@@ -31,7 +33,8 @@
 
 - **AC1009/R12 DWG support** - Added native pre-R13 DWG read/write support,
   including fixed-layout headers, symbol tables, entity records, CRC checks,
-  XDATA, compound sequences, and exhaustive entity coverage.
+  XDATA, and native entity codecs. Complete R12 fidelity remains in progress;
+  see [AC1009 support status](src/docs/ac1009_support.md).
 
 ### 0.6.1
 

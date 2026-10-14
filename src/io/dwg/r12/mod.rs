@@ -3,27 +3,34 @@
 pub mod entities;
 pub mod header;
 mod import_handles;
+mod import_layouts;
+mod metadata;
 pub(crate) mod tables;
+mod traversal;
 
 pub(crate) type ImportFontResolver = dyn Fn(&str) -> String + Send + Sync;
 
 #[cfg(test)]
+mod code_page_tests;
+#[cfg(test)]
 mod import_handles_tests;
 
-use std::io::Cursor;
+use std::collections::HashMap;
+use std::io::{BufReader, Cursor};
 
 use crate::document::CadDocument;
 use crate::error::{DxfError, Result};
-use crate::io::dxf::{DxfReader, DxfWriter};
-use crate::tables::TableEntry;
-use crate::types::DxfVersion;
+use crate::io::dxf::{DxfReader, DxfStreamReader, DxfTextReader, DxfWriter};
+use crate::tables::{TableEntry, VxTableRecord};
+use crate::types::{DxfVersion, Handle};
 
-use self::entities::{decode_entities, encode_entities, EntityRecord, EntityTables};
+use self::entities::{decode_positioned_entities, encode_entities, EntityRecord, EntityTables};
 use self::header::{
-    read_header, write_auxheader, write_header, HeaderLayout, HeaderReferences, TableLocator,
+    write_auxheader, write_header, HeaderLayout, HeaderReferences, TableLocator,
     BLOCK_ENTITIES_BEGIN, BLOCK_ENTITIES_END, ENTITIES_BEGIN, ENTITIES_END, EXTRA_ENTITIES_BEGIN,
     EXTRA_ENTITIES_END,
 };
+use self::traversal::{reassemble_sections, SectionRecords};
 
 fn section_records(
     data: &[u8],
@@ -34,9 +41,13 @@ fn section_records(
     end: &[u8; 16],
     tables: &EntityTables,
     code_page: &str,
-) -> Result<Vec<EntityRecord>> {
+    preceding_table: Option<TableLocator>,
+) -> Result<SectionRecords> {
     if content_size == 0 {
-        return Ok(Vec::new());
+        return Ok(SectionRecords {
+            base_address: field_start,
+            ..SectionRecords::default()
+        });
     }
     let field_start = usize::try_from(field_start)
         .map_err(|_| DxfError::InvalidFormat("AC1009 section offset overflow".into()))?;
@@ -52,8 +63,19 @@ fn section_records(
         .get(start..start.saturating_add(size))
         .ok_or_else(|| DxfError::InvalidFormat("AC1009 section exceeds file bounds".into()))?;
     let begin_offset = prelude.saturating_sub(16);
+    // BricsCAD places the validated VX payload between BLOCK's begin
+    // sentinel and the first BLOCK record when paper-space viewports exist.
+    let shared_begin = preceding_table.is_some_and(|locator| {
+        locator
+            .address
+            .checked_add(u32::from(locator.record_size) * u32::from(locator.count))
+            == Some(field_start as u32)
+            && (locator.address as usize)
+                .checked_sub(16)
+                .is_some_and(|offset| data.get(offset..offset + 16) == Some(begin.as_slice()))
+    });
     if section.len() < begin_offset + 16 + 16
-        || section.get(begin_offset..begin_offset + 16) != Some(begin.as_slice())
+        || (section.get(begin_offset..begin_offset + 16) != Some(begin.as_slice()) && !shared_begin)
         || &section[section.len() - 16..] != end
     {
         return Err(DxfError::InvalidFormat(format!(
@@ -61,12 +83,17 @@ fn section_records(
             section.len()
         )));
     }
-    decode_entities(
+    let records = decode_positioned_entities(
         &section[prelude..section.len() - 16],
         tables,
         field_start as u32,
         code_page,
-    )
+    )?;
+    Ok(SectionRecords {
+        base_address: field_start as u32,
+        size: content_size as u32,
+        records,
+    })
 }
 
 fn ensure_table_defaults(mut tables: EntityTables) -> EntityTables {
@@ -157,23 +184,42 @@ fn records_to_dxf(
 ) -> Vec<u8> {
     let mut out = String::from("0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1009\n0\nENDSEC\n");
     table_section_to_dxf(&mut out, tables, handles);
-    write_record_section(&mut out, "ENTITIES", entities);
     if !blocks.is_empty() {
         write_record_section(&mut out, "BLOCKS", blocks);
     }
+    write_record_section(&mut out, "ENTITIES", entities);
     out.push_str("0\nEOF\n");
     out.into_bytes()
+}
+
+fn assign_compound_owners(records: &mut [EntityRecord]) {
+    let mut parent = None;
+    for record in records {
+        match record.kind.as_str() {
+            "POLYLINE" => parent = Some(record.string(5).to_owned()),
+            "INSERT" if record.integer(66, 0) != 0 => parent = Some(record.string(5).to_owned()),
+            "VERTEX" | "ATTRIB" | "SEQEND" => {
+                if let Some(owner) = &parent {
+                    record.pairs.push((330, owner.clone()));
+                }
+                if record.kind == "SEQEND" {
+                    parent = None;
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 pub(crate) fn read_document(
     data: &[u8],
     font_resolver: Option<&ImportFontResolver>,
+    code_page_override: Option<&str>,
 ) -> Result<CadDocument> {
-    let header = read_header(data)?;
-    let mut table_records =
-        tables::decode_tables(data, &header.tables, header.variables.code_page.as_str())?;
+    let header = header::read_header_with_code_page(data, code_page_override)?;
+    let code_page = code_page_override.unwrap_or(header.variables.code_page.as_str());
+    let mut table_records = tables::decode_tables(data, &header.tables, code_page)?;
     let tables = ensure_table_defaults(tables::entity_tables(&table_records));
-    let code_page = header.variables.code_page.as_str();
     let entities = section_records(
         data,
         header.layout.entities_start,
@@ -186,8 +232,9 @@ pub(crate) fn read_document(
         &ENTITIES_END,
         &tables,
         code_page,
+        None,
     )?;
-    let mut blocks = if header.layout.blocks_size != 0 {
+    let blocks = if header.layout.blocks_size != 0 {
         section_records(
             data,
             header.layout.blocks_start,
@@ -197,9 +244,13 @@ pub(crate) fn read_document(
             &BLOCK_ENTITIES_END,
             &tables,
             code_page,
+            Some(header.tables[9]),
         )?
     } else {
-        Vec::new()
+        SectionRecords {
+            base_address: header.layout.blocks_start,
+            ..SectionRecords::default()
+        }
     };
     let extras = if header.layout.extras_size != 0 {
         section_records(
@@ -211,25 +262,82 @@ pub(crate) fn read_document(
             &EXTRA_ENTITIES_END,
             &tables,
             code_page,
+            None,
         )?
     } else {
-        Vec::new()
+        SectionRecords {
+            base_address: header.layout.extras_start,
+            ..SectionRecords::default()
+        }
     };
-    let mut entities = entities;
-    entities.extend(extras);
+    let allocation_order: HashMap<_, _> = blocks
+        .records
+        .iter()
+        .chain(entities.records.iter())
+        .chain(extras.records.iter())
+        .filter(|record| record.record.is_some() && record.jump_address.is_none())
+        .enumerate()
+        .map(|(index, record)| (record.address, index))
+        .collect();
+    let (mut entities, mut blocks) = reassemble_sections(entities, blocks, extras)?;
+    for entity in &mut entities {
+        let paper = entity.kind == "VIEWPORT"
+            || entity
+                .native_viewport
+                .and_then(|index| table_records[9].get(usize::from(index)))
+                .is_some_and(|vx| vx.integer(90, 65535) != 65535);
+        if paper && !entity.has(67) {
+            entity.pairs.push((67, "1".into()));
+        }
+    }
+    for block in blocks.iter_mut().filter(|record| record.kind == "BLOCK") {
+        if block.string(2).is_empty() {
+            if let Some(table_record) = table_records[0].iter().find(|record| {
+                let offset = record.integer(90, 0) as u32 & 0x3fff_ffff;
+                header.layout.blocks_start.checked_add(offset) == block.native_address
+            }) {
+                block.pairs.push((2, table_record.string(2).to_owned()));
+            }
+        }
+        if let Some(table_record) = table_records[0]
+            .iter()
+            .find(|record| record.string(2).eq_ignore_ascii_case(block.string(2)))
+        {
+            block
+                .pairs
+                .push((70, table_record.integer(70, 0).to_string()));
+        }
+    }
     let handles = import_handles::ImportHandles::assign(
         header.variables.handle_seed,
         &mut table_records,
         &mut blocks,
         &mut entities,
         font_resolver,
+        Some(&allocation_order),
     )?;
+    assign_compound_owners(&mut entities);
+    assign_compound_owners(&mut blocks);
     let dxf = records_to_dxf(&entities, &blocks, &table_records, &handles);
     let mut document = DxfReader::from_reader(Cursor::new(dxf))?.read()?;
     handles.apply_layouts(&mut document)?;
+    import_layouts::apply_defaults(&mut document);
+    metadata::restore(&mut document, &entities, &blocks, &table_records[2])?;
+    let layer_handles: HashMap<_, _> = document
+        .layers
+        .iter()
+        .map(|layer| (layer.name.to_uppercase(), layer.handle))
+        .collect();
+    for entity in document.entities_mut_keep_raw() {
+        if let crate::entities::EntityType::Viewport(viewport) = entity {
+            crate::io::dwg::legacy_viewport::restore_r12(viewport, |name| {
+                layer_handles.get(&name.to_uppercase()).copied()
+            });
+        }
+    }
     document.version = DxfVersion::AC1009;
     document.maintenance_version = header.maintenance_version;
-    header.apply_variables(&mut document.header)?;
+    header.apply_variables(&mut document.header, code_page_override)?;
     // R12 stores table indices in the header. Resolve them after importing
     // tables; the DXF bridge cannot infer these references from entity records.
     let table_name = |table: usize, index: i16| {
@@ -256,146 +364,360 @@ pub(crate) fn read_document(
     if let Some(linetype) = linetype_name.and_then(|name| document.line_types.get(name)) {
         document.header.current_linetype_handle = linetype.handle;
     }
+    if let Some(name) = table_name(5, header.references.ucs_index) {
+        document.header.model_space_ucs_name = name.to_owned();
+    }
+    if let Some(name) = table_name(5, header.references.paper_ucs_index) {
+        document.header.paper_space_ucs_name = name.to_owned();
+    }
+    // VX has no DXF table reader, so retain its native address/index fields here.
+    document
+        .vx_table
+        .set_handle(Handle::new(handles.control(9)));
+    for record in &table_records[9] {
+        let mut vx = VxTableRecord::new(record.string(2));
+        vx.handle = Handle::new(u64::from_str_radix(record.string(5), 16).unwrap_or(0));
+        let flags = record.integer(70, 0);
+        vx.is_on = flags & 1 != 0;
+        vx.is_xref_dependent = flags & 16 != 0;
+        vx.is_xref_resolved = flags & 32 != 0;
+        vx.is_xref_reference = flags & 64 != 0;
+        vx.legacy_viewport_entity_address = record.integer(90, 0) as u16;
+        vx.legacy_viewport_index = record.integer(91, -1) as i16;
+        vx.legacy_previous_entry_index = record.integer(92, -1) as i16;
+        vx.viewport = entities
+            .iter()
+            .chain(blocks.iter())
+            .find(|entity| {
+                entity.kind == "VIEWPORT"
+                    && entity.native_address == Some(u32::from(vx.legacy_viewport_entity_address))
+            })
+            .and_then(|entity| u64::from_str_radix(entity.string(5), 16).ok())
+            .map(Handle::new)
+            .unwrap_or(Handle::NULL);
+        vx.previous_entry = usize::try_from(vx.legacy_previous_entry_index)
+            .ok()
+            .filter(|index| *index != 0)
+            .and_then(|index| table_records[9].get(index))
+            .and_then(|record| u64::from_str_radix(record.string(5), 16).ok())
+            .map(Handle::new)
+            .unwrap_or(Handle::NULL);
+        if let Some(crate::entities::EntityType::Viewport(viewport)) =
+            document.get_entity_mut(vx.viewport)
+        {
+            viewport.status.is_on = vx.is_on;
+            viewport.dxf_status = Some(if vx.is_on { viewport.id } else { 0 });
+        }
+        document.vx_table.add_allow_duplicate(vx);
+    }
     document.synchronize_handle_allocator();
     document.dwg_source_version = Some(DxfVersion::AC1009);
+    document.r12_header_raw = Some(header.raw);
     Ok(document)
 }
 
-fn parse_dxf_records(data: &[u8], code_page: &str) -> (Vec<EntityRecord>, Vec<EntityRecord>) {
-    let encoding = crate::io::dxf::code_page::encoding_from_code_page(code_page)
-        .unwrap_or(encoding_rs::UTF_8.into());
-    let text = encoding.decode(data).0;
-    let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
-    let mut entities = Vec::new();
-    let mut blocks = Vec::new();
-    let mut section = "";
-    let mut index = 0usize;
-    let mut current: Option<(String, EntityRecord)> = None;
-    let flush = |current: &mut Option<(String, EntityRecord)>,
-                 entities: &mut Vec<EntityRecord>,
-                 blocks: &mut Vec<EntityRecord>| {
-        if let Some((section, record)) = current.take() {
-            if section == "BLOCKS" {
-                blocks.push(record);
-            } else {
-                entities.push(record);
+struct DxfRecords {
+    entities: Vec<EntityRecord>,
+    blocks: Vec<EntityRecord>,
+    tables: [Vec<EntityRecord>; 10],
+}
+
+fn parse_dxf_records(data: &[u8], code_page: &str) -> Result<DxfRecords> {
+    let mut reader = DxfTextReader::new(BufReader::new(Cursor::new(data)))?;
+    if let Some(encoding) = crate::io::dxf::code_page::encoding_from_code_page(code_page) {
+        reader.set_encoding(encoding);
+    }
+    let mut records = DxfRecords {
+        entities: Vec::new(),
+        blocks: Vec::new(),
+        tables: std::array::from_fn(|_| Vec::new()),
+    };
+    let mut section = String::new();
+    let mut section_name_pending = false;
+    let mut current: Option<EntityRecord> = None;
+    let flush = |current: &mut Option<EntityRecord>, section: &str, records: &mut DxfRecords| {
+        if let Some(record) = current.take() {
+            match section {
+                "ENTITIES" => records.entities.push(record),
+                "BLOCKS" => records.blocks.push(record),
+                "TABLES" => {
+                    let name = if record.kind == "BLOCK_RECORD" {
+                        "BLOCK"
+                    } else {
+                        &record.kind
+                    };
+                    if let Some(index) = header::TABLE_NAMES.iter().position(|table| *table == name)
+                    {
+                        records.tables[index].push(record);
+                    }
+                }
+                _ => {}
             }
         }
     };
-    while index + 1 < lines.len() {
-        let code = lines[index].trim().parse::<i32>().unwrap_or(-1);
-        let value = lines[index + 1].trim();
-        index += 2;
-        if code == 2
-            && (value.eq_ignore_ascii_case("ENTITIES") || value.eq_ignore_ascii_case("BLOCKS"))
-        {
-            section = if value.eq_ignore_ascii_case("ENTITIES") {
-                "ENTITIES"
-            } else {
-                "BLOCKS"
-            };
+    while let Some(pair) = reader.read_pair()? {
+        let code = pair.code;
+        let value = pair.value_string.as_str();
+        if code == 0 && value == "SECTION" {
+            flush(&mut current, &section, &mut records);
+            section.clear();
+            section_name_pending = true;
+            continue;
+        }
+        if section_name_pending && code == 2 {
+            section = value.to_owned();
+            section_name_pending = false;
             continue;
         }
         if code == 0 && value.eq_ignore_ascii_case("ENDSEC") {
-            flush(&mut current, &mut entities, &mut blocks);
-            section = "";
+            flush(&mut current, &section, &mut records);
+            section.clear();
             continue;
         }
-        if section != "ENTITIES" && section != "BLOCKS" {
+        if !matches!(section.as_str(), "ENTITIES" | "BLOCKS" | "TABLES") {
             continue;
         }
         if code == 0 {
-            flush(&mut current, &mut entities, &mut blocks);
-            current = Some((section.to_owned(), EntityRecord::new(value)));
-        } else if let Some((_, record)) = current.as_mut() {
+            flush(&mut current, &section, &mut records);
+            if !matches!(value, "TABLE" | "ENDTAB") {
+                current = Some(EntityRecord::new(value));
+            }
+        } else if let Some(record) = current.as_mut() {
             record.pairs.push((code, value.to_owned()));
         }
     }
-    flush(&mut current, &mut entities, &mut blocks);
-    (entities, blocks)
+    flush(&mut current, &section, &mut records);
+    Ok(records)
 }
 
-fn document_tables(document: &CadDocument) -> EntityTables {
-    ensure_table_defaults(EntityTables {
-        layers: document
-            .layers
+fn complete_table_records(document: &CadDocument, records: &mut DxfRecords) {
+    let system_space = |name: &str| {
+        name.eq_ignore_ascii_case("*MODEL_SPACE") || name.eq_ignore_ascii_case("*PAPER_SPACE")
+    };
+    records.tables[0].retain(|record| !system_space(record.string(2)));
+    records.tables[3].retain(|record| {
+        !record.string(2).eq_ignore_ascii_case("BYLAYER")
+            && !record.string(2).eq_ignore_ascii_case("BYBLOCK")
+    });
+    records.tables[7].retain(|record| !record.string(2).eq_ignore_ascii_case("ACADANNOTATIVE"));
+    let mut in_system_space = false;
+    records.blocks.retain(|record| {
+        if record.kind == "BLOCK" {
+            in_system_space = system_space(record.string(2));
+        }
+        let retain = !in_system_space;
+        if record.kind == "ENDBLK" {
+            in_system_space = false;
+        }
+        retain
+    });
+    // DXF intentionally blanks shape-file STYLE names; native DWG does not.
+    for (index, row) in records.tables[2].iter_mut().enumerate() {
+        let handle = u64::from_str_radix(row.string(5), 16).unwrap_or(0);
+        let style = if handle == 0 {
+            document.text_styles.iter().nth(index)
+        } else {
+            document
+                .text_styles
+                .iter()
+                .find(|style| style.handle.value() == handle)
+        };
+        if let Some(style) = style {
+            row.pairs.retain(|(code, _)| *code != 2);
+            row.pairs.push((2, style.name.clone()));
+        }
+    }
+    for row in &mut records.tables[0] {
+        // BLOCK_RECORD group 70 is insertion units; R12 needs the BLOCK flags.
+        let flags = records
+            .blocks
             .iter()
-            .map(|entry| entry.name().to_owned())
-            .collect(),
-        linetypes: document
-            .line_types
+            .find(|block| {
+                block.kind == "BLOCK" && block.string(2).eq_ignore_ascii_case(row.string(2))
+            })
+            .map(|block| block.integer(70, 0))
+            .unwrap_or(0);
+        row.pairs.retain(|(code, _)| *code != 70);
+        row.pairs.push((70, flags.to_string()));
+    }
+    for vx in document.vx_table.iter() {
+        let mut record = EntityRecord::new("VX");
+        let flags = i32::from(vx.is_on)
+            | (i32::from(vx.is_xref_dependent) << 4)
+            | (i32::from(vx.is_xref_resolved) << 5)
+            | (i32::from(vx.is_xref_reference) << 6);
+        record.pairs.extend([
+            (2, vx.name.clone()),
+            (70, flags.to_string()),
+            (90, vx.legacy_viewport_entity_address.to_string()),
+            (91, vx.legacy_viewport_index.to_string()),
+            (92, vx.legacy_previous_entry_index.to_string()),
+        ]);
+        records.tables[9].push(record);
+    }
+}
+
+fn prepare_compound_handles(document: &CadDocument, records: &mut [EntityRecord]) {
+    let mut seqend = None;
+    for record in records {
+        if matches!(record.kind.as_str(), "INSERT" | "POLYLINE") {
+            let handle = u64::from_str_radix(record.string(5), 16).unwrap_or(0);
+            seqend = match document.get_entity(Handle::new(handle)) {
+                Some(crate::entities::EntityType::Insert(insert)) => insert.seqend_handle,
+                Some(crate::entities::EntityType::PolyfaceMesh(mesh)) => mesh.seqend_handle,
+                _ => None,
+            };
+        } else if record.kind == "SEQEND" {
+            if let Some(handle) = seqend.take().filter(|handle| handle.is_valid()) {
+                record.pairs.retain(|(code, _)| *code != 5);
+                record.pairs.push((5, format!("{:X}", handle.value())));
+            }
+        }
+    }
+}
+
+fn prepare_viewport_xdata(document: &CadDocument, records: &mut [EntityRecord]) -> Result<()> {
+    for record in records
+        .iter_mut()
+        .filter(|record| record.kind == "VIEWPORT")
+    {
+        let handle = u64::from_str_radix(record.string(5), 16).unwrap_or(0);
+        if let Some(crate::entities::EntityType::Viewport(viewport)) =
+            document.get_entity(Handle::new(handle))
+        {
+            let mut native = EntityRecord::new("VIEWPORT");
+            let mut data = crate::xdata::ExtendedData::new();
+            data.add_record(crate::io::dwg::legacy_viewport::record_r12(
+                viewport, document,
+            ));
+            let mut buffer = Vec::new();
+            let mut writer = crate::io::dxf::DxfTextWriter::new(&mut buffer);
+            crate::io::dxf::SectionWriter::new(&mut writer, 0, 0).write_xdata(&data)?;
+            // Parse a standard stream to retain all structured XDATA values.
+            use crate::io::dxf::DxfStreamWriter;
+            writer.flush()?;
+            drop(writer);
+            let mut reader = DxfTextReader::new(BufReader::new(Cursor::new(buffer)))?;
+            while let Some(pair) = reader.read_pair()? {
+                native.pairs.push((pair.code, pair.value_string));
+            }
+            let mut in_acad = false;
+            record.pairs.retain(|(code, value)| {
+                if *code == 1001 {
+                    in_acad = value.eq_ignore_ascii_case("ACAD");
+                }
+                *code < 1000 || !in_acad
+            });
+            record.pairs.extend(native.pairs);
+        }
+    }
+    Ok(())
+}
+
+fn block_offsets(records: &[EntityRecord], encoded: &[u8]) -> HashMap<String, u32> {
+    let mut offsets = HashMap::new();
+    let mut offset = 0;
+    // R12 BLOCK table addresses are relative to the block entity section.
+    for record in records {
+        if record.kind == "BLOCK" {
+            offsets.insert(record.string(2).to_owned(), offset as u32);
+        }
+        offset += u16::from_le_bytes(encoded[offset + 2..offset + 4].try_into().unwrap()) as usize;
+    }
+    offsets
+}
+
+fn entity_addresses(
+    records: &[EntityRecord],
+    encoded: &[u8],
+    base: u32,
+) -> Result<HashMap<Handle, u32>> {
+    let mut result = HashMap::new();
+    let mut offset = 0;
+    for record in records {
+        if let Ok(handle) = u64::from_str_radix(record.string(5), 16) {
+            result.insert(
+                Handle::new(handle),
+                base.checked_add(offset as u32).ok_or_else(|| {
+                    DxfError::InvalidFormat("AC1009 entity address overflow".into())
+                })?,
+            );
+        }
+        offset += u16::from_le_bytes(encoded[offset + 2..offset + 4].try_into().unwrap()) as usize;
+    }
+    Ok(result)
+}
+
+fn header_references(
+    document: &CadDocument,
+    records: &[Vec<EntityRecord>; 10],
+) -> Result<HeaderReferences> {
+    let index = |table: usize, name: &str, default: i16| {
+        if name.is_empty() {
+            return Ok(default);
+        }
+        let index = records[table]
             .iter()
-            .map(|entry| entry.name().to_owned())
-            .collect(),
-        styles: document
-            .text_styles
-            .iter()
-            .map(|entry| entry.name().to_owned())
-            .collect(),
-        blocks: document
-            .block_records
-            .iter()
-            .map(|entry| entry.name().to_owned())
-            .collect(),
-        dimstyles: document
-            .dim_styles
-            .iter()
-            .map(|entry| entry.name().to_owned())
-            .collect(),
-        appids: document
-            .app_ids
-            .iter()
-            .map(|entry| entry.name().to_owned())
-            .collect(),
+            .position(|row| row.string(2).eq_ignore_ascii_case(name))
+            .ok_or_else(|| {
+                DxfError::InvalidFormat(format!(
+                    "AC1009 header references missing table entry {name:?}"
+                ))
+            })?;
+        i16::try_from(index)
+            .map_err(|_| DxfError::InvalidFormat("AC1009 header table index exceeds 32767".into()))
+    };
+    let layer = document
+        .layers
+        .iter()
+        .find(|entry| entry.handle() == document.header.current_layer_handle)
+        .map(TableEntry::name)
+        .unwrap_or("0");
+    let style = document
+        .text_styles
+        .iter()
+        .find(|entry| entry.handle() == document.header.current_text_style_handle)
+        .map(TableEntry::name)
+        .unwrap_or("STANDARD");
+    let linetype = document
+        .line_types
+        .iter()
+        .find(|entry| entry.handle() == document.header.current_linetype_handle)
+        .map(TableEntry::name)
+        .unwrap_or("BYLAYER");
+    Ok(HeaderReferences {
+        layer_index: index(1, layer, 0)?,
+        text_style_index: index(2, style, 0)?,
+        linetype_index: tables::linetype_index(&tables::entity_tables(records), linetype)?,
+        ucs_index: index(5, &document.header.model_space_ucs_name, -1)?,
+        paper_ucs_index: index(5, &document.header.paper_space_ucs_name, -1)?,
     })
-}
-
-fn document_table_records(document: &CadDocument) -> [Vec<EntityRecord>; 10] {
-    let tables = document_tables(document);
-    let mut records: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
-    for name in tables.blocks {
-        let mut record = EntityRecord::new("BLOCK_RECORD");
-        record.pairs.push((2, name));
-        records[0].push(record);
-    }
-    for name in tables.layers {
-        let mut record = EntityRecord::new("LAYER");
-        record.pairs.push((2, name));
-        record.pairs.push((6, "CONTINUOUS".into()));
-        record.pairs.push((62, "7".into()));
-        records[1].push(record);
-    }
-    for name in tables.styles {
-        let mut record = EntityRecord::new("STYLE");
-        record.pairs.push((2, name));
-        records[2].push(record);
-    }
-    for name in tables.linetypes {
-        let mut record = EntityRecord::new("LTYPE");
-        record.pairs.push((2, name));
-        records[3].push(record);
-    }
-    for name in tables.appids {
-        let mut record = EntityRecord::new("APPID");
-        record.pairs.push((2, name));
-        records[7].push(record);
-    }
-    for name in tables.dimstyles {
-        let mut record = EntityRecord::new("DIMSTYLE");
-        record.pairs.push((2, name));
-        records[8].push(record);
-    }
-    records
 }
 
 pub(crate) fn write_document(document: &CadDocument) -> Result<Vec<u8>> {
     let dxf = DxfWriter::new(document).write_to_vec()?;
-    let (entity_records, block_records) = parse_dxf_records(&dxf, &document.header.code_page);
-    let tables = document_tables(document);
+    let mut records = parse_dxf_records(&dxf, &document.header.code_page)?;
+    complete_table_records(document, &mut records);
+    metadata::prepare(document, &mut records.entities, &records.tables[2])?;
+    metadata::prepare(document, &mut records.blocks, &records.tables[2])?;
+    prepare_compound_handles(document, &mut records.entities);
+    prepare_compound_handles(document, &mut records.blocks);
+    prepare_viewport_xdata(document, &mut records.entities)?;
+    prepare_viewport_xdata(document, &mut records.blocks)?;
+    let mut variables = document.header.clone();
+    for record in records.entities.iter().chain(records.blocks.iter()) {
+        if let Ok(handle) = u64::from_str_radix(record.string(5), 16) {
+            let next = handle
+                .checked_add(1)
+                .ok_or_else(|| DxfError::InvalidFormat("AC1009 stored handle overflow".into()))?;
+            variables.handle_seed = variables.handle_seed.max(next);
+        }
+    }
+    let tables = ensure_table_defaults(tables::entity_tables(&records.tables));
     let encoded_entities = encode_entities(
-        &entity_records,
+        &records.entities,
         &tables,
-        header::ENTITIES_START + 16,
+        header::ENTITIES_START,
         document.header.code_page.as_str(),
     )?;
     let entities_start = header::ENTITIES_START;
@@ -407,7 +729,7 @@ pub(crate) fn write_document(document: &CadDocument) -> Result<Vec<u8>> {
     })?;
     let blocks_start = entities_end + 32;
     let encoded_blocks = encode_entities(
-        &block_records,
+        &records.blocks,
         &tables,
         blocks_start,
         document.header.code_page.as_str(),
@@ -423,19 +745,34 @@ pub(crate) fn write_document(document: &CadDocument) -> Result<Vec<u8>> {
         })?;
     // The table stream follows both the extra-entity begin and end sentinels.
     let tables_start = extras_start + 16;
-    let table_records = document_table_records(document);
+    let mut addresses = entity_addresses(&records.entities, &encoded_entities, entities_start)?;
+    addresses.extend(entity_addresses(
+        &records.blocks,
+        &encoded_blocks,
+        blocks_start,
+    )?);
+    for (row, vx) in records.tables[9].iter_mut().zip(document.vx_table.iter()) {
+        if vx.viewport.is_valid() {
+            let address = addresses.get(&vx.viewport).ok_or_else(|| {
+                DxfError::InvalidFormat("AC1009 VX references a missing viewport entity".into())
+            })?;
+            let address = u16::try_from(*address).map_err(|_| {
+                DxfError::InvalidFormat("AC1009 VX viewport address exceeds 65535".into())
+            })?;
+            row.pairs.retain(|(code, _)| *code != 90);
+            row.pairs.push((90, address.to_string()));
+        }
+    }
+    let table_records = &records.tables;
     let encoded_tables = tables::encode_tables(
-        &table_records,
-        &std::collections::HashMap::new(),
+        table_records,
+        &block_offsets(&records.blocks, &encoded_blocks),
         document.header.code_page.as_str(),
     )?;
     let mut table_locators = [TableLocator::default(); 10];
     let mut table_bytes = Vec::new();
     let mut table_address = tables_start;
     for (index, (record_size, payload)) in encoded_tables.into_iter().enumerate() {
-        if payload.is_empty() {
-            continue;
-        }
         table_bytes.extend_from_slice(&header::TABLE_BEGIN[index]);
         table_address = table_address.checked_add(16).ok_or_else(|| {
             DxfError::InvalidFormat("AC1009 table section exceeds 32-bit offsets".into())
@@ -475,12 +812,12 @@ pub(crate) fn write_document(document: &CadDocument) -> Result<Vec<u8>> {
         extras_size: 0,
     };
     let header = write_header(
-        &document.header,
+        &variables,
         layout,
         &table_locators,
-        HeaderReferences::default(),
+        header_references(document, table_records)?,
         document.maintenance_version,
-        None,
+        document.r12_header_raw.as_deref(),
     )?;
     let mut out = header;
     out.extend_from_slice(&encoded_entities);
@@ -494,7 +831,7 @@ pub(crate) fn write_document(document: &CadDocument) -> Result<Vec<u8>> {
     out.extend_from_slice(&write_auxheader(
         layout,
         &table_locators,
-        document.header.handle_seed,
+        variables.handle_seed,
         aux_address,
     ));
     Ok(out)

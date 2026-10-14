@@ -28,6 +28,7 @@ mod writer;
 pub use dxf_code::DxfCode;
 pub use group_code_value::GroupCodeValueType;
 pub use reader::{DxfReader, DxfReaderConfiguration};
+pub(crate) use reader::{DxfStreamReader, DxfTextReader};
 pub use writer::{value_type_for_code, write_binary_dxf, write_dxf};
 pub use writer::{
     DxfBinaryWriter, DxfStreamWriter, DxfStreamWriterExt, DxfTextWriter, DxfWriter, SectionWriter,

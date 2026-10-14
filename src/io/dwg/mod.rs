@@ -53,7 +53,7 @@ pub mod dwg_writer;
 pub mod eed_codec;
 pub(crate) mod embedded_entity;
 pub mod file_headers;
-mod legacy_viewport;
+pub(crate) mod legacy_viewport;
 mod parallel;
 pub mod preview;
 pub mod r12;

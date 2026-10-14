@@ -276,6 +276,17 @@ pub struct RawRecord {
     pub version: crate::types::DxfVersion,
 }
 
+/// Native AC1009 fields which do not have a corresponding DXF entity field.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct R12EntityMetadata {
+    /// Unsigned native viewport reference, including an explicitly stored zero.
+    pub viewport: Option<u16>,
+    /// Viewport references of ordered VERTEX/ATTRIB children followed by SEQEND.
+    /// The final entry belongs to SEQEND and remains last when children are added.
+    pub child_viewports: Vec<Option<u16>>,
+}
+
 /// Common entity data shared by all entities
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -351,6 +362,9 @@ pub struct EntityCommon {
     /// Entity mode (0=owned, 1=paper, 2=model) — raw DWG value for round-trip
     #[cfg_attr(feature = "serde", serde(skip))]
     pub entity_mode: Option<u8>,
+    /// Native AC1009 viewport references retained across edits and DWG writes.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub r12_metadata: Option<R12EntityMetadata>,
     /// R2013+ `has_ds_data` bit: the entity's modeler geometry (3DSOLID/REGION/
     /// BODY/SURFACE) is stored as a SAB blob in the `AcDb:AcDsPrototype_1b`
     /// data-store section rather than inline. Set by the DWG reader; the writer
@@ -382,6 +396,7 @@ impl EntityCommon {
         self.plotstyle_flags = source.plotstyle_flags;
         self.plotstyle_handle = source.plotstyle_handle;
         self.entity_mode = source.entity_mode;
+        self.r12_metadata = source.r12_metadata.clone();
         self.has_ds_data = source.has_ds_data;
     }
 
@@ -415,6 +430,7 @@ impl EntityCommon {
             plotstyle_flags: 0,
             plotstyle_handle: None,
             entity_mode: None,
+            r12_metadata: None,
             has_ds_data: false,
         }
     }

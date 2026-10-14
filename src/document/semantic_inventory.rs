@@ -200,6 +200,7 @@ impl<'a> SemanticInventoryV1<'a> {
             preview,
             acis_sab_handles: _,
             raw_acds_data: _,
+            r12_header_raw: _,
             raw_acds_fingerprint: _,
             raw_records: _,
             original_objects: _,

@@ -8,6 +8,9 @@ use crate::io::dxf::code_page::{encode_legacy_string, encoding_from_code_page};
 pub(crate) struct EntityRecord {
     pub kind: String,
     pub pairs: Vec<(i32, String)>,
+    pub native_viewport: Option<u16>,
+    pub native_address: Option<u32>,
+    pub native_shape_style: Option<u8>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -20,11 +23,22 @@ pub(crate) struct EntityTables {
     pub appids: Vec<String>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct PositionedRecord {
+    pub offset: u32,
+    pub address: u32,
+    pub size: u16,
+    pub record: Option<EntityRecord>,
+    pub jump_address: Option<u32>,
+    pub sequence_owner: Option<u32>,
+}
+
 impl EntityRecord {
     pub fn new(kind: impl Into<String>) -> Self {
         Self {
             kind: kind.into(),
             pairs: Vec::new(),
+            ..Self::default()
         }
     }
     pub fn string(&self, code: i32) -> &str {
@@ -82,7 +96,8 @@ impl<'a> Reader<'a> {
         Self {
             bytes,
             pos: 0,
-            encoding: encoding_from_code_page(code_page).unwrap_or(encoding_rs::WINDOWS_1252.into()),
+            encoding: encoding_from_code_page(code_page)
+                .unwrap_or(encoding_rs::WINDOWS_1252.into()),
         }
     }
     fn take(&mut self, len: usize) -> Result<&'a [u8]> {
@@ -142,7 +157,8 @@ impl Writer {
     fn new(code_page: &str) -> Self {
         Self {
             bytes: Vec::new(),
-            encoding: encoding_from_code_page(code_page).unwrap_or(encoding_rs::WINDOWS_1252.into()),
+            encoding: encoding_from_code_page(code_page)
+                .unwrap_or(encoding_rs::WINDOWS_1252.into()),
         }
     }
     fn byte(&mut self, v: u8) {
@@ -165,12 +181,15 @@ impl Writer {
         self.bytes.extend(bytes);
         Ok(())
     }
-    fn ref_index(&mut self, index: i16, size: u8) {
+    fn ref_index(&mut self, index: i16, size: u8) -> Result<()> {
         if size == 1 {
-            self.byte(index as u8);
+            self.byte(
+                u8::try_from(index).map_err(|_| invalid("R12 one-byte table index exceeds 255"))?,
+            );
         } else {
             self.short(index);
         }
+        Ok(())
     }
     fn point(&mut self, record: &EntityRecord, code: i32, is3d: bool) {
         self.double(record.number(code, 0.));
@@ -347,7 +366,11 @@ fn opts(record: &EntityRecord) -> u16 {
         "3DFACE" => set(1, record.integer(70, 0) != 0),
         "SHAPE" => {
             set(1, record.number(50, 0.) != 0.);
-            set(2, !record.string(7).is_empty());
+            set(
+                2,
+                record.native_shape_style.is_some_and(|index| index != 0)
+                    || !record.string(7).is_empty(),
+            );
             set(4, record.number(41, 1.) != 1.);
             set(8, record.number(51, 0.) != 0.);
         }
@@ -436,7 +459,7 @@ fn encode_record(
     }
     let eed = encode_eed(record, tables, code_page)?;
     let paper = record.integer(67, 0) != 0;
-    if paper || !eed.is_empty() {
+    if paper || !eed.is_empty() || record.native_viewport.is_some() {
         flag |= 64;
     }
     if record.kind == "POLYLINE" || record.integer(66, 0) != 0 {
@@ -450,10 +473,24 @@ fn encode_record(
         writer.short(options as i16);
     }
     if kind == 18 {
-        writer.long(record.integer(90, 0) as u32);
+        let address = record
+            .string(90)
+            .trim()
+            .parse::<u32>()
+            .or_else(|_| record.string(90).trim().parse::<i32>().map(|v| v as u32))
+            .unwrap_or(0);
+        writer.long(address);
     } else {
         if flag & 64 != 0 {
-            writer.byte((paper as u8) | if eed.is_empty() { 0 } else { 2 });
+            writer.byte(
+                (paper as u8)
+                    | if eed.is_empty() { 0 } else { 2 }
+                    | if record.native_viewport.is_some() {
+                        4
+                    } else {
+                        0
+                    },
+            );
         }
         if !eed.is_empty() {
             writer.short(
@@ -479,6 +516,9 @@ fn encode_record(
             let first = bytes.iter().position(|b| *b != 0).unwrap_or(7);
             writer.byte((8 - first) as u8);
             writer.bytes.extend(&bytes[first..]);
+        }
+        if let Some(viewport) = record.native_viewport {
+            writer.bytes.extend(viewport.to_le_bytes());
         }
         encode_geometry(&mut writer, record, tables, options, sequence_owner)?;
     }
@@ -565,7 +605,7 @@ fn encode_geometry(
             }
             if bit(8 << shift) {
                 let index = lookup(&t.styles, r.string(7), 0)?;
-                w.ref_index(index, 1);
+                w.ref_index(index, 1)?;
             }
             for (base, code) in [(16, 71), (32, 72)] {
                 if bit(base << shift) {
@@ -585,12 +625,20 @@ fn encode_geometry(
         "SHAPE" => {
             w.point(r, 10, false);
             w.double(r.number(40, 1.));
-            w.byte(r.integer(70, r.integer(2, 0)) as u8);
+            w.byte(
+                u8::try_from(r.integer(70, r.integer(2, 0)))
+                    .map_err(|_| invalid("R12 shape number exceeds byte range"))?,
+            );
             if bit(1) {
                 w.angle(r, 50);
             }
             if bit(2) {
-                w.ref_index(lookup(&t.styles, r.string(7), 0)?, 1);
+                let index = r
+                    .native_shape_style
+                    .map(i16::from)
+                    .map(Ok)
+                    .unwrap_or_else(|| lookup(&t.styles, r.string(7), 0))?;
+                w.ref_index(index, 1)?;
             }
             if bit(4) {
                 w.double(r.number(41, 1.));
@@ -611,7 +659,7 @@ fn encode_geometry(
         "ENDBLK" | "REPEAT" => {}
         "SEQEND" => w.long(owner),
         "INSERT" | "MINSERT" => {
-            w.ref_index(lookup(&t.blocks, r.string(2), 0)?, 2);
+            w.ref_index(lookup(&t.blocks, r.string(2), 0)?, 2)?;
             w.point(r, 10, false);
             for (b, c, d) in [(1, 41, 1.), (2, 42, 1.), (4, 50, 0.), (8, 43, 1.)] {
                 if bit(b) {
@@ -696,7 +744,7 @@ fn encode_geometry(
 }
 
 fn encode_dimension(w: &mut Writer, r: &EntityRecord, t: &EntityTables, o: u16) -> Result<()> {
-    w.ref_index(lookup(&t.blocks, r.string(2), 0)?, 2);
+    w.ref_index(lookup(&t.blocks, r.string(2), 0)?, 2)?;
     w.point(r, 10, true);
     w.point(r, 11, false);
     if o & 1 != 0 {
@@ -733,18 +781,38 @@ fn encode_dimension(w: &mut Writer, r: &EntityRecord, t: &EntityTables, o: u16) 
         w.point(r, 210, true);
     }
     if o & 0x8000 != 0 {
-        w.ref_index(lookup(&t.dimstyles, r.string(3), 0)?, 2);
+        w.ref_index(lookup(&t.dimstyles, r.string(3), 0)?, 2)?;
     }
     Ok(())
 }
 
 /// Decode records without the section's begin/end sentinels.
+#[cfg(test)]
 pub(crate) fn decode_entities(
     bytes: &[u8],
     tables: &EntityTables,
     base_address: u32,
     code_page: &str,
 ) -> Result<Vec<EntityRecord>> {
+    Ok(
+        decode_positioned_entities(bytes, tables, base_address, code_page)?
+            .into_iter()
+            .filter_map(|positioned| positioned.record)
+            .collect(),
+    )
+}
+
+pub(crate) fn decode_positioned_entities(
+    bytes: &[u8],
+    tables: &EntityTables,
+    base_address: u32,
+    code_page: &str,
+) -> Result<Vec<PositionedRecord>> {
+    let section_size =
+        u32::try_from(bytes.len()).map_err(|_| invalid("R12 entity section size overflow"))?;
+    base_address
+        .checked_add(section_size)
+        .ok_or_else(|| invalid("R12 entity section address overflow"))?;
     let mut records = Vec::new();
     let mut offset = 0;
     while offset < bytes.len() {
@@ -758,29 +826,62 @@ pub(crate) fn decode_entities(
         let raw = bytes
             .get(offset..offset + size)
             .ok_or_else(|| invalid("R12 entity exceeds section bounds"))?;
-        let expected = u16::from_le_bytes(raw[size - 2..].try_into().unwrap());
-        if crc16(0xC0C1, &raw[..size - 2]) != expected {
+        let is_jump = header[0] & 127 == 18;
+        let crc_offset = if is_jump { 8 } else { size - 2 };
+        let expected = raw
+            .get(crc_offset..crc_offset + 2)
+            .ok_or_else(|| invalid("Truncated R12 JUMP record"))?;
+        let expected = u16::from_le_bytes(expected.try_into().unwrap());
+        if crc16(0xC0C1, &raw[..crc_offset]) != expected {
             return Err(invalid(format!(
                 "R12 entity CRC mismatch at section offset {offset}"
             )));
         }
+        let address = base_address
+            .checked_add(u32::try_from(offset).map_err(|_| invalid("R12 entity offset overflow"))?)
+            .ok_or_else(|| invalid("R12 entity address overflow"))?;
+        let mut positioned = PositionedRecord {
+            offset: offset as u32,
+            address,
+            size: size as u16,
+            record: None,
+            jump_address: None,
+            sequence_owner: None,
+        };
         if header[0] & 128 == 0 {
-            records.push(
-                decode_record(&raw[..size - 2], tables, code_page).map_err(|error| {
-                    invalid(format!(
-                        "R12 entity type {} at file offset {:#x}: {error}",
-                        header[0],
-                        u64::from(base_address) + offset as u64
-                    ))
-                })?,
-            );
+            let (mut record, owner) =
+                decode_record_with_owner(&raw[..crc_offset], tables, code_page).map_err(
+                    |error| {
+                        invalid(format!(
+                            "R12 entity type {} at file offset {:#x}: {error}",
+                            header[0],
+                            u64::from(base_address) + offset as u64
+                        ))
+                    },
+                )?;
+            record.native_address = Some(address);
+            positioned.sequence_owner = owner;
+            if is_jump {
+                positioned.jump_address = Some(u32::from_le_bytes(raw[4..8].try_into().unwrap()));
+            }
+            positioned.record = Some(record);
         }
+        records.push(positioned);
         offset += size;
     }
     Ok(records)
 }
 
+#[cfg(test)]
 fn decode_record(bytes: &[u8], t: &EntityTables, code_page: &str) -> Result<EntityRecord> {
+    Ok(decode_record_with_owner(bytes, t, code_page)?.0)
+}
+
+fn decode_record_with_owner(
+    bytes: &[u8],
+    t: &EntityTables,
+    code_page: &str,
+) -> Result<(EntityRecord, Option<u32>)> {
     let mut r = Reader::new(bytes, code_page);
     let kind = r.byte()? & 127;
     let flag = r.byte()?;
@@ -788,8 +889,8 @@ fn decode_record(bytes: &[u8], t: &EntityTables, code_page: &str) -> Result<Enti
     let name = type_name(kind).ok_or_else(|| invalid(format!("Unknown R12 entity type {kind}")))?;
     let mut out = EntityRecord::new(name);
     if kind == 18 {
-        out.put(90, r.long()? as i32);
-        return Ok(out);
+        out.put(90, r.long()?);
+        return Ok((out, None));
     }
     out.put(8, table_name(&t.layers, r.short()?)?);
     let options = r.ushort()?;
@@ -829,13 +930,13 @@ fn decode_record(bytes: &[u8], t: &EntityTables, code_page: &str) -> Result<Enti
         out.put(5, format!("{handle:X}"));
     }
     if extra & 4 != 0 {
-        r.short()?;
+        out.native_viewport = Some(r.ushort()?);
     }
     if flag & 128 != 0 && matches!(kind, 14 | 19) {
         out.put(66, 1);
     }
-    decode_geometry(&mut r, &mut out, t, options, flag, elevation)?;
-    Ok(out)
+    let owner = decode_geometry(&mut r, &mut out, t, options, flag, elevation)?;
+    Ok((out, owner))
 }
 
 fn decode_geometry(
@@ -845,7 +946,7 @@ fn decode_geometry(
     o: u16,
     flag: u8,
     z: f64,
-) -> Result<()> {
+) -> Result<Option<u32>> {
     let bit = |b| o & b != 0;
     match out.kind.as_str() {
         "LINE" | "3DLINE" => {
@@ -921,7 +1022,7 @@ fn decode_geometry(
                 }
             }
             if bit(8 << shift) {
-                out.put(7, table_name(&t.styles, r.byte()? as i8 as i16)?);
+                out.put(7, table_name(&t.styles, i16::from(r.byte()?))?);
             }
             for (base, code) in [(16, 71), (32, 72)] {
                 if bit(base << shift) {
@@ -948,7 +1049,11 @@ fn decode_geometry(
                 r.angle(out, 50)?;
             }
             if bit(2) {
-                out.put(7, table_name(&t.styles, r.byte()? as i8 as i16)?);
+                let index = r.byte()?;
+                out.native_shape_style = Some(index);
+                out.put(7, table_name(&t.styles, i16::from(index))?);
+            } else {
+                out.native_shape_style = Some(0);
             }
             if bit(4) {
                 out.put(41, r.double()?);
@@ -968,7 +1073,7 @@ fn decode_geometry(
         }
         "ENDBLK" | "REPEAT" => {}
         "SEQEND" => {
-            r.long()?;
+            return Ok(Some(r.long()?));
         }
         "INSERT" => {
             out.put(2, table_name(&t.blocks, r.short()?)?);
@@ -1067,7 +1172,7 @@ fn decode_geometry(
         }
         _ => return Err(invalid(format!("Unsupported R12 geometry {}", out.kind))),
     }
-    Ok(())
+    Ok(None)
 }
 
 fn decode_dimension(
@@ -1162,6 +1267,7 @@ fn encode_eed(record: &EntityRecord, tables: &EntityTables, code_page: &str) -> 
             10..=13 => {
                 w.double(
                     value
+                        .trim()
                         .parse()
                         .map_err(|_| invalid("Invalid R12 XDATA point"))?,
                 );
@@ -1173,6 +1279,7 @@ fn encode_eed(record: &EntityRecord, tables: &EntityTables, code_page: &str) -> 
                         .map_or("0", |(_, s)| s.as_str());
                     w.double(
                         coordinate
+                            .trim()
                             .parse()
                             .map_err(|_| invalid("Invalid R12 XDATA point"))?,
                     );
@@ -1180,16 +1287,19 @@ fn encode_eed(record: &EntityRecord, tables: &EntityTables, code_page: &str) -> 
             }
             40..=42 => w.double(
                 value
+                    .trim()
                     .parse()
                     .map_err(|_| invalid("Invalid R12 XDATA real"))?,
             ),
             70 => w.short(
                 value
+                    .trim()
                     .parse()
-                    .map_err(|_| invalid("Invalid R12 XDATA short"))?,
+                    .map_err(|_| invalid(format!("Invalid R12 XDATA short {value:?}")))?,
             ),
             71 => w.long(
                 value
+                    .trim()
                     .parse::<i32>()
                     .map_err(|_| invalid("Invalid R12 XDATA long"))? as u32,
             ),
@@ -1415,7 +1525,7 @@ mod tests {
         point(&mut r, 10, 1., 2., 3.);
         point(&mut r, 11, 4., 5., 0.);
         r.put(70, 0);
-        r.put(1, "<>" );
+        r.put(1, "<>");
         r.put(3, "STANDARD");
         out.push(r);
 
@@ -1439,15 +1549,42 @@ mod tests {
         let actual: Vec<&str> = decoded.iter().map(|r| r.kind.as_str()).collect();
         assert_eq!(actual, expected);
         assert_eq!(decoded.len(), 24);
-        assert_eq!(decoded.iter().find(|r| r.kind == "3DLINE").unwrap().number(30, 0.), 3.);
+        assert_eq!(
+            decoded
+                .iter()
+                .find(|r| r.kind == "3DLINE")
+                .unwrap()
+                .number(30, 0.),
+            3.
+        );
     }
 
     #[test]
     fn native_type_and_reverse_mapping_cover_all_codes() {
         let names = [
-            "LINE", "POINT", "CIRCLE", "SHAPE", "REPEAT", "ENDREP", "TEXT", "ARC",
-            "TRACE", "LOAD", "SOLID", "BLOCK", "ENDBLK", "INSERT", "ATTDEF", "ATTRIB",
-            "SEQEND", "JUMP", "POLYLINE", "VERTEX", "3DLINE", "3DFACE", "DIMENSION",
+            "LINE",
+            "POINT",
+            "CIRCLE",
+            "SHAPE",
+            "REPEAT",
+            "ENDREP",
+            "TEXT",
+            "ARC",
+            "TRACE",
+            "LOAD",
+            "SOLID",
+            "BLOCK",
+            "ENDBLK",
+            "INSERT",
+            "ATTDEF",
+            "ATTRIB",
+            "SEQEND",
+            "JUMP",
+            "POLYLINE",
+            "VERTEX",
+            "3DLINE",
+            "3DFACE",
+            "DIMENSION",
             "VIEWPORT",
         ];
         for (code, name) in names.into_iter().enumerate() {
@@ -1855,7 +1992,10 @@ mod tests {
         let encoded = encode_entities(&input, &tables, 0, "ANSI_1252").unwrap();
         let mut offset = 0;
         for (expected, (_, options)) in records.iter().enumerate() {
-            assert_eq!(encoded[offset], native_type(input[expected].kind.as_str()).unwrap());
+            assert_eq!(
+                encoded[offset],
+                native_type(input[expected].kind.as_str()).unwrap()
+            );
             let actual = u16::from_le_bytes([encoded[offset + 6], encoded[offset + 7]]);
             assert_eq!(actual, *options, "option mask for {}", input[expected].kind);
             let size = u16::from_le_bytes([encoded[offset + 2], encoded[offset + 3]]) as usize;
@@ -1918,6 +2058,85 @@ mod tests {
                 let encoded = encode_record(&decoded, &tables, 0, "ANSI_1252").unwrap();
                 assert_eq!(&encoded[..encoded.len() - 2], raw);
             }
+        }
+    }
+
+    #[test]
+    fn native_style_references_decode_the_full_unsigned_byte_range() {
+        let mut tables = tables();
+        tables.styles = (0..256).map(|index| format!("STYLE{index}")).collect();
+        // Independently assembled layouts from the CC0-1.0 dwg_ac1009.ksy.
+        for index in [128u8, 255] {
+            for (kind, name, options) in [
+                (7, "TEXT", 0x18u16),
+                (16, "ATTRIB", 0x30),
+                (15, "ATTDEF", 0x30),
+                (4, "SHAPE", 0x06),
+            ] {
+                let mut raw = vec![kind, 0, 0, 0, 0, 0];
+                raw.extend_from_slice(&options.to_le_bytes());
+                for value in [1f64, 2., 3.] {
+                    raw.extend_from_slice(&value.to_le_bytes());
+                }
+                if name == "SHAPE" {
+                    raw.push(7);
+                } else {
+                    raw.extend_from_slice(&4u16.to_le_bytes());
+                    raw.extend_from_slice(b"text");
+                    if name == "ATTDEF" {
+                        raw.extend_from_slice(&6u16.to_le_bytes());
+                        raw.extend_from_slice(b"prompt");
+                    }
+                    if name != "TEXT" {
+                        raw.extend_from_slice(&3u16.to_le_bytes());
+                        raw.extend_from_slice(b"TAG");
+                        raw.push(0);
+                    }
+                }
+                raw.push(index);
+                if name == "SHAPE" {
+                    raw.extend_from_slice(&2f64.to_le_bytes());
+                } else {
+                    raw.push(3);
+                }
+                let length = (raw.len() + 2) as u16;
+                raw[2..4].copy_from_slice(&length.to_le_bytes());
+                let checksum = crc16(0xC0C1, &raw);
+                raw.extend_from_slice(&checksum.to_le_bytes());
+
+                let decoded = decode_entities(&raw, &tables, 0, "ANSI_1252")
+                    .unwrap_or_else(|error| panic!("{name} STYLE index {index}: {error}"));
+                assert_eq!(decoded.len(), 1);
+                assert_eq!(decoded[0].kind, name);
+                assert_eq!(decoded[0].string(7), format!("STYLE{index}"));
+                if name == "SHAPE" {
+                    assert_eq!(decoded[0].number(41, 0.), 2.);
+                } else {
+                    assert_eq!(decoded[0].integer(71, 0), 3);
+                }
+                assert_eq!(
+                    encode_entities(&decoded, &tables, 0, "ANSI_1252").unwrap(),
+                    raw,
+                    "{name} STYLE index {index}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn one_byte_style_references_reject_index_overflow() {
+        let mut tables = tables();
+        tables.styles = (0..257).map(|index| format!("STYLE{index}")).collect();
+        for name in ["TEXT", "ATTRIB", "ATTDEF", "SHAPE"] {
+            let mut record = record(name);
+            record.put(7, "STYLE256");
+            let error = encode_entities(&[record], &tables, 0, "ANSI_1252").unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("one-byte table index exceeds 255"),
+                "{name}: {error}"
+            );
         }
     }
 

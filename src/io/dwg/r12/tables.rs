@@ -188,10 +188,7 @@ pub(crate) fn encode_table(
     let mut payload = Vec::with_capacity(records.len() * usize::from(record_size));
     for (record_index, record) in records.iter().enumerate() {
         let mut writer = Writer::new(code_page);
-        let mut flag = checked_byte(record.integer(70, 0), "table flags")?;
-        if name == "STYLE" {
-            flag = swap_style_flags(flag);
-        }
+        let flag = checked_byte(record.integer(70, 0), "table flags")?;
         writer.byte(flag);
         writer.text(record.string(2), 32)?;
         writer.short(-1);
@@ -256,10 +253,7 @@ pub(crate) fn decode_table(
         } else {
             name
         });
-        let mut flag = reader.byte()?;
-        if name == "STYLE" {
-            flag = swap_style_flags(flag);
-        }
+        let flag = reader.byte()?;
         put(&mut record, 2, reader.text(32)?);
         put(&mut record, 70, flag);
         reader.short()?; // usage counter does not have a DXF counterpart
@@ -270,10 +264,6 @@ pub(crate) fn decode_table(
         records.push(record);
     }
     Ok(records)
-}
-
-fn swap_style_flags(flag: u8) -> u8 {
-    (flag & !5) | ((flag & 1) << 2) | ((flag & 4) >> 2)
 }
 
 pub(super) fn linetype_index(tables: &EntityTables, name: &str) -> Result<i16> {
@@ -290,7 +280,11 @@ pub(super) fn linetype_index(tables: &EntityTables, name: &str) -> Result<i16> {
         .linetypes
         .iter()
         .position(|entry| entry.eq_ignore_ascii_case(name))
-        .ok_or_else(|| invalid(format!("AC1009 record references missing linetype {name:?}")))?;
+        .ok_or_else(|| {
+            invalid(format!(
+                "AC1009 record references missing linetype {name:?}"
+            ))
+        })?;
     i16::try_from(index).map_err(|_| invalid("AC1009 linetype index exceeds 32767"))
 }
 
@@ -650,7 +644,8 @@ impl Writer {
     fn new(code_page: &str) -> Self {
         Self {
             data: Vec::new(),
-            encoding: encoding_from_code_page(code_page).unwrap_or(encoding_rs::WINDOWS_1252.into()),
+            encoding: encoding_from_code_page(code_page)
+                .unwrap_or(encoding_rs::WINDOWS_1252.into()),
         }
     }
     fn byte(&mut self, value: u8) {
@@ -711,7 +706,8 @@ impl<'a> Reader<'a> {
         Self {
             data,
             pos: 0,
-            encoding: encoding_from_code_page(code_page).unwrap_or(encoding_rs::WINDOWS_1252.into()),
+            encoding: encoding_from_code_page(code_page)
+                .unwrap_or(encoding_rs::WINDOWS_1252.into()),
         }
     }
     fn take(&mut self, size: usize) -> Result<&'a [u8]> {
@@ -782,6 +778,7 @@ mod tests {
                 .iter()
                 .map(|(code, value)| (*code, (*value).to_owned()))
                 .collect(),
+            ..EntityRecord::default()
         }
     }
 
@@ -889,6 +886,22 @@ mod tests {
             encode_tables(&decoded, &offsets, "ANSI_1252").unwrap(),
             encoded
         );
+    }
+
+    #[test]
+    fn native_style_shape_and_vertical_flags_match_the_documented_bits() {
+        let tables = EntityTables::default();
+        for flags in [1, 4, 5] {
+            let row = record(
+                "STYLE",
+                &[(2, "S1"), (70, &flags.to_string()), (3, "txt.shx")],
+            );
+            let (size, bytes) =
+                encode_table("STYLE", &[row], &tables, &HashMap::new(), "ANSI_1252").unwrap();
+            assert_eq!(bytes[0], flags as u8);
+            let decoded = decode_table("STYLE", &bytes, size, 1, &tables, "ANSI_1252").unwrap();
+            assert_eq!(decoded[0].integer(70, 0), flags);
+        }
     }
 
     #[test]

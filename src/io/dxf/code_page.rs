@@ -142,6 +142,18 @@ impl LegacyEncoding {
 /// - Otherwise, the code page string (case-insensitive) is looked up in the
 ///   mapping table.
 pub fn encoding_from_code_page(code_page: &str) -> Option<LegacyEncoding> {
+    if matches!(
+        code_page.to_ascii_lowercase().as_str(),
+        "ascii" | "utf-8" | "utf8" | "unicode"
+    ) {
+        return None;
+    }
+    try_encoding_from_code_page(code_page).or(Some(encoding_rs::WINDOWS_1252.into()))
+}
+
+/// Resolve an explicit legacy encoding without silently falling back for typos.
+/// Returns `None` for unknown names, ASCII, and UTF-8.
+pub fn try_encoding_from_code_page(code_page: &str) -> Option<LegacyEncoding> {
     let page = code_page.to_ascii_lowercase();
     let oem = match page.as_str() {
         "dos437" => Some(437),
@@ -208,8 +220,7 @@ pub fn encoding_from_code_page(code_page: &str) -> Option<LegacyEncoding> {
         // ASCII / UTF-8 / no fallback needed
         "ascii" | "utf-8" | "utf8" | "unicode" => None,
 
-        // Default: Windows-1252 (most common DXF fallback)
-        _ => Some(encoding_rs::WINDOWS_1252),
+        _ => None,
     };
     encoding.map(LegacyEncoding::from)
 }

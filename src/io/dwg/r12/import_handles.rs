@@ -26,6 +26,7 @@ impl ImportHandles {
         blocks: &mut [EntityRecord],
         entities: &mut [EntityRecord],
         font_resolver: Option<&super::ImportFontResolver>,
+        allocation_order: Option<&std::collections::HashMap<u32, usize>>,
     ) -> Result<Self> {
         let base = seed.max(1);
         let mut next = base
@@ -81,7 +82,18 @@ impl ImportHandles {
         // effective text font. The caller may resolve aliases/substitutions;
         // no operating-system font or application-profile lookup occurs here.
         let mut fonts = std::collections::HashSet::new();
-        for record in blocks.iter_mut().chain(entities.iter_mut()) {
+        let mut records: Vec<_> = blocks.iter_mut().chain(entities.iter_mut()).collect();
+        if let Some(order) = allocation_order {
+            // Follow native import order even after JUMP traversal groups
+            // relocated children with their logical owners.
+            records.sort_by_key(|record| {
+                record
+                    .native_address
+                    .and_then(|address| order.get(&address).copied())
+                    .unwrap_or(usize::MAX)
+            });
+        }
+        for record in records {
             if record.kind == "REPEAT" {
                 continue;
             }
