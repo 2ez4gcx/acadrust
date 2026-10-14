@@ -12938,7 +12938,11 @@ impl<'a> SectionReader<'a> {
     fn read_mtext(&mut self) -> Result<Option<MText>> {
         use crate::entities::mtext::{AttachmentPoint, DrawingDirection};
 
-        let mut mtext = MText::new();
+        // An absent group 41 means no wrap width, not the new-entity default.
+        let mut mtext = MText {
+            rectangle_width: 0.0,
+            ..MText::new()
+        };
         let mut insertion = PointReader::new();
         let mut normal = PointReader::new();
         let mut x_direction = PointReader::new();
@@ -21541,6 +21545,37 @@ mod tests {
         } else {
             panic!("Expected Text entity");
         }
+    }
+
+    /// An MTEXT without group 41 has no wrap width: it breaks only at its
+    /// own `\P`, instead of wrapping at the new-entity default width.
+    #[test]
+    fn test_dxf_read_mtext_without_width_does_not_wrap() {
+        let dxf = "\
+  0\r\nSECTION\r\n\
+  2\r\nENTITIES\r\n\
+  0\r\nMTEXT\r\n\
+  5\r\n1\r\n\
+100\r\nAcDbEntity\r\n\
+  8\r\n0\r\n\
+100\r\nAcDbMText\r\n\
+ 10\r\n85.0\r\n\
+ 20\r\n614.5\r\n\
+ 30\r\n0.0\r\n\
+ 40\r\n3.5\r\n\
+ 71\r\n5\r\n\
+  1\r\nONE LINE\\PSECOND LINE\r\n\
+  0\r\nENDSEC\r\n\
+  0\r\nEOF\r\n";
+
+        let cursor = std::io::Cursor::new(dxf.as_bytes());
+        let reader = crate::io::dxf::reader::DxfReader::from_reader(cursor).expect("from_reader");
+        let doc = reader.read().expect("read");
+        let entities: Vec<_> = doc.entities().collect();
+        let EntityType::MText(mtext) = entities[0] else {
+            panic!("Expected MText entity");
+        };
+        assert_eq!(mtext.rectangle_width, 0.0);
     }
 
     /// ATTRIB angles are degrees in DXF and radians in memory, as for TEXT:
