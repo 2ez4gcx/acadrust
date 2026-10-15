@@ -171,6 +171,7 @@ pub mod io;
 pub mod layer_state;
 pub mod notification;
 pub mod objects;
+pub mod plot_style;
 pub mod sheet_set;
 pub mod tables;
 pub mod types;
