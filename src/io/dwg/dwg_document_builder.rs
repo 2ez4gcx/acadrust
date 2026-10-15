@@ -3983,12 +3983,14 @@ impl DwgDocumentBuilder {
                     e.gradient_color.colors = data
                         .gradient_colors
                         .into_iter()
-                        .map(
-                            |(value, color)| crate::entities::hatch::GradientColorEntry {
+                        .map(|(value, color, color_name, book_name)| {
+                            crate::entities::hatch::GradientColorEntry {
                                 value,
                                 color,
-                            },
-                        )
+                                color_name,
+                                book_name,
+                            }
+                        })
                         .collect();
                     e.gradient_color.name = data.gradient_name;
                     // Read boundary object handles from handle stream
