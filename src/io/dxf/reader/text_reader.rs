@@ -57,15 +57,18 @@ impl<R: Read + Seek> DxfTextReader<R> {
             buf.pop();
         }
 
-        // Try UTF-8 first (takes ownership to avoid copy), then use configured encoding or Latin-1 fallback
-        let line = match String::from_utf8(buf) {
+        // Copy into an exactly sized String and keep `buf` for the next line. Handing `buf`
+        // itself to the String gave every value its 256-byte buffer and cost one fresh
+        // 256-byte allocation per line; in the browser (wasm dlmalloc) that dominated
+        // reading a DXF.
+        let line = match std::str::from_utf8(&buf) {
             Ok(s) => {
-                // Reclaim the allocation for next time
-                self.line_buf = Vec::with_capacity(256);
-                s
+                let line = s.to_owned();
+                self.line_buf = buf;
+                line
             }
-            Err(e) => {
-                let bytes = e.into_bytes();
+            Err(_) => {
+                let bytes = buf;
                 let result = if let Some(enc) = self.encoding {
                     let (decoded, _, malformed) = enc.decode(&bytes);
                     if malformed {
