@@ -1146,7 +1146,20 @@ pub struct Assoc2dConstraintGroup {
     pub work_plane: [Vector3; 3],
     pub dependency: Handle,
     pub actions: Vec<Handle>,
+    /// Id the group gives its next new node; above every id in use, deleted
+    /// ones included. Writers raise it past the largest id in `nodes`.
+    pub next_node_id: i32,
     pub nodes: Vec<AssocConstraintNode>,
+}
+
+impl Assoc2dConstraintGroup {
+    /// `next_node_id`, raised past every node id the group holds.
+    pub fn effective_next_node_id(&self) -> i32 {
+        self.nodes
+            .iter()
+            .map(|node| node.node_id.saturating_add(1))
+            .fold(self.next_node_id, i32::max)
+    }
 }
 
 impl Default for Assoc2dConstraintGroup {
@@ -1158,6 +1171,7 @@ impl Default for Assoc2dConstraintGroup {
             work_plane: [Vector3::ZERO; 3],
             dependency: Handle::NULL,
             actions: Vec::new(),
+            next_node_id: 0,
             nodes: Vec::new(),
         }
     }

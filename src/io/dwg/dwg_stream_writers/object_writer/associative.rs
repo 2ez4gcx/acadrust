@@ -840,7 +840,7 @@ impl<'a> DwgObjectWriter<'a> {
                         .skip(1)
                         .filter(|node| !node.class_name.is_empty())
                         .collect();
-                    self.writer.write_bit_long(registered.len() as i32);
+                    self.writer.write_bit_long(value.effective_next_node_id());
                     self.writer.write_bit_long(first.node_id);
                     self.writer.write_bit_long(first.connections.len() as i32);
                     for connection in &first.connections {

@@ -1363,14 +1363,15 @@ impl<'a> SectionReader<'a> {
                 for _ in 0..count {
                     actions.push(cursor.handle(360));
                 }
-                let node_count = cursor.i32(90).max(0).min(100_000);
+                let next_node_id = cursor.i32(90);
+                let node_count = next_node_id.max(0).min(100_000);
                 let mut nodes = Vec::with_capacity(node_count as usize);
                 if node_count > 0 {
                     nodes.push(read_constraint_root(&mut cursor));
                     let after_root = cursor.position;
                     let registered_count = cursor.i32(90).max(0).min(100_000);
-                    let has_registry =
-                        registered_count <= node_count && cursor.peek_code() == Some(1);
+                    let has_registry = registered_count <= node_count
+                        && (registered_count == 0 || cursor.peek_code() == Some(1));
                     if has_registry {
                         let mut registry = Vec::with_capacity(registered_count as usize);
                         for _ in 0..registered_count {
@@ -1399,6 +1400,7 @@ impl<'a> SectionReader<'a> {
                     work_plane,
                     dependency,
                     actions,
+                    next_node_id,
                     nodes,
                 })
             }

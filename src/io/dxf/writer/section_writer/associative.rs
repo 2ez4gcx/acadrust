@@ -864,7 +864,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     .iter()
                     .filter(|node| !node.class_name.is_empty())
                     .collect();
-                self.writer.write_i32(90, registered.len() as i32)?;
+                self.writer.write_i32(90, value.effective_next_node_id())?;
                 if let Some(root) = root {
                     self.writer.write_i32(90, root.node_id)?;
                     self.writer.write_i32(90, root.connections.len() as i32)?;
