@@ -2048,7 +2048,20 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // - Active paper space (*Paper_Space) entities go to ENTITIES section (not here)
         // - Non-active paper spaces (*Paper_Space0, *Paper_Space1, ...) write entities here
         // - Other blocks (inserts etc.) also write entities here
-        if !block_record.is_model_space() && !block_record.name().eq_ignore_ascii_case("*Paper_Space") {
+        // - Xref blocks (see below) write no owned entities at all
+        //
+        // An xref block record references an external drawing: its contents
+        // live in that file, not here. Some hosts merge the resolved xref
+        // geometry into the block record for display; serializing those as
+        // owned entities would bind/explode the xref into the host file on
+        // the next open. Skip the entity loop entirely, leaving only the
+        // BLOCK/ENDBLK markers — matching the DWG writer (see
+        // `DwgObjectWriter::write_block_entities`).
+        let is_xref = block_record.flags.is_xref || block_record.flags.is_xref_overlay;
+        if !is_xref
+            && !block_record.is_model_space()
+            && !block_record.name().eq_ignore_ascii_case("*Paper_Space")
+        {
             // Set paper space flag so entities inside non-active paper
             // space blocks get code 67=1 (same as active paper space).
             let prev_ps = self.writing_paper_space;
