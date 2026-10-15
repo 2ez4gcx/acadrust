@@ -4,7 +4,8 @@
 
 use opencadcodec::entities::*;
 use opencadcodec::objects::{
-    ObjectType, ProxyObject, ProxyObjectReference, ProxyPayload, ProxyReferenceKind, Scale,
+    BlockEvalValue, BlockVisibilityParameter, ObjectType, ProxyObject, ProxyObjectReference,
+    ProxyPayload, ProxyReferenceKind, Scale,
 };
 use opencadcodec::types::{DxfVersion, Handle, Vector2, Vector3};
 use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
@@ -302,4 +303,52 @@ fn r2007_table_records_do_not_claim_the_referenced_flag() {
     for vport in loaded.vports.iter() {
         assert!(!vport.xref_reference, "{} claims the 64 flag", vport.name);
     }
+}
+
+fn visibility_parameter(
+    doc: &mut CadDocument,
+    eval_value_code: i16,
+    eval_value: BlockEvalValue,
+) -> Handle {
+    let handle = doc.allocate_handle();
+    let object = BlockVisibilityParameter {
+        handle,
+        owner: Handle::NULL,
+        eval_major: 33,
+        eval_minor: 378,
+        eval_value_code,
+        eval_value,
+        eval_node_id: 1,
+        element_name: "Visibility State".to_string(),
+        element_major: 33,
+        element_minor: 378,
+        name: "Visibility1".to_string(),
+        ..Default::default()
+    };
+    doc.objects
+        .insert(handle, ObjectType::BlockVisibilityParameter(object));
+    handle
+}
+
+#[test]
+fn visibility_eval_expr_without_value_writes_nothing_after_node_ids() {
+    // AutoCAD DXFOUT (2018) of a visibility-bearing dynamic block ends
+    // AcDbEvalExpr after 90/98/99; the shared reader treats an absent 70 as
+    // the -9999 "no value" sentinel. Emitting "70 -9999" makes AutoCAD reject
+    // the object with "Unexpected DXF group code: 70".
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let handle = visibility_parameter(&mut doc, -9999, BlockEvalValue::None);
+    let codes = codes_after(&record(&write_pairs(&doc), handle), "AcDbEvalExpr");
+    assert_eq!(&codes[..4], &[90, 98, 99, 100], "{codes:?}");
+}
+
+#[test]
+fn visibility_eval_expr_with_value_matches_parameter_layout() {
+    // AcDbEvalExpr with a value carries an empty expression string, the value
+    // type, then the value - the layout every other parameter writes and the
+    // shared reader accepts (a real value is group 140, not 40).
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let handle = visibility_parameter(&mut doc, 40, BlockEvalValue::Real(6.5));
+    let codes = codes_after(&record(&write_pairs(&doc), handle), "AcDbEvalExpr");
+    assert_eq!(&codes[..7], &[90, 98, 99, 1, 70, 140, 100], "{codes:?}");
 }

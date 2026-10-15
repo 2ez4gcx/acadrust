@@ -9006,23 +9006,18 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_string(0, "BLOCKVISIBILITYPARAMETER")?;
         self.writer.write_handle(5, obj.handle)?;
         self.writer.write_handle(330, obj.owner)?;
-        self.writer.write_subclass("AcDbEvalExpr")?;
-        self.writer.write_i32(90, obj.eval_node_id)?;
-        self.writer.write_i32(98, obj.eval_major)?;
-        self.writer.write_i32(99, obj.eval_minor)?;
-        self.writer.write_i16(70, obj.eval_value_code)?;
-        match &obj.eval_value {
-            BlockEvalValue::Real(v) => self.writer.write_double(40, *v)?,
-            BlockEvalValue::Point(v) => {
-                self.writer.write_double(10, v[0])?;
-                self.writer.write_double(20, v[1])?;
-            }
-            BlockEvalValue::Text(v) => self.writer.write_string(1, v)?,
-            BlockEvalValue::Long(v) => self.writer.write_i32(90, *v)?,
-            BlockEvalValue::Handle(v) => self.writer.write_handle(91, *v)?,
-            BlockEvalValue::Short(v) => self.writer.write_i16(70, *v)?,
-            BlockEvalValue::None => {}
-        }
+        // Same AcDbEvalExpr layout as every other parameter: a -9999 "no
+        // value" sentinel emits nothing after 99 (a "70 -9999" pair makes
+        // AutoCAD reject the object), otherwise an empty expression string,
+        // the value type, then the value.
+        self.write_dynamic_eval_dxf(&crate::objects::BlockEvalExpression {
+            parent_id: crate::objects::BlockEvalExpression::NO_PARENT,
+            major: obj.eval_major,
+            minor: obj.eval_minor,
+            value_code: obj.eval_value_code,
+            value: obj.eval_value.clone(),
+            node_id: obj.eval_node_id,
+        })?;
         self.writer.write_subclass("AcDbBlockElement")?;
         self.writer.write_string(300, &obj.element_name)?;
         self.writer.write_i32(98, obj.element_major)?;
