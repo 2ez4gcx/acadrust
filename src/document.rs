@@ -81,6 +81,8 @@ fn material_checker_texture(entries: &[XRecordEntry]) -> Option<MaterialTexture>
 
 mod semantic_inventory;
 pub use semantic_inventory::*;
+mod block_graph;
+pub use block_graph::BlockGraph;
 
 #[cfg(feature = "serde")]
 fn default_sketch_tolerance() -> f64 {

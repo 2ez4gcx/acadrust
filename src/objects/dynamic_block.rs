@@ -31,7 +31,8 @@ impl DynamicBlockObject {
         }
     }
 
-    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
+    /// Visit every handle the object refers to except its own.
+    pub fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         visit(&mut self.owner);
         for handle in &mut self.reactors {
             visit(handle);
