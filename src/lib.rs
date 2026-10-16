@@ -149,6 +149,10 @@
 //! | AC1027 | 2013 | R/W | R/W |
 //! | AC1032 | 2018+ | R/W | R/W |
 //!
+//! DXF R12 is written as R13 unless requested explicitly with
+//! [`DxfWriter::with_version`](io::dxf::DxfWriter::with_version), which emits a
+//! genuine R12 file and converts newer entities to R12 entities.
+//!
 //! `R/W` describes the format-level reader and writer paths. Entity
 //! availability varies by file version. See the
 //! [R12 support status](https://github.com/hakanaktt/acadrust/blob/main/src/docs/ac1009_support.md)
