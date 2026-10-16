@@ -1,6 +1,7 @@
 //! DXF writer module
 
 mod binary_writer;
+mod r12;
 mod section_writer;
 mod stream_writer;
 mod text_writer;
@@ -22,6 +23,8 @@ pub struct DxfWriter<'a> {
     document: &'a CadDocument,
     /// Whether to write binary DXF format
     pub binary: bool,
+    /// Explicit target version; `None` writes the document's own version.
+    version: Option<crate::types::DxfVersion>,
 }
 
 impl<'a> DxfWriter<'a> {
@@ -30,6 +33,7 @@ impl<'a> DxfWriter<'a> {
         Self {
             document,
             binary: false,
+            version: None,
         }
     }
 
@@ -38,7 +42,20 @@ impl<'a> DxfWriter<'a> {
         Self {
             document,
             binary: true,
+            version: None,
         }
+    }
+
+    /// Write the document as `version` instead of its own version.
+    ///
+    /// Requesting [`DxfVersion::AC1009`](crate::types::DxfVersion::AC1009)
+    /// produces a genuine R12 file (no handles, no CLASSES/OBJECTS sections,
+    /// newer entities converted to R12 entities; ASCII only). A document that
+    /// merely *carries* `AC1009` without this call keeps being written as R13,
+    /// because the R13 structure preserves everything the document holds.
+    pub fn with_version(mut self, version: crate::types::DxfVersion) -> Self {
+        self.version = Some(version);
+        self
     }
 
     /// Set whether to write binary format
@@ -55,6 +72,9 @@ impl<'a> DxfWriter<'a> {
 
     /// Write to any writer
     pub fn write_to_writer<W: Write>(&self, writer: W) -> Result<()> {
+        if self.version == Some(crate::types::DxfVersion::AC1009) {
+            return self.write_r12(writer);
+        }
         // BricsCAD's binary DXF importer rejects the R2000/R2004 headers even
         // when their records are otherwise valid.  The same records are
         // accepted as R2010 binary DXF, whose strings are UTF-8.  Keep this
@@ -156,11 +176,29 @@ impl<'a> DxfWriter<'a> {
     }
 
     fn output_version(&self) -> crate::types::DxfVersion {
-        if self.binary && self.document.version < crate::types::DxfVersion::AC1021 {
+        let version = self.version.unwrap_or(self.document.version);
+        if self.binary && version < crate::types::DxfVersion::AC1021 {
             crate::types::DxfVersion::AC1024
         } else {
-            self.document.version
+            version
         }
+    }
+
+    /// Genuine R12 output (see [`DxfWriter::with_version`]).
+    fn write_r12<W: Write>(&self, writer: W) -> Result<()> {
+        if self.binary {
+            // R12 binary DXF uses one-byte group codes, which the binary writer does not emit
+            return Err(crate::error::DxfError::UnsupportedVersion(
+                "binary DXF R12 (AC1009); write R12 as ASCII DXF".into(),
+            ));
+        }
+        let mut stream_writer = DxfTextWriter::new(writer);
+        if let Some(encoding) = crate::io::dxf::code_page::encoding_from_code_page(&self.document.header.code_page) {
+            stream_writer.set_encoding(encoding);
+        }
+        r12::write_r12(&mut stream_writer, self.document)?;
+        stream_writer.flush()?;
+        Ok(())
     }
 
     /// Get a reference to the document

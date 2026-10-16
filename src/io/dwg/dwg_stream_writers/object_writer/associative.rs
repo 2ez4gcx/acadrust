@@ -767,13 +767,17 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_bit_short(value.class_version);
                 self.writer.write_bit(value.enabled);
                 let subent = &value.persistent_subent;
-                self.writer.write_bit(subent.leading_flag);
-                self.writer.write_bit_long(
-                    AssocPersistentSubentId::code_for_class_name(&subent.class_name)
-                        .unwrap_or(subent.class_code),
-                );
-                for item in &subent.values {
-                    self.writer.write_bit_long(*item);
+                if self.version.r2013_plus(self.dxf_version) {
+                    self.writer.write_bit(subent.leading_flag);
+                    self.writer.write_bit_long(
+                        AssocPersistentSubentId::code_for_class_name(&subent.class_name)
+                            .unwrap_or(subent.class_code),
+                    );
+                    for item in &subent.values {
+                        self.writer.write_bit_long(*item);
+                    }
+                } else {
+                    self.writer.write_variable_text(subent.resolved_class_name());
                 }
                 self.writer.write_bit(subent.dependent_on_compound_object);
             }

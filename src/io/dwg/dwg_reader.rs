@@ -831,6 +831,7 @@ pub struct DwgReader<R: Read + Seek> {
     /// coupling this crate to a UI or an async runtime.
     progress: Option<std::sync::Arc<dyn Fn(u16) + Send + Sync>>,
     legacy_font_resolver: Option<std::sync::Arc<crate::io::dwg::r12::ImportFontResolver>>,
+    r12_code_page: Option<String>,
     /// Section-level diagnostics collected by `get_section_buffer`.
     ///
     /// Section extraction is also a public API, so it cannot take the
@@ -859,6 +860,7 @@ impl DwgReader<File> {
             source_path: Some(path.to_string_lossy().into_owned()),
             progress: None,
             legacy_font_resolver: None,
+            r12_code_page: None,
             pending_diagnostics: Vec::new(),
         })
     }
@@ -881,12 +883,31 @@ impl DwgReader<Cursor<memmap2::Mmap>> {
             source_path: Some(path.to_string_lossy().into_owned()),
             progress: None,
             legacy_font_resolver: None,
+            r12_code_page: None,
             pending_diagnostics: Vec::new(),
         })
     }
 }
 
 impl<R: Read + Seek> DwgReader<R> {
+    /// Override the code page used to decode AC1009 strings.
+    ///
+    /// By default, the file's declared code page is honored. Some legacy
+    /// importers use an application encoding instead. This explicit override
+    /// applies to header strings, tables, and entities, while preserving the
+    /// declared `document.header.code_page`. Later DWG versions are unaffected.
+    /// No system locale or application configuration is queried by the reader.
+    pub fn with_r12_code_page(mut self, code_page: impl Into<String>) -> Result<Self, DxfError> {
+        let code_page = code_page.into();
+        if crate::io::dxf::code_page::try_encoding_from_code_page(&code_page).is_none() {
+            return Err(DxfError::InvalidFormat(format!(
+                "Unsupported AC1009 code page override: {code_page}"
+            )));
+        }
+        self.r12_code_page = Some(code_page);
+        Ok(self)
+    }
+
     /// Resolve legacy font files to canonical identities during R12 import.
     ///
     /// Missing R12 object handles are synthesized in import order. Loading a
@@ -916,6 +937,7 @@ impl<R: Read + Seek> DwgReader<R> {
             source_path: None,
             progress: None,
             legacy_font_resolver: None,
+            r12_code_page: None,
             pending_diagnostics: Vec::new(),
         }
     }
@@ -929,6 +951,7 @@ impl<R: Read + Seek> DwgReader<R> {
             source_path: None,
             progress: None,
             legacy_font_resolver: None,
+            r12_code_page: None,
             pending_diagnostics: Vec::new(),
         }
     }
@@ -1041,6 +1064,7 @@ impl<R: Read + Seek> DwgReader<R> {
             let mut document = match crate::io::dwg::r12::read_document(
                 &bytes,
                 self.legacy_font_resolver.as_deref(),
+                self.r12_code_page.as_deref(),
             ) {
                 Ok(document) => document,
                 Err(error) if failsafe => {

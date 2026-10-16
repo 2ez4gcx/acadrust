@@ -1,7 +1,23 @@
 ## Changelog
 
+### Unreleased
+
+- **Genuine DXF R12 output** - `DxfWriter::with_version(DxfVersion::AC1009)`
+  writes a real R12 file: no handles, CLASSES or OBJECTS, R12 table records,
+  and R12 entities only. LWPOLYLINE becomes a 2D POLYLINE with its bulges,
+  SPLINE/ELLIPSE/HELIX become polylines, HATCH becomes an anonymous `*X` block
+  with clipped pattern lines or SOLID strips, MTEXT becomes TEXT lines, and
+  names are mapped to valid R12 symbols. Documents that merely carry `AC1009`
+  keep being written as R13 by default.
+- **Explode fidelity** - SPLINE now explodes along the evaluated NURBS curve
+  (rational and non-uniform knots) instead of the control polygon; MTEXT
+  explodes to one TEXT per line with formatting codes removed, aligned by its
+  attachment point.
+
 ### 0.6.4
 
+- **AC1009 import parity** - Incorporates Ottosson's explicit legacy code-page
+  override and AutoCAD-compatible plot defaults for synthesized layouts.
 - **DXF header fidelity (issue #127)** - Writes and round-trips angle base,
   angle direction, elevation, thickness, fillet, and chamfer settings.
 - **DWG linetype fidelity (issue #128)** - Plain dashed elements with native
@@ -31,7 +47,8 @@
 
 - **AC1009/R12 DWG support** - Added native pre-R13 DWG read/write support,
   including fixed-layout headers, symbol tables, entity records, CRC checks,
-  XDATA, compound sequences, and exhaustive entity coverage.
+  XDATA, and native entity codecs. Complete R12 fidelity remains in progress;
+  see [AC1009 support status](src/docs/ac1009_support.md).
 
 ### 0.6.1
 

@@ -1019,22 +1019,51 @@ pub fn read_associative_data(
                 class_version: reader.read_bit_short(),
                 enabled: reader.read_bit(),
                 persistent_subent: {
-                    // Flag, class code, the class's fields, then the
-                    // compound-object bit, which ends the record.
-                    let leading_flag = reader.read_bit();
-                    let class_code = reader.read_bit_long();
-                    let mut values = Vec::new();
-                    while reader.main_remaining_bits() > 1 && values.len() < 64 {
-                        values.push(reader.read_bit_long());
-                    }
-                    AssocPersistentSubentId {
-                        class_name: AssocPersistentSubentId::class_name_for_code(class_code)
+                    // R2010 and earlier records use the original
+                    // AcDbAssocPersSubentId layout: the class name is a
+                    // variable text value and only the compound-object flag
+                    // remains in the main stream.  R2013+ files in the wild
+                    // also exist with the compact class-code layout emitted
+                    // by older versions of this crate, so recognize that
+                    // form when there is no text stream to consume.
+                    let compact_layout = version.r2013_plus(dxf_version)
+                        && reader.text_remaining_bits() == 0
+                        && reader.main_remaining_bits() >= 4;
+                    if compact_layout {
+                        let leading_flag = reader.read_bit();
+                        let class_code = reader.read_bit_long();
+                        let class_name = AssocPersistentSubentId::class_name_for_code(class_code)
                             .unwrap_or_default()
-                            .to_string(),
-                        dependent_on_compound_object: reader.read_bit(),
-                        class_code,
-                        values,
-                        leading_flag,
+                            .to_string();
+                        let values = AssocPersistentSubentId::field_count_for_class_name(
+                            &class_name,
+                        )
+                        .map(|count| {
+                            (0..count)
+                                .map(|_| reader.read_bit_long())
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                        let dependent_on_compound_object = reader.read_bit();
+                        AssocPersistentSubentId {
+                            class_name,
+                            dependent_on_compound_object,
+                            class_code,
+                            values,
+                            leading_flag,
+                        }
+                    } else {
+                        let class_name = reader.read_variable_text();
+                        let class_code = AssocPersistentSubentId::code_for_class_name(&class_name)
+                            .unwrap_or_default();
+                        let dependent_on_compound_object = reader.read_bit();
+                        AssocPersistentSubentId {
+                            class_name,
+                            dependent_on_compound_object,
+                            class_code,
+                            values: Vec::new(),
+                            leading_flag: false,
+                        }
                     }
                 },
             })

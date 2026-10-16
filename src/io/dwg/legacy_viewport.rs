@@ -91,6 +91,27 @@ pub(crate) fn record(v: &Viewport, document: &CadDocument) -> ExtendedDataRecord
 }
 
 pub(crate) fn restore(v: &mut Viewport, layer_handle: impl Fn(&str) -> Option<crate::Handle>) {
+    restore_impl(v, layer_handle, false);
+}
+
+pub(crate) fn restore_r12(v: &mut Viewport, layer_handle: impl Fn(&str) -> Option<crate::Handle>) {
+    restore_impl(v, layer_handle, true);
+}
+
+pub(crate) fn record_r12(v: &Viewport, document: &CadDocument) -> ExtendedDataRecord {
+    let mut result = record(v, document);
+    if let Some(range) = mview_range(&result.values) {
+        result.values[range.start + 5] = X::Real(v.twist_angle);
+        result.values[range.start + 20] = X::Real(v.snap_angle);
+    }
+    result
+}
+
+fn restore_impl(
+    v: &mut Viewport,
+    layer_handle: impl Fn(&str) -> Option<crate::Handle>,
+    radians: bool,
+) {
     let Some(record) = v
         .common
         .extended_data
@@ -146,8 +167,15 @@ pub(crate) fn restore(v: &mut Viewport, layer_handle: impl Fn(&str) -> Option<cr
     };
     v.view_target = point(0);
     v.view_direction = point(1);
-    v.twist_angle = real(2).to_radians();
+    v.twist_angle = if radians {
+        real(2)
+    } else {
+        real(2).to_radians()
+    };
     v.view_height = real(3);
+    if v.view_height.is_finite() && v.view_height > 0.0 {
+        v.custom_scale = v.height / v.view_height;
+    }
     v.view_center = Vector3::new(real(4), real(5), 0.0);
     v.lens_length = real(6);
     v.front_clip_z = real(7);
@@ -160,7 +188,11 @@ pub(crate) fn restore(v: &mut Viewport, layer_handle: impl Fn(&str) -> Option<cr
     v.status.snap_on = int(13) != 0;
     v.status.grid_on = int(14) != 0;
     v.status.isometric_snap = int(15) != 0;
-    v.snap_angle = real(17).to_radians();
+    v.snap_angle = if radians {
+        real(17)
+    } else {
+        real(17).to_radians()
+    };
     v.status.iso_pair_top = int(16) == 1;
     v.status.iso_pair_right = int(16) == 2;
     v.snap_base = Vector3::new(real(18), real(19), 0.0);

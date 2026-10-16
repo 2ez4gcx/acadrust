@@ -772,6 +772,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // === UCS ===
+        if let Some(state) = &hdr.legacy {
+            self.write_header_variable("$UNITMODE", |w| w.write_i16(70, state.unit_mode))?;
+        }
         self.write_header_variable("$UCSORG", |w| {
             let v = &hdr.model_space_ucs_origin;
             w.write_double(10, v.x)?;
@@ -9158,7 +9161,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     }
 
     /// Write extended data (XDATA)
-    fn write_xdata(&mut self, xdata: &ExtendedData) -> Result<()> {
+    pub(crate) fn write_xdata(&mut self, xdata: &ExtendedData) -> Result<()> {
         if xdata.is_empty() {
             return Ok(());
         }

@@ -149,11 +149,16 @@
 //! | AC1027 | 2013 | R/W | R/W |
 //! | AC1032 | 2018+ | R/W | R/W |
 //!
+//! DXF R12 is written as R13 unless requested explicitly with
+//! [`DxfWriter::with_version`](io::dxf::DxfWriter::with_version), which emits a
+//! genuine R12 file and converts newer entities to R12 entities.
+//!
 //! `R/W` describes the format-level reader and writer paths. Entity
 //! availability varies by file version. See the
-//! [per-version compatibility matrix](https://github.com/hakanaktt/acadrust/blob/main/src/docs/entity_status_matrix.md),
-//! which records tested fixtures and CAD-engine audit results rather than a
-//! guarantee for every possible drawing.
+//! [R12 support status](https://github.com/hakanaktt/acadrust/blob/main/src/docs/ac1009_support.md)
+//! for confirmed AC1009 fidelity gaps. DXF export promotes R12 documents to
+//! R13 or later. Compatibility results describe tested fixtures and CAD-engine
+//! audits rather than a guarantee for every possible drawing.
 
 #![allow(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]

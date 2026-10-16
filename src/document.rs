@@ -80,6 +80,8 @@ fn material_checker_texture(entries: &[XRecordEntry]) -> Option<MaterialTexture>
 }
 
 mod semantic_inventory;
+mod legacy_header;
+pub use legacy_header::LegacyHeaderState;
 pub use semantic_inventory::*;
 mod block_graph;
 pub use block_graph::BlockGraph;
@@ -157,6 +159,9 @@ fn solid_history_node_id(base: &SolidHistoryNodeBase) -> i32 {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(default))]
 pub struct HeaderVariables {
+    /// Independent current view/drafting state from an R12 header.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub legacy: Option<LegacyHeaderState>,
     // ==================== Version-specific Flags ====================
     /// REQUIREDVERSIONS (R2013+) - Bit coded required versions
     pub required_versions: i64,
@@ -768,6 +773,7 @@ impl HeaderVariables {
 impl Default for HeaderVariables {
     fn default() -> Self {
         Self {
+            legacy: None,
             // Version-specific flags
             required_versions: 0,
 
@@ -1328,6 +1334,10 @@ pub struct CadDocument {
     /// Shared so document snapshots do not duplicate large modeler data.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) raw_acds_data: Option<Arc<Vec<u8>>>,
+    /// Original AC1009 fixed-layout header, retaining legacy fields without
+    /// counterparts in `HeaderVariables` for native R12 saves.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) r12_header_raw: Option<Vec<u8>>,
     /// Debug aid: every record of the source DWG, verbatim, keyed by handle
     /// (type code, bytes). Only filled when `ACADRUST_RAW_ALL` is set in the
     /// environment; the writer then re-emits these instead of re-serialising
@@ -1524,6 +1534,7 @@ impl CadDocument {
             preview: None,
             acis_sab_handles: Vec::new(),
             raw_acds_data: None,
+            r12_header_raw: None,
             raw_records: HashMap::new(),
             original_objects: HashMap::new(),
             raw_record_owners: HashMap::new(),

@@ -1,12 +1,16 @@
 //! Fixed-layout AC1009 drawing and table headers.
 
-use crate::document::HeaderVariables;
+use crate::document::{HeaderVariables, LegacyHeaderState};
 use crate::error::{DxfError, Result};
 use crate::io::dwg::crc;
 use crate::types::{Color, Vector2, Vector3};
 
 pub const HEADER_VARIABLES_END: usize = 0x6bd;
 pub const ENTITIES_START: u32 = 0x6cf;
+const MENU_START: usize = 0x194;
+const MENU_PREFIX_LEN: usize = 15;
+const MENU_CONTINUATION_START: usize = 0x1fc;
+const MENU_CONTINUATION_LEN: usize = 45;
 
 pub const ENTITIES_BEGIN: [u8; 16] = [
     0xc4, 0x6e, 0x68, 0x54, 0xf8, 0x6e, 0x33, 0x30, 0x63, 0x3e, 0xc1, 0x85, 0x2a, 0xdc, 0x94, 0x01,
@@ -138,22 +142,42 @@ pub struct R12Header {
 impl R12Header {
     /// Apply the variables stored in R12 without replacing references to
     /// dictionaries, layouts and other objects created by the importer.
-    pub(crate) fn apply_variables(&self, target: &mut HeaderVariables) -> Result<()> {
+    pub(crate) fn apply_variables(
+        &self,
+        target: &mut HeaderVariables,
+        code_page_override: Option<&str>,
+    ) -> Result<()> {
         let mut codec = Codec::reading(self.raw.clone());
         codec.encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(
             u16::from_le_bytes(self.raw[0x3f9..0x3fb].try_into().unwrap()),
         );
+        if let Some(encoding) =
+            code_page_override.and_then(crate::io::dxf::code_page::encoding_from_code_page)
+        {
+            codec.encoding = encoding;
+        }
         codec.pos = 0x5e;
         variables(
             &mut codec,
             target,
             &mut self.references.clone(),
             self.num_header_variables,
-        )
+        )?;
+        let mut state = LegacyHeaderState::default();
+        legacy_state(&mut codec, &mut state)?;
+        target.legacy = Some(state);
+        Ok(())
     }
 }
 
 pub fn read_header(data: &[u8]) -> Result<R12Header> {
+    read_header_with_code_page(data, None)
+}
+
+pub(super) fn read_header_with_code_page(
+    data: &[u8],
+    code_page_override: Option<&str>,
+) -> Result<R12Header> {
     if data.len() < 0x6cd || !matches!(data.get(..6), Some(b"AC1009" | b"AD1009")) {
         return Err(DxfError::InvalidFormat("Invalid AC1009 header".into()));
     }
@@ -189,6 +213,11 @@ pub fn read_header(data: &[u8]) -> Result<R12Header> {
     let mut c = Codec::reading(data[..variables_end].to_vec());
     let page = u16::from_le_bytes(data[0x3F9..0x3FB].try_into().unwrap());
     c.encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(page);
+    if let Some(encoding) =
+        code_page_override.and_then(crate::io::dxf::code_page::encoding_from_code_page)
+    {
+        c.encoding = encoding;
+    }
     c.pos = 0x14;
     c.long(&mut header.layout.entities_start);
     c.long(&mut header.layout.entities_end);
@@ -215,6 +244,9 @@ pub fn read_header(data: &[u8]) -> Result<R12Header> {
         &mut header.references,
         num_header_variables,
     )?;
+    let mut state = LegacyHeaderState::default();
+    legacy_state(&mut c, &mut state)?;
+    header.variables.legacy = Some(state);
     if header.layout.entities_start < (variables_end + 18) as u32
         || header.layout.entities_end < header.layout.entities_start
         || header.layout.entities_end as usize > data.len()
@@ -260,6 +292,9 @@ pub fn write_header(
     }
     c.pos = 0x5e;
     variables(&mut c, &mut header.clone(), &mut references.clone(), 205)?;
+    if let Some(state) = &header.legacy {
+        legacy_state(&mut c, &mut state.clone())?;
+    }
     let checksum = crc::crc16(crc::CRC16_SEED, &c.data);
     c.data.extend_from_slice(&checksum.to_le_bytes());
     c.data.extend_from_slice(&ENTITIES_BEGIN);
@@ -300,6 +335,73 @@ pub fn write_auxheader(
     data
 }
 
+fn legacy_state(c: &mut Codec, state: &mut LegacyHeaderState) -> Result<()> {
+    for (offset, value) in [
+        (0xc8, &mut state.view_center),
+        (0x239, &mut state.view_direction),
+        (0x443, &mut state.view_target),
+    ] {
+        c.pos = offset;
+        c.point3(value);
+    }
+    for (offset, value) in [
+        (0xea, &mut state.snap_spacing),
+        (0xfa, &mut state.snap_base),
+        (0x118, &mut state.grid_spacing),
+        (0x16a, &mut state.axis_spacing),
+    ] {
+        c.pos = offset;
+        c.point2(value);
+    }
+    for (offset, value) in [
+        (0xe0, &mut state.view_height),
+        (0x15c, &mut state.view_aspect_ratio),
+        (0x10a, &mut state.snap_angle),
+        (0x46b, &mut state.front_clip),
+        (0x473, &mut state.back_clip),
+    ] {
+        c.pos = offset;
+        c.double(value);
+    }
+    for (offset, value) in [
+        (0xe8, &mut state.snap_mode),
+        (0x112, &mut state.snap_style),
+        (0x114, &mut state.snap_isopair),
+        (0x116, &mut state.grid_mode),
+        (0x168, &mut state.axis_mode),
+        (0x317, &mut state.circle_zoom),
+        (0x341, &mut state.fast_zoom),
+        (0x47b, &mut state.view_mode),
+        (0x50a, &mut state.flatland),
+        (0x50e, &mut state.ucs_icon),
+        (0x53d, &mut state.unit_mode),
+    ] {
+        c.pos = offset;
+        c.short(value);
+    }
+    c.pos = 0x53f;
+    for value in &mut state.user_unit_ratios {
+        c.double(value);
+    }
+    c.pos = 0x55f;
+    for value in &mut state.user_unit_names {
+        if c.read {
+            c.text(value, 32)?;
+        } else {
+            let encoded = crate::io::dxf::code_page::encode_legacy_string(value, c.encoding);
+            if encoded.len() > 32 || encoded.contains(&0) {
+                return Err(DxfError::InvalidFormat(
+                    "AC1009 user-unit name exceeds 32 encoded bytes or contains NUL".into(),
+                ));
+            }
+            c.data[c.pos..c.pos + 32].fill(0);
+            c.data[c.pos..c.pos + encoded.len()].copy_from_slice(&encoded);
+            c.pos += 32;
+        }
+    }
+    Ok(())
+}
+
 struct Codec {
     data: Vec<u8>,
     pos: usize,
@@ -319,6 +421,28 @@ impl Codec {
 
     fn writing(raw: Option<&[u8]>) -> Self {
         let mut data = vec![0; HEADER_VARIABLES_END];
+        // Native import validates these legacy settings even for an empty
+        // drawing. Zero view size, direction and unit ratios are invalid.
+        for (offset, value) in [
+            (0xe0, 10.0_f64),
+            (0xea, 0.5),
+            (0xf2, 0.5),
+            (0x118, 0.5),
+            (0x120, 0.5),
+            (0x249, 1.0),
+            (0x53f, 1.0),
+            (0x547, 1.0),
+            (0x54f, 1.0),
+            (0x557, 1.0),
+        ] {
+            data[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        data[0x317..0x319].copy_from_slice(&100_i16.to_le_bytes());
+        data[0x341..0x343].copy_from_slice(&1_i16.to_le_bytes());
+        data[0x50e..0x510].copy_from_slice(&3_i16.to_le_bytes());
+        data[0x14c..0x150].copy_from_slice(&15_u32.to_le_bytes());
+        data[0x51e..0x520].copy_from_slice(&5_i16.to_le_bytes());
+        data[0x520..0x522].copy_from_slice(&1_i16.to_le_bytes());
         if let Some(raw) = raw {
             let count = raw.len().min(data.len());
             data[..count].copy_from_slice(&raw[..count]);
@@ -399,7 +523,7 @@ impl Codec {
         self.double(&mut value.z);
     }
 
-    fn text(&mut self, value: &mut String, length: usize) {
+    fn text(&mut self, value: &mut String, length: usize) -> Result<()> {
         if self.read {
             let bytes = &self.data[self.pos..self.pos + length];
             let end = bytes.iter().position(|byte| *byte == 0).unwrap_or(length);
@@ -408,11 +532,56 @@ impl Codec {
             );
         } else {
             let bytes = crate::io::dxf::code_page::encode_legacy_string(value, self.encoding);
-            let count = bytes.len().min(length.saturating_sub(1));
+            if bytes.contains(&0) || bytes.len() >= length {
+                return Err(DxfError::InvalidFormat(format!(
+                    "AC1009 header string at {:#x} must fit in {} encoded bytes without NUL (got {})",
+                    self.pos,
+                    length.saturating_sub(1),
+                    bytes.len()
+                )));
+            }
             self.data[self.pos..self.pos + length].fill(0);
-            self.data[self.pos..self.pos + count].copy_from_slice(&bytes[..count]);
+            self.data[self.pos..self.pos + bytes.len()].copy_from_slice(&bytes);
         }
         self.pos += length;
+        Ok(())
+    }
+
+    fn menu(&mut self, value: &mut String) -> Result<()> {
+        debug_assert_eq!(self.pos, MENU_START);
+        let prefix = MENU_START..MENU_START + MENU_PREFIX_LEN;
+        let continuation = MENU_CONTINUATION_START..MENU_CONTINUATION_START + MENU_CONTINUATION_LEN;
+        if self.read {
+            // Join before decoding: the split can bisect a multibyte character
+            // or a CIF escape, and either fixed span may have no terminator.
+            let mut bytes = Vec::with_capacity(MENU_PREFIX_LEN + MENU_CONTINUATION_LEN);
+            for span in [prefix, continuation] {
+                bytes.extend(
+                    self.data[span]
+                        .iter()
+                        .copied()
+                        .take_while(|byte| *byte != 0),
+                );
+            }
+            *value =
+                crate::io::dxf::code_page::decode_legacy_escapes(&self.encoding.decode(&bytes).0);
+        } else {
+            let bytes = crate::io::dxf::code_page::encode_legacy_string(value, self.encoding);
+            if bytes.contains(&0) || bytes.len() > MENU_PREFIX_LEN + MENU_CONTINUATION_LEN {
+                return Err(DxfError::InvalidFormat(format!(
+                    "AC1009 MENU must fit in 60 encoded bytes without NUL (got {})",
+                    bytes.len()
+                )));
+            }
+            self.data[prefix.clone()].fill(0);
+            self.data[continuation.clone()].fill(0);
+            let split = bytes.len().min(MENU_PREFIX_LEN);
+            self.data[prefix.start..prefix.start + split].copy_from_slice(&bytes[..split]);
+            self.data[continuation.start..continuation.start + bytes.len() - split]
+                .copy_from_slice(&bytes[split..]);
+        }
+        self.pos += MENU_PREFIX_LEN;
+        Ok(())
     }
 
     fn timer(&mut self, value: &mut f64) {
@@ -479,7 +648,7 @@ fn variables(
     c.short(&mut osmode);
     h.object_snap_mode = i32::from(osmode);
     c.short(&mut h.attribute_visibility);
-    c.text(&mut h.menu_name, 15);
+    c.menu(&mut h.menu_name)?;
     c.double(&mut h.dim_scale);
     c.double(&mut h.dim_arrow_size);
     c.double(&mut h.dim_ext_line_offset);
@@ -506,7 +675,7 @@ fn variables(
     c.byte_short(&mut h.dim_zero_suppression);
     c.double(&mut h.dim_rounding);
     c.double(&mut h.dim_line_extension);
-    c.text(&mut h.dim_arrow_block, 33);
+    c.text(&mut h.dim_arrow_block, 33)?;
     c.skip(2);
     c.short(&mut h.coords_mode);
     c.color(&mut h.current_entity_color);
@@ -540,8 +709,8 @@ fn variables(
     c.byte_short(&mut h.dim_alt_decimal_places);
     c.byte_flag(&mut h.associate_dimensions);
     c.byte_flag(&mut h.update_dimensions_while_dragging);
-    c.text(&mut h.dim_post, 16);
-    c.text(&mut h.dim_alt_post, 16);
+    c.text(&mut h.dim_post, 16)?;
+    c.text(&mut h.dim_alt_post, 16)?;
     c.double(&mut h.dim_alt_scale);
     c.double(&mut h.dim_linear_scale);
     c.short(&mut h.spline_segments);
@@ -561,7 +730,8 @@ fn variables(
     let mut page = crate::io::dxf::code_page::dwg_code_page_index(&h.code_page) as i16;
     c.short(&mut page);
     h.code_page = crate::io::dxf::code_page::dwg_code_page_name(page as u16).to_owned();
-    c.encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(page as u16);
+    // The caller selects the encoding before reading/writing any variables.
+    // Retain an explicit import override when passing the stored code-page field.
     c.point3(&mut h.model_space_ucs_origin);
     c.point3(&mut h.model_space_ucs_x_axis);
     c.point3(&mut h.model_space_ucs_y_axis);
@@ -570,8 +740,8 @@ fn variables(
     c.double(&mut h.view_twist);
     c.skip(8 + 8 + 2);
     c.byte_flag(&mut h.dim_force_line_inside);
-    c.text(&mut h.dim_arrow_block1, 33);
-    c.text(&mut h.dim_arrow_block2, 33);
+    c.text(&mut h.dim_arrow_block1, 33)?;
+    c.text(&mut h.dim_arrow_block2, 33)?;
     c.byte_flag(&mut h.dim_separate_arrows);
     c.byte_flag(&mut h.dim_force_text_inside);
     c.byte_flag(&mut h.dim_suppress_outside_ext);

@@ -1571,6 +1571,52 @@ impl<'a> SectionReader<'a> {
 
             let var_name = pair.value_string.clone();
             match var_name.as_str() {
+                "$VIEWCTR" | "$VIEWDIR" | "$TARGET" | "$SNAPBASE" | "$SNAPUNIT" | "$GRIDUNIT" | "$AXISUNIT" => {
+                    let state = hdr.legacy.get_or_insert_with(Default::default);
+                    let mut point = Vector3::ZERO;
+                    self.read_header_point3(&mut point)?;
+                    match var_name.as_str() {
+                        "$VIEWCTR" => state.view_center = point,
+                        "$VIEWDIR" => state.view_direction = point,
+                        "$TARGET" => state.view_target = point,
+                        "$SNAPBASE" => state.snap_base = Vector2::new(point.x, point.y),
+                        "$SNAPUNIT" => state.snap_spacing = Vector2::new(point.x, point.y),
+                        "$GRIDUNIT" => state.grid_spacing = Vector2::new(point.x, point.y),
+                        "$AXISUNIT" => state.axis_spacing = Vector2::new(point.x, point.y),
+                        _ => unreachable!(),
+                    }
+                }
+                "$SNAPMODE" | "$SNAPSTYLE" | "$SNAPISOPAIR" | "$GRIDMODE" | "$AXISMODE" | "$VIEWRES" | "$FASTZOOM" | "$VIEWMODE" | "$FLATLAND" | "$UCSICON" | "$UNITMODE" => {
+                    if let Some(value) = self.reader.read_pair()?.and_then(|pair| pair.as_i16()) {
+                        let state = hdr.legacy.get_or_insert_with(Default::default);
+                        match var_name.as_str() {
+                            "$SNAPMODE" => state.snap_mode = value,
+                            "$SNAPSTYLE" => state.snap_style = value,
+                            "$SNAPISOPAIR" => state.snap_isopair = value,
+                            "$GRIDMODE" => state.grid_mode = value,
+                            "$AXISMODE" => state.axis_mode = value,
+                            "$VIEWRES" => state.circle_zoom = value,
+                            "$FASTZOOM" => state.fast_zoom = value,
+                            "$VIEWMODE" => state.view_mode = value,
+                            "$FLATLAND" => state.flatland = value,
+                            "$UCSICON" => state.ucs_icon = value,
+                            "$UNITMODE" => state.unit_mode = value,
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+                "$VIEWSIZE" | "$SNAPANG" | "$FRONTZ" | "$BACKZ" => {
+                    if let Some(value) = self.reader.read_pair()?.and_then(|pair| pair.as_double()) {
+                        let state = hdr.legacy.get_or_insert_with(Default::default);
+                        match var_name.as_str() {
+                            "$VIEWSIZE" => state.view_height = value,
+                            "$SNAPANG" => state.snap_angle = value.to_radians(),
+                            "$FRONTZ" => state.front_clip = value,
+                            "$BACKZ" => state.back_clip = value,
+                            _ => unreachable!(),
+                        }
+                    }
+                }
                 // ── Version / Metadata ──
                 "$ACADVER" => {
                     if let Some(p) = self.reader.read_pair()? {
@@ -12670,12 +12716,10 @@ impl<'a> SectionReader<'a> {
                             _ => {}
                         }
                     }
-                    // Geometry vertex detection: bit 6 (64 = POLYGON_MESH) trumps bit 7
-                    // (128 = POLYFACE_MESH).  Internally vertices are stored with
-                    // flags=128, then ORed with 64 by the writer => written flag = 192.
-                    // Face records are written with flag=128 only.
-                    // Therefore: check bit 64 FIRST.
-                    if (vflags & 64) != 0 {
+                    // Polygon-mesh vertices also use bit 64. The parent POLYLINE
+                    // must identify a polyface before its vertices become geometry
+                    // (bit 64) or face records (bit 128 without bit 64).
+                    if (flags & 64) != 0 && (vflags & 64) != 0 {
                         // Polyface geometry vertex
                         pface_vertices.push(PolyfaceVertex {
                             common: EntityCommon::default(),
@@ -12687,7 +12731,7 @@ impl<'a> SectionReader<'a> {
                             curve_tangent: 0.0,
                             id: 0,
                         });
-                    } else if (vflags & 128) != 0 {
+                    } else if (flags & 64) != 0 && (vflags & 128) != 0 {
                         // Face record (only bit 128 set, no bit 64)
                         pface_faces.push(PolyfaceFace {
                             common: EntityCommon::default(),
@@ -12807,7 +12851,7 @@ impl<'a> SectionReader<'a> {
         // mesh, 8 = 3D polyline, otherwise a 2D (heavy) polyline. Previously
         // every non-polyface POLYLINE collapsed to a generic Polyline, dropping
         // the 2D widths/bulge, the polygon-mesh grid and the 3D-polyline type.
-        if (flags & 64) != 0 || !pface_vertices.is_empty() || !pface_faces.is_empty() {
+        if (flags & 64) != 0 {
             let mut mesh = PolyfaceMesh::new();
             mesh.common = common;
             mesh.flags = PolyfaceMeshFlags::from_bits_truncate(flags);
@@ -12829,7 +12873,12 @@ impl<'a> SectionReader<'a> {
             mesh.vertices = geom_vertices
                 .iter()
                 .map(|rv| PolygonMeshVertex {
-                    common: EntityCommon::default(),
+                    common: EntityCommon {
+                        handle: Handle::new(rv.handle),
+                        layer: rv.layer.clone(),
+                        owner_handle: mesh.common.handle,
+                        ..EntityCommon::default()
+                    },
                     location: rv.loc,
                     flags: rv.vflags,
                 })

@@ -339,63 +339,197 @@ fn explode_face3d(face: &Face3D) -> Vec<EntityType> {
     result
 }
 
-fn explode_spline(spline: &Spline) -> Vec<EntityType> {
-    // Approximate the spline as a series of line segments.
-    let points = if !spline.fit_points.is_empty() {
-        &spline.fit_points
-    } else if !spline.control_points.is_empty() {
-        &spline.control_points
+/// Points on a NURBS curve (de Boor, rational when `weights` is given).
+///
+/// `segments` is the number of samples per non-empty knot span. Knot vectors
+/// that do not match the control points are replaced by a clamped uniform one.
+pub(crate) fn nurbs_points(
+    degree: usize,
+    control_points: &[Vector3],
+    weights: &[f64],
+    knots: &[f64],
+    segments: usize,
+) -> Vec<Vector3> {
+    let n = control_points.len();
+    if n < 2 {
+        return control_points.to_vec();
+    }
+    let p = degree.clamp(1, n - 1);
+    let knots: Vec<f64> = if knots.len() == n + p + 1 && knots.windows(2).all(|w| w[1] >= w[0]) {
+        knots.to_vec()
     } else {
-        return Vec::new();
+        // clamped uniform knot vector
+        let inner = n - p;
+        (0..n + p + 1)
+            .map(|i| {
+                if i <= p {
+                    0.0
+                } else if i >= n {
+                    1.0
+                } else {
+                    (i - p) as f64 / inner as f64
+                }
+            })
+            .collect()
     };
+    let rational = weights.len() == n && weights.iter().any(|w| (*w - 1.0).abs() > 1e-12);
+    // homogeneous control points
+    let hom: Vec<[f64; 4]> = control_points
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let w = if rational && weights[i] > 0.0 { weights[i] } else { 1.0 };
+            [c.x * w, c.y * w, c.z * w, w]
+        })
+        .collect();
+    let eval = |u: f64, k: usize| -> Vector3 {
+        let mut d: Vec<[f64; 4]> = (0..=p).map(|j| hom[j + k - p]).collect();
+        for r in 1..=p {
+            for j in (r..=p).rev() {
+                let i = j + k - p;
+                let denom = knots[i + p + 1 - r] - knots[i];
+                let alpha = if denom.abs() < 1e-15 { 0.0 } else { (u - knots[i]) / denom };
+                let (prev, cur) = (d[j - 1], d[j]);
+                d[j] = std::array::from_fn(|c| (1.0 - alpha) * prev[c] + alpha * cur[c]);
+            }
+        }
+        let w = if d[p][3].abs() < 1e-15 { 1.0 } else { d[p][3] };
+        Vector3::new(d[p][0] / w, d[p][1] / w, d[p][2] / w)
+    };
+    let segments = segments.max(1);
+    let mut points = Vec::new();
+    for k in p..n {
+        let (u0, u1) = (knots[k], knots[k + 1]);
+        if u1 - u0 <= 1e-15 {
+            continue;
+        }
+        let first = if points.is_empty() { 0 } else { 1 };
+        for s in first..=segments {
+            let u = u0 + (u1 - u0) * s as f64 / segments as f64;
+            points.push(eval(u, k));
+        }
+    }
+    if points.is_empty() {
+        return control_points.to_vec();
+    }
+    points
+}
 
+/// Points along a spline entity: the NURBS curve when control points are
+/// present, otherwise the fit points.
+pub(crate) fn spline_points(spline: &Spline) -> Vec<Vector3> {
+    if spline.control_points.len() >= 2 {
+        let degree = usize::try_from(spline.degree).unwrap_or(3).max(1);
+        let mut points = nurbs_points(degree, &spline.control_points, &spline.weights, &spline.knots, 16);
+        if spline.flags.closed && points.len() > 2 && points[0] != points[points.len() - 1] {
+            points.push(points[0]);
+        }
+        points
+    } else {
+        let mut points = spline.fit_points.clone();
+        if spline.flags.closed && points.len() > 2 {
+            points.push(points[0]);
+        }
+        points
+    }
+}
+
+fn explode_spline(spline: &Spline) -> Vec<EntityType> {
+    // Approximate the curve by line segments between points on the NURBS curve.
+    let points = spline_points(spline);
     if points.len() < 2 {
         return Vec::new();
     }
+    points
+        .windows(2)
+        .filter(|pair| pair[0] != pair[1])
+        .map(|pair| line_entity(pair[0], pair[1], 0.0, spline.normal, &spline.common))
+        .collect()
+}
 
-    let mut result = Vec::with_capacity(points.len() - 1);
-    for pair in points.windows(2) {
-        result.push(line_entity(
-            pair[0],
-            pair[1],
-            0.0,
-            spline.normal,
-            &spline.common,
-        ));
+/// Wraps one paragraph at `width` using an average character width.
+fn wrap_paragraph(text: &str, width: f64, char_width: f64) -> Vec<String> {
+    if width <= 0.0 || char_width <= 0.0 {
+        return vec![text.to_string()];
     }
-
-    if spline.flags.closed && points.len() > 2 {
-        result.push(line_entity(
-            *points.last().unwrap(),
-            points[0],
-            0.0,
-            spline.normal,
-            &spline.common,
-        ));
+    let max_chars = ((width / char_width).floor() as usize).max(1);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split(' ') {
+        let candidate = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
+        if candidate.chars().count() > max_chars && !line.is_empty() {
+            lines.push(std::mem::take(&mut line));
+            line = word.to_string();
+        } else {
+            line = candidate;
+        }
     }
-
-    result
+    lines.push(line);
+    lines
 }
 
 fn explode_mtext(mtext: &MText) -> Vec<EntityType> {
-    // Decompose MText into a single-line Text entity.
-    let text = Text {
-        common: inherit_common(&mtext.common),
-        value: mtext.value.clone(),
-        insertion_point: mtext.insertion_point,
-        alignment_point: None,
-        height: mtext.height,
-        rotation: mtext.rotation,
-        width_factor: 1.0,
-        oblique_angle: 0.0,
-        style: mtext.style.clone(),
-        horizontal_alignment: TextHorizontalAlignment::Left,
-        vertical_alignment: TextVerticalAlignment::Baseline,
-        normal: mtext.normal,
-        thickness: 0.0,
-        generation_flags: 0,
+    // One TEXT per line: formatting codes removed, paragraphs and (approximate)
+    // word wrapping at the reference rectangle width, aligned by the attachment point.
+    let plain = super::mtext_format::parse_mtext(&mtext.value, true).to_plain_text();
+    let height = if mtext.height > 0.0 { mtext.height } else { 1.0 };
+    // average character width of typical CAD fonts
+    let char_width = height * 0.6;
+    let lines: Vec<String> = plain
+        .split('\n')
+        .flat_map(|paragraph| wrap_paragraph(paragraph, mtext.rectangle_width, char_width))
+        .collect();
+    let factor = if mtext.line_spacing_factor > 0.0 { mtext.line_spacing_factor } else { 1.0 };
+    let spacing = height * 5.0 / 3.0 * factor;
+    let total = height + spacing * (lines.len().saturating_sub(1)) as f64;
+    let attachment = mtext.attachment_point as i32;
+    let column = (attachment - 1).rem_euclid(3);
+    let row = (attachment - 1).div_euclid(3).clamp(0, 2);
+    // baseline of the first line, measured from the insertion point (y up)
+    let first = match row {
+        0 => -height,
+        1 => -height + total / 2.0,
+        _ => -height + total,
     };
-    vec![EntityType::Text(text)]
+    let rotation = match mtext.dwg_x_direction {
+        Some(d) if d.x.abs() + d.y.abs() > 1e-12 => d.y.atan2(d.x),
+        _ => mtext.rotation,
+    };
+    let (sin, cos) = rotation.sin_cos();
+    let horizontal = match column {
+        0 => TextHorizontalAlignment::Left,
+        1 => TextHorizontalAlignment::Center,
+        _ => TextHorizontalAlignment::Right,
+    };
+    lines
+        .into_iter()
+        .enumerate()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .map(|(i, line)| {
+            let y = first - spacing * i as f64;
+            let point = Vector3::new(
+                mtext.insertion_point.x - y * sin,
+                mtext.insertion_point.y + y * cos,
+                mtext.insertion_point.z,
+            );
+            EntityType::Text(Text {
+                common: inherit_common(&mtext.common),
+                value: line,
+                insertion_point: point,
+                alignment_point: (column != 0).then_some(point),
+                height,
+                rotation,
+                width_factor: 1.0,
+                oblique_angle: 0.0,
+                style: mtext.style.clone(),
+                horizontal_alignment: horizontal,
+                vertical_alignment: TextVerticalAlignment::Baseline,
+                normal: mtext.normal,
+                thickness: 0.0,
+                generation_flags: 0,
+            })
+        })
+        .collect()
 }
 
 fn explode_leader(leader: &Leader) -> Vec<EntityType> {
@@ -1450,10 +1584,32 @@ mod tests {
         match &parts[0] {
             EntityType::Text(t) => {
                 assert_eq!(t.value, "Hello World");
-                assert_eq!(t.insertion_point, Vector3::new(5.0, 5.0, 0.0));
+                // default attachment is top left: the baseline lies one text height below
+                assert_eq!(t.insertion_point, Vector3::new(5.0, 5.0 - t.height, 0.0));
             }
             _ => panic!("Expected Text from MText explosion"),
         }
+    }
+
+    #[test]
+    fn test_explode_mtext_paragraphs_and_formatting() {
+        let mut mtext = MText::with_value("{\\fArial|b1;Line 1}\\PLine 2", Vector3::new(0.0, 0.0, 0.0));
+        mtext.height = 2.0;
+        let parts = EntityType::MText(Box::new(mtext)).explode();
+        let values: Vec<&str> = parts
+            .iter()
+            .map(|p| match p {
+                EntityType::Text(t) => t.value.as_str(),
+                _ => panic!("Expected Text"),
+            })
+            .collect();
+        assert_eq!(values, ["Line 1", "Line 2"]);
+        // second line one line spacing (5/3 of the height) lower
+        let y = |i: usize| match &parts[i] {
+            EntityType::Text(t) => t.insertion_point.y,
+            _ => unreachable!(),
+        };
+        assert!((y(0) - y(1) - 2.0 * 5.0 / 3.0).abs() < 1e-9);
     }
 
     #[test]
@@ -1509,8 +1665,31 @@ mod tests {
         let spline = Spline::from_control_points(3, pts);
         let entity = EntityType::Spline(spline);
         let parts = entity.explode();
-        assert_eq!(parts.len(), 3); // 3 line segments from 4 control points
-        assert!(matches!(&parts[0], EntityType::Line(_)));
+        // one clamped cubic span sampled with 16 segments
+        assert_eq!(parts.len(), 16);
+        let ends: Vec<(Vector3, Vector3)> = parts
+            .iter()
+            .map(|p| match p {
+                EntityType::Line(l) => (l.start, l.end),
+                _ => panic!("Expected Line"),
+            })
+            .collect();
+        // the curve, not the control polygon: starts/ends at the end points
+        // and passes through the Bezier midpoint (5, 7.5)
+        assert_eq!(ends[0].0, Vector3::new(0.0, 0.0, 0.0));
+        assert!((ends[15].1 - Vector3::new(10.0, 0.0, 0.0)).length() < 1e-9);
+        assert!((ends[7].1 - Vector3::new(5.0, 7.5, 0.0)).length() < 1e-9);
+    }
+
+    #[test]
+    fn test_nurbs_rational_quarter_circle() {
+        // quadratic rational Bezier with weights 1, sqrt(2)/2, 1 is an exact quarter circle
+        let pts = [Vector3::new(1.0, 0.0, 0.0), Vector3::new(1.0, 1.0, 0.0), Vector3::new(0.0, 1.0, 0.0)];
+        let w = [1.0, std::f64::consts::FRAC_1_SQRT_2, 1.0];
+        let knots = [0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        for p in nurbs_points(2, &pts, &w, &knots, 8) {
+            assert!((p.length() - 1.0).abs() < 1e-12);
+        }
     }
 
     #[test]

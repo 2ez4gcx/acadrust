@@ -1,13 +1,14 @@
 use super::*;
 
-fn record(kind: &str, pairs: &[(i32, &str)]) -> EntityRecord {
+pub(super) fn record(kind: &str, pairs: &[(i32, &str)]) -> EntityRecord {
     EntityRecord {
         kind: kind.into(),
         pairs: pairs.iter().map(|(c, v)| (*c, (*v).into())).collect(),
+        ..EntityRecord::default()
     }
 }
 
-fn fixture(
+pub(super) fn fixture(
     seed: u64,
     tables: &[Vec<EntityRecord>; 10],
     entities: &[EntityRecord],
@@ -118,7 +119,7 @@ fn handleless_text_matches_independent_autocad_imports() {
             )
         })
         .collect::<Vec<_>>();
-    let doc = read_document(&fixture(0, &tables, &entities, &[]), None).unwrap();
+    let doc = read_document(&fixture(0, &tables, &entities, &[]), None, None).unwrap();
     let handles = doc
         .entities()
         .filter(|e| matches!(e, crate::EntityType::Text(_)))
@@ -234,7 +235,7 @@ fn stored_compound_handles_and_owners_survive_import() {
         ),
         record("SEQEND", &[(5, "22"), (8, "0")]),
     ];
-    let doc = read_document(&fixture(0x1000, &tables, &entities, &blocks), None).unwrap();
+    let doc = read_document(&fixture(0x1000, &tables, &entities, &blocks), None, None).unwrap();
     let part = doc.block_records.get("PART").unwrap();
     assert_eq!(part.handle.value(), 0x1072);
     assert_eq!(part.block_entity_handle.value(), 0x11);
@@ -261,10 +262,15 @@ fn stored_compound_handles_and_owners_survive_import() {
 #[test]
 fn import_handle_overflow_is_rejected() {
     let mut tables = std::array::from_fn(|_| Vec::new());
-    assert!(
-        import_handles::ImportHandles::assign(u64::MAX, &mut tables, &mut [], &mut [], None)
-            .is_err()
-    );
+    assert!(import_handles::ImportHandles::assign(
+        u64::MAX,
+        &mut tables,
+        &mut [],
+        &mut [],
+        None,
+        None
+    )
+    .is_err());
 }
 
 #[test]
@@ -289,8 +295,12 @@ fn legacy_header_indices_resolve_to_imported_table_handles() {
             linetype_index: index,
             ..Default::default()
         };
-        let doc =
-            read_document(&fixture_with_references(0, &tables, &[], &[], refs), None).unwrap();
+        let doc = read_document(
+            &fixture_with_references(0, &tables, &[], &[], refs),
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(
             doc.header.current_layer_handle,
             doc.layers.get("WORK").unwrap().handle

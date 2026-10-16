@@ -621,24 +621,45 @@ pub struct AssocPersistentSubentId {
     pub leading_flag: bool,
 }
 
-const PERS_SUBENT_CLASSES: [(i32, &str); 2] = [
-    (1, "AcDbAssocSingleEdgePersSubentId"),
-    (5, "AcDbAssocAsmBasedEntityPersSubentId"),
+/// Subentity id classes: R2013+ DWG class code, class name and the number of
+/// class fields (a BS class version, then BL indexes; DXF writes each as a
+/// 90). `None` marks classes whose fields are not known.
+const PERS_SUBENT_CLASSES: [(i32, &str, Option<usize>); 3] = [
+    (1, "AcDbAssocSingleEdgePersSubentId", Some(0)),
+    (3, "AcDbAssocEdgePersSubentId", Some(3)),
+    (5, "AcDbAssocAsmBasedEntityPersSubentId", None),
 ];
 
 impl AssocPersistentSubentId {
     pub fn class_name_for_code(code: i32) -> Option<&'static str> {
         PERS_SUBENT_CLASSES
             .iter()
-            .find(|(value, _)| *value == code)
-            .map(|(_, name)| *name)
+            .find(|(value, ..)| *value == code)
+            .map(|(_, name, _)| *name)
     }
 
     pub fn code_for_class_name(name: &str) -> Option<i32> {
         PERS_SUBENT_CLASSES
             .iter()
-            .find(|(_, value)| value.eq_ignore_ascii_case(name))
-            .map(|(code, _)| *code)
+            .find(|(_, value, _)| value.eq_ignore_ascii_case(name))
+            .map(|(code, ..)| *code)
+    }
+
+    /// Number of fields the named class stores, if its layout is known.
+    pub fn field_count_for_class_name(name: &str) -> Option<usize> {
+        PERS_SUBENT_CLASSES
+            .iter()
+            .find(|(_, value, _)| value.eq_ignore_ascii_case(name))
+            .and_then(|(.., count)| *count)
+    }
+
+    /// The class name, falling back to the name registered for the code.
+    pub fn resolved_class_name(&self) -> &str {
+        if self.class_name.is_empty() {
+            Self::class_name_for_code(self.class_code).unwrap_or_default()
+        } else {
+            &self.class_name
+        }
     }
 }
 
