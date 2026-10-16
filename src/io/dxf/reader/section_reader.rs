@@ -15035,6 +15035,8 @@ impl<'a> SectionReader<'a> {
                 70 if current_subclass == "AcDbDimension" => {
                     let flags = pair.as_i16().unwrap_or(0);
                     base.text_user_positioned = (flags & 0x80) != 0;
+                    base.dwg_flags_byte = (base.dwg_flags_byte & !0x01)
+                        | u8::from(!base.text_user_positioned);
                 }
                 71 if current_subclass == "AcDbArcDimension" => {
                     has_leader = pair.as_i16().unwrap_or(0) != 0
