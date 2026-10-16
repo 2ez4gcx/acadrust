@@ -123,7 +123,7 @@ pub(crate) fn encode_values_with_encoding(
 /// resolves a layer table handle back to its name. Returns `None` if the bytes
 /// contain an unknown item code or are truncated mid-item, so the caller can
 /// keep the verbatim `raw_dwg_eed` blob instead of a partial record.
-pub(crate) fn decode_values(
+pub fn decode_values(
     bytes: &[u8],
     wide: bool,
     layer_name: impl Fn(u64) -> Option<String>,
