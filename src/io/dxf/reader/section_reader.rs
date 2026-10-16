@@ -163,21 +163,18 @@ fn take_dgn_property(
     Some(properties.remove(index).value)
 }
 
+/// One pass over the properties: removing matches one by one is quadratic,
+/// and a stroke pattern can carry a million values.
 fn take_all_dgn_properties(
     properties: &mut Vec<SemanticProperty>,
     subclass: &str,
     code: i32,
-) -> Vec<SemanticPropertyValue> {
-    let mut result = Vec::new();
-    let mut index = 0;
-    while index < properties.len() {
-        if properties[index].subclass == subclass && properties[index].code == code {
-            result.push(properties.remove(index).value);
-        } else {
-            index += 1;
-        }
-    }
-    result
+) -> std::collections::VecDeque<SemanticPropertyValue> {
+    let (taken, kept): (Vec<_>, Vec<_>) = std::mem::take(properties)
+        .into_iter()
+        .partition(|property| property.subclass == subclass && property.code == code);
+    *properties = kept;
+    taken.into_iter().map(|property| property.value).collect()
 }
 
 fn dgn_i32(value: Option<SemanticPropertyValue>, default: i32) -> i32 {
@@ -270,12 +267,10 @@ fn read_dgn_stroke_pattern_dxf(
     }
 }
 
-fn take_first(values: &mut Vec<SemanticPropertyValue>) -> Option<SemanticPropertyValue> {
-    if values.is_empty() {
-        None
-    } else {
-        Some(values.remove(0))
-    }
+fn take_first(
+    values: &mut std::collections::VecDeque<SemanticPropertyValue>,
+) -> Option<SemanticPropertyValue> {
+    values.pop_front()
 }
 
 fn field_next_code<'a>(
