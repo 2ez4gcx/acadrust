@@ -2345,11 +2345,12 @@ impl<'a> DwgObjectWriter<'a> {
         // Elevation BD 11 Z-coord
         self.writer.write_bit_double(base.text_middle_point.z);
 
-        // Flags byte — bit 0: text positioned at a user-defined location.
+        // Flags byte — bit 0 is set when the text sits at its default place,
+        // the opposite of DXF group 70 bit 128.
         let flags_byte = if base.text_user_positioned {
-            base.dwg_flags_byte | 0x01
-        } else {
             base.dwg_flags_byte & !0x01
+        } else {
+            base.dwg_flags_byte | 0x01
         };
         self.writer.write_byte(flags_byte);
 
