@@ -3084,14 +3084,22 @@ impl SatDocument {
     /// errors in the ACIS kernel when encountered in SAB binary data.
     ///
     /// This method removes all non-core entities and remaps pointer
-    /// references in the remaining records.
+    /// references in the remaining records. Face and edge colour attributes
+    /// stay: the modeler's own binary data carries them, and they are what
+    /// gives a face a colour of its own.
     pub fn strip_for_sab(&mut self) {
         // Determine which records to keep.
         // Core ACIS base types (last segment after hyphen split):
         let keep: Vec<bool> = self
             .records
             .iter()
-            .map(|r| Self::is_core_geometry_type(&r.entity_type))
+            .map(|r| {
+                Self::is_core_geometry_type(&r.entity_type)
+                    || matches!(
+                        r.entity_type.as_str(),
+                        "color-adesk-attrib" | "truecolor-adesk-attrib"
+                    )
+            })
             .collect();
 
         let kept_count = keep.iter().filter(|&&k| k).count();
@@ -3129,7 +3137,7 @@ impl SatDocument {
             let mut rec = record;
             rec.index = index_map[old_idx];
 
-            // Remap attribute pointer — always null since all attribs are stripped
+            // Remap the attribute pointer: null unless a kept attribute heads it.
             rec.attribute = SatPointer::new(remap(rec.attribute.0));
 
             // Remap all pointer tokens
