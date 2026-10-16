@@ -1222,7 +1222,6 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_i16(62, -color_index)?;
         // True color (code 420) for an RGB layer — code 62 above carries only
         // its nearest index, so without this the RGB is lost on save and the reader (which
-        // 7 for it, so without this the RGB is lost on save and the reader (which
         // now honours 420) round-trips the layer to Index(7)/white. (#223)
         if let Some(tc) = layer.color.to_true_color_value() {
             self.writer.write_i32(420, tc)?;
