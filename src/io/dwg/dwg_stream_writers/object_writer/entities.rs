@@ -5092,16 +5092,8 @@ impl<'a> DwgObjectWriter<'a> {
 
         // SAB binary path already wrote trailing fields; skip for SAT/empty.
         if !tail_written {
-            // AcDs-backed R2013+ bodies have no trailing acis-empty bit when
-            // the wireframe flag is false. The next field is the R2007
-            // unknown BL.
-            self.writer.write_bit_long(0);
-
-            // R2013+: modeler-geometry revision block (COMMON_3DSOLID).
-            // Empty / SAT bodies carry no materials block (materials only
-            // follow binary SAB, handled on the early-return path). Omitting
-            // this block corrupts the entity stream for R2013+ and prevents
-            // the file from opening in AutoCAD/TrueView/BricsCAD.
+            // AcDs relocates the geometry, but material bindings remain inline.
+            self.write_acis_materials(&e.acis_data, false);
             if self.version.r2013_plus(self.dxf_version) {
                 self.write_acis_revision(&e.acis_data.revision);
             }
@@ -5131,13 +5123,7 @@ impl<'a> DwgObjectWriter<'a> {
 
         // SAB binary path already wrote trailing fields; skip for SAT/empty.
         if !tail_written {
-            self.writer.write_bit_long(0);
-
-            // R2013+: modeler-geometry revision block (COMMON_3DSOLID).
-            // Empty / SAT bodies carry no materials block (materials only
-            // follow binary SAB, handled on the early-return path). Omitting
-            // this block corrupts the entity stream for R2013+ and prevents
-            // the file from opening in AutoCAD/TrueView/BricsCAD.
+            self.write_acis_materials(&e.acis_data, false);
             if self.version.r2013_plus(self.dxf_version) {
                 self.write_acis_revision(&e.acis_data.revision);
             }
@@ -5167,13 +5153,7 @@ impl<'a> DwgObjectWriter<'a> {
 
         // SAB binary path already wrote trailing fields; skip for SAT/empty.
         if !tail_written {
-            self.writer.write_bit_long(0);
-
-            // R2013+: modeler-geometry revision block (COMMON_3DSOLID).
-            // Empty / SAT bodies carry no materials block (materials only
-            // follow binary SAB, handled on the early-return path). Omitting
-            // this block corrupts the entity stream for R2013+ and prevents
-            // the file from opening in AutoCAD/TrueView/BricsCAD.
+            self.write_acis_materials(&e.acis_data, false);
             if self.version.r2013_plus(self.dxf_version) {
                 self.write_acis_revision(&e.acis_data.revision);
             }
@@ -5269,7 +5249,7 @@ impl<'a> DwgObjectWriter<'a> {
             self.write_acis_data(e.point_of_reference, &e.acis_data, &e.wires, &e.silhouettes)
         };
         if !tail_written {
-            self.writer.write_bit_long(0);
+            self.write_acis_materials(&e.acis_data, false);
             if self.version.r2013_plus(self.dxf_version) {
                 self.write_acis_revision(&e.acis_data.revision);
             }
@@ -5443,8 +5423,8 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit(acis.wireframe_isoline_present);
         if acis.wireframe_isoline_present {
             self.writer.write_bit_long(0); // wires
+            self.writer.write_bit_long(0); // silhouettes
         }
-        self.writer.write_bit_long(0); // silhouettes
         // COMMON_3DSOLID has an extra-modeler-data gate only when the
         // AcDs-backed entity contains a wireframe section.
         self.writer.write_bit(acis.extra_acis_data.is_none());
@@ -5761,7 +5741,8 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_3bit_double(anchor);
             }
             self.writer.write_bit_long(acis.wireframe_isolines);
-            let isoline_present = acis.wireframe_isoline_present || !wires.is_empty();
+            let isoline_present =
+                acis.wireframe_isoline_present || !wires.is_empty() || !silhouettes.is_empty();
             self.writer.write_bit(isoline_present);
 
             if isoline_present {
@@ -5769,27 +5750,27 @@ impl<'a> DwgObjectWriter<'a> {
                 for wire in wires {
                     self.write_wire(wire);
                 }
-            }
 
-            self.writer.write_bit_long(silhouettes.len() as i32);
-            for sil in silhouettes {
-                if self.version.r2010_plus() {
-                    self.writer.write_bit_long_long(sil.viewport_id);
-                } else {
-                    self.writer.write_bit_long(sil.viewport_id as i32);
-                }
-                self.writer.write_3bit_double(sil.target);
-                self.writer.write_3bit_double(sil.view_direction);
-                self.writer.write_3bit_double(sil.up_vector);
-                self.writer.write_bit(sil.is_perspective);
-                let has_wires = sil.has_wires || !sil.wires.is_empty();
-                self.writer.write_bit(has_wires);
-                if !has_wires {
-                    continue;
-                }
-                self.writer.write_bit_long(sil.wires.len() as i32);
-                for wire in &sil.wires {
-                    self.write_wire(wire);
+                self.writer.write_bit_long(silhouettes.len() as i32);
+                for sil in silhouettes {
+                    if self.version.r2010_plus() {
+                        self.writer.write_bit_long_long(sil.viewport_id);
+                    } else {
+                        self.writer.write_bit_long(sil.viewport_id as i32);
+                    }
+                    self.writer.write_3bit_double(sil.target);
+                    self.writer.write_3bit_double(sil.view_direction);
+                    self.writer.write_3bit_double(sil.up_vector);
+                    self.writer.write_bit(sil.is_perspective);
+                    let has_wires = sil.has_wires || !sil.wires.is_empty();
+                    self.writer.write_bit(has_wires);
+                    if !has_wires {
+                        continue;
+                    }
+                    self.writer.write_bit_long(sil.wires.len() as i32);
+                    for wire in &sil.wires {
+                        self.write_wire(wire);
+                    }
                 }
             }
         }

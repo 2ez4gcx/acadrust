@@ -5411,53 +5411,54 @@ fn read_acis_entity_impl(
             for _ in 0..num_wires {
                 wires.push(read_wire(reader));
             }
-        }
 
-        // Silhouettes belong to the wireframe body, but are independent of
-        // the isoline-data gate above.
-        let num_silhouettes = safe_count(reader.read_bit_long(), reader);
-        for _ in 0..num_silhouettes {
-            // Native R2010+ silhouettes store a BLL viewport identity.
-            // Earlier records use BL, including compact zero identities.
-            let viewport_id = if version.r2010_plus() {
-                reader.read_bit_long_long()
-            } else {
-                i64::from(reader.read_bit_long())
-            };
-            let target = reader.read_3bit_double();
-            let view_direction = reader.read_3bit_double();
-            let up_vector = reader.read_3bit_double();
-            let is_perspective = reader.read_bit();
-            let mut sil_wires = Vec::new();
-            let has_sil_wires = reader.read_bit();
-            if has_sil_wires {
-                let num_sw = safe_count(reader.read_bit_long(), reader);
-                sil_wires.reserve(num_sw as usize);
-                for _ in 0..num_sw {
-                    sil_wires.push(read_wire(reader));
+            // Both cache arrays are absent when isoline_present is false.
+            // Reading a count then consumes the extra-body or revision tail.
+            let num_silhouettes = safe_count(reader.read_bit_long(), reader);
+            for _ in 0..num_silhouettes {
+                // Native R2010+ silhouettes store a BLL viewport identity.
+                // Earlier records use BL, including compact zero identities.
+                let viewport_id = if version.r2010_plus() {
+                    reader.read_bit_long_long()
+                } else {
+                    i64::from(reader.read_bit_long())
+                };
+                let target = reader.read_3bit_double();
+                let view_direction = reader.read_3bit_double();
+                let up_vector = reader.read_3bit_double();
+                let is_perspective = reader.read_bit();
+                let mut sil_wires = Vec::new();
+                let has_sil_wires = reader.read_bit();
+                if has_sil_wires {
+                    let num_sw = safe_count(reader.read_bit_long(), reader);
+                    sil_wires.reserve(num_sw as usize);
+                    for _ in 0..num_sw {
+                        sil_wires.push(read_wire(reader));
+                    }
                 }
+                silhouettes.push(Silhouette {
+                    viewport_id,
+                    view_direction,
+                    up_vector,
+                    target,
+                    is_perspective,
+                    has_wires: has_sil_wires,
+                    wires: sil_wires,
+                });
             }
-            silhouettes.push(Silhouette {
-                viewport_id,
-                view_direction,
-                up_vector,
-                target,
-                is_perspective,
-                has_wires: has_sil_wires,
-                wires: sil_wires,
-            });
         }
     }
 
-    // The legacy inline layout always carries this bit. AcDs-backed R2013+
-    // records carry it only inside a present wireframe cache.
-    if inline_end.is_some() || wireframe_present || !version.r2013_plus(dxf_version) {
+    // Native pre-R2007 SAT records can end at an absent wireframe flag,
+    // without an extra-body gate. A present cache still requires its tail.
+    let has_extra_gate = inline_end.is_some()
+        || wireframe_present
+        || (!version.r2013_plus(dxf_version)
+            && (version.r2007_plus() || reader.main_remaining_bits() > 0));
+    if has_extra_gate {
         acis_empty_bit = reader.read_bit();
     }
-    let extra_acis_data = if allow_extra
-        && !acis_empty_bit
-        && (inline_end.is_some() || wireframe_present || !version.r2013_plus(dxf_version))
-    {
+    let extra_acis_data = if allow_extra && has_extra_gate && !acis_empty_bit {
         read_extra_acis_data(reader, inline_end)
     } else {
         None
@@ -5465,7 +5466,7 @@ fn read_acis_entity_impl(
 
     let mut materials = Vec::new();
     if version.r2007_plus() {
-        if acis_version > 1 && !has_ds_data {
+        if acis_version > 1 {
             let count = safe_count(reader.read_bit_long(), reader);
             materials.reserve(count as usize);
             for _ in 0..count {
@@ -5483,8 +5484,7 @@ fn read_acis_entity_impl(
                 });
             }
         } else {
-            // AcDs-backed R2013+ entities and version-1 bodies carry the
-            // legacy R2007 unknown BL here, not a materials array.
+            // Version-1 and empty bodies carry the legacy unknown BL.
             let _unknown_2007 = reader.read_bit_long();
         }
     }
