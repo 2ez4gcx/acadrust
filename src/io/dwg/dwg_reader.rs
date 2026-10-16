@@ -1319,6 +1319,19 @@ impl<R: Read + Seek> DwgReader<R> {
                         }
                         diagnostics.extend(build_outcome.diagnostics);
                         self.notifications.extend(build_outcome.notifications);
+                        if let Some(message) = build_outcome.fatal {
+                            if !failsafe {
+                                return Err(DxfError::Parse(message));
+                            }
+                            report_read_error(
+                                &mut self.notifications,
+                                &mut diagnostics,
+                                "record-decode-fatal",
+                                ReadStage::RecordStream,
+                                Some("AcDb:AcDbObjects"),
+                                message,
+                            );
+                        }
                     },
                     Err(e) => report_read_error(
                         &mut self.notifications,

@@ -5832,6 +5832,8 @@ pub fn read_surface(
 fn read_wire(reader: &mut DwgMergedReader) -> Wire {
     let wire_type_raw = reader.read_byte();
     let selection_marker = reader.read_bit_long();
+    // Wire colors remain BS in R2004+; BL consumes the next field's bits
+    // for the full-width ByLayer value (256) and shifts point counts.
     let color_val = reader.read_bit_short();
     let acis_index = reader.read_bit_long();
     let num_pts = safe_count(reader.read_bit_long(), reader);

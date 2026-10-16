@@ -530,6 +530,22 @@ impl DwgMergedReader {
         }
     }
 
+    /// Read a handle reference, returning `None` when a present handle's
+    /// value bytes run past the end of the stream (separate R2007+ handle
+    /// stream or the main stream for older versions), so callers can reject
+    /// a present but truncated handle prefix.
+    pub fn try_read_handle(&mut self) -> Option<u64> {
+        let mut ref_type = crate::io::dwg::dwg_reference_type::DwgReferenceType::SoftOwnership;
+        match &mut self.handle {
+            Some(handle_reader) => {
+                handle_reader.try_read_handle_reference(self.ref_handle, &mut ref_type)
+            }
+            None => self
+                .main
+                .try_read_handle_reference(self.ref_handle, &mut ref_type),
+        }
+    }
+
     pub fn handle_remaining_bits(&self) -> i64 {
         if self.has_error() {
             return 0;
