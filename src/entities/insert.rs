@@ -309,6 +309,8 @@ impl Insert {
     /// - `LineWeight::ByBlock` inherits the Insert's line weight.
     /// - Empty/ByLayer linetype with ByBlock semantic: not changed (already
     ///   resolved to ByLayer at the entity level).
+    /// - Transparency `ByBlock` inherits the Insert's transparency.
+    /// - Linetype `ByBlock` inherits the Insert's linetype (name + handle).
     fn resolve_properties(&self, common: &mut EntityCommon) {
         // Layer "0" → inherit insert's layer
         if common.layer == "0" {
@@ -321,6 +323,17 @@ impl Insert {
         // LineWeight ByBlock → inherit insert's line weight
         if common.line_weight == LineWeight::ByBlock {
             common.line_weight = self.common.line_weight;
+        }
+        // Transparency ByBlock → inherit the insert's transparency
+        if common.transparency.is_by_block() {
+            common.transparency = self.common.transparency;
+        }
+        // Linetype ByBlock → inherit the insert's linetype. The name and
+        // handle move; the entity keeps its own linetype scale, which is a
+        // separate property of the resulting entity.
+        if common.linetype.eq_ignore_ascii_case("byblock") {
+            common.linetype = self.common.linetype.clone();
+            common.linetype_handle = self.common.linetype_handle;
         }
     }
 
@@ -342,6 +355,8 @@ impl Insert {
     /// - Entities on layer `"0"` → inherit the Insert's layer.
     /// - `Color::ByBlock` → inherit the Insert's color.
     /// - `LineWeight::ByBlock` → inherit the Insert's line weight.
+    /// - `Transparency::ByBlock` → inherits the Insert's transparency.
+    /// - Linetype `ByBlock` → inherits the Insert's linetype (name + handle).
     ///
     /// **MINSERT arrays**: When `column_count > 1` or `row_count > 1`,
     /// a full copy of every entity is produced at each array position.
@@ -1134,6 +1149,87 @@ mod tests {
 
         // Green stays — NOT replaced
         assert_eq!(result[0].common().color, Color::from_index(3));
+    }
+
+    #[test]
+    fn explode_byblock_transparency_inherits_insert_transparency() {
+        let mut line = Line::from_points(Vector3::ZERO, Vector3::new(1.0, 0.0, 0.0));
+        line.common.transparency = Transparency::ByBlock;
+        let block_entities = vec![EntityType::Line(line)];
+
+        let mut insert = Insert::new("B", Vector3::ZERO);
+        insert.common.transparency = Transparency::new(96);
+        let result = insert.explode(&block_entities);
+
+        assert_eq!(result[0].common().transparency, Transparency::new(96));
+    }
+
+    #[test]
+    fn explode_byblock_linetype_inherits_insert_linetype() {
+        let mut line = Line::from_points(Vector3::ZERO, Vector3::new(1.0, 0.0, 0.0));
+        line.common.linetype = "ByBlock".to_string();
+        let block_entities = vec![EntityType::Line(line)];
+
+        let mut insert = Insert::new("B", Vector3::ZERO);
+        insert.common.linetype = "DASHED".to_string();
+        let result = insert.explode(&block_entities);
+
+        assert_eq!(result[0].common().linetype, "DASHED");
+    }
+
+    #[test]
+    fn explode_byblock_linetype_matches_name_case_insensitively() {
+        let mut line = Line::from_points(Vector3::ZERO, Vector3::new(1.0, 0.0, 0.0));
+        line.common.linetype = "byblock".to_string();
+        let block_entities = vec![EntityType::Line(line)];
+
+        let mut insert = Insert::new("B", Vector3::ZERO);
+        insert.common.linetype = "DASHED".to_string();
+        let result = insert.explode(&block_entities);
+
+        assert_eq!(result[0].common().linetype, "DASHED");
+    }
+
+    #[test]
+    fn explode_byblock_linetype_keeps_the_entities_own_scale() {
+        let mut line = Line::from_points(Vector3::ZERO, Vector3::new(1.0, 0.0, 0.0));
+        line.common.linetype = "ByBlock".to_string();
+        line.common.linetype_scale = 2.0;
+        let block_entities = vec![EntityType::Line(line)];
+
+        let mut insert = Insert::new("B", Vector3::ZERO);
+        insert.common.linetype = "DASHED".to_string();
+        insert.common.linetype_scale = 0.5;
+        let result = insert.explode(&block_entities);
+
+        assert_eq!(result[0].common().linetype, "DASHED");
+        assert_eq!(result[0].common().linetype_scale, 2.0);
+    }
+
+    #[test]
+    fn explode_non_byblock_transparency_preserved() {
+        let mut line = Line::from_points(Vector3::ZERO, Vector3::new(1.0, 0.0, 0.0));
+        line.common.transparency = Transparency::new(25);
+        let block_entities = vec![EntityType::Line(line)];
+
+        let mut insert = Insert::new("B", Vector3::ZERO);
+        insert.common.transparency = Transparency::new(96);
+        let result = insert.explode(&block_entities);
+
+        assert_eq!(result[0].common().transparency, Transparency::new(25));
+    }
+
+    #[test]
+    fn explode_non_byblock_linetype_preserved() {
+        let mut line = Line::from_points(Vector3::ZERO, Vector3::new(1.0, 0.0, 0.0));
+        line.common.linetype = "CONTINUOUS".to_string();
+        let block_entities = vec![EntityType::Line(line)];
+
+        let mut insert = Insert::new("B", Vector3::ZERO);
+        insert.common.linetype = "DASHED".to_string();
+        let result = insert.explode(&block_entities);
+
+        assert_eq!(result[0].common().linetype, "CONTINUOUS");
     }
 
     // ── MINSERT array ───────────────────────────────────────────

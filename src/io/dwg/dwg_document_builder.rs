@@ -8165,8 +8165,9 @@ fn map_dimension_common(
     base.normal = common.normal;
     base.text_middle_point = common.text_middle_point;
     base.dwg_flags_byte = common.flags_byte;
-    // Flags byte bit 0: dimension text positioned at a user-defined location.
-    base.text_user_positioned = (common.flags_byte & 0x01) != 0;
+    // Flags byte bit 0 is set when the text sits at its default place, the
+    // opposite of DXF group 70 bit 128.
+    base.text_user_positioned = (common.flags_byte & 0x01) == 0;
     base.text = common.text.clone();
     base.text_rotation = common.text_rotation;
     base.horizontal_direction = common.horizontal_direction;

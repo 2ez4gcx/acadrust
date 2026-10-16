@@ -92,8 +92,9 @@ pub struct DimensionBase {
     pub flip_arrow1: bool,
     /// Flip the second dimension arrow.
     pub flip_arrow2: bool,
-    /// Complete DWG dimension flag byte. Bit zero mirrors
-    /// [`text_user_positioned`](Self::text_user_positioned).
+    /// Complete DWG dimension flag byte. Bit zero is the inverse of
+    /// [`text_user_positioned`](Self::text_user_positioned): set when the
+    /// text sits at its default place.
     pub dwg_flags_byte: u8,
     /// Dimension text was positioned at a user-defined location rather than at
     /// the style's default (DXF group 70, bit 0x80). When false the text
@@ -128,7 +129,8 @@ impl DimensionBase {
             dwg_unknown_bit: false,
             flip_arrow1: false,
             flip_arrow2: false,
-            dwg_flags_byte: 0,
+            // Bit 0 set: the text sits at its default place.
+            dwg_flags_byte: 0x01,
             text_user_positioned: false,
         }
     }
