@@ -937,10 +937,20 @@ impl<'a> DwgObjectWriter<'a> {
         // Verbatim blobs captured on read. Dropped on a cross-version save whose
         // string encoding family differs (they'd garble); freshly-encoded
         // records below are always emitted in the target version's encoding.
-        let raw_blocks: &[(u64, Vec<u8>)] = if eed_compatible {
-            &xdata.raw_dwg_eed
+        // A block names its application by APPID handle. One carried over
+        // from another drawing names a handle that is no APPID here, and the
+        // reference program rejects the whole file (eInvalidInput); it is
+        // dropped instead.
+        let registered = |app: u64| self.document.app_ids.iter().any(|a| a.handle.value() == app);
+        let raw_blocks: Vec<(u64, Vec<u8>)> = if eed_compatible {
+            xdata
+                .raw_dwg_eed
+                .iter()
+                .filter(|(app, _)| registered(*app))
+                .cloned()
+                .collect()
         } else {
-            &[]
+            Vec::new()
         };
 
         // Encode structured records (e.g. plugin XDATA via write_record) into

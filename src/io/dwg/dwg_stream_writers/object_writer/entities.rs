@@ -68,7 +68,13 @@ impl<'a> DwgObjectWriter<'a> {
                 && !self.raw_excluded_handles.contains(&handle.value())
                 && !compound
                 && !(acis && self.version.r2013_plus(self.dxf_version))
-                && !self.owner_overrides.contains_key(&handle);
+                && !self.owner_overrides.contains_key(&handle)
+                // EED naming an application this drawing has no APPID for
+                // (carried in from another drawing) is dropped on the normal
+                // path; the verbatim record would keep it.
+                && entity.common().extended_data.raw_dwg_eed.iter().all(|(app, _)| {
+                    self.document.app_ids.iter().any(|a| a.handle.value() == *app)
+                });
             if ok {
                 self.register_raw_object(handle, &raw.data, raw.handle_bits);
                 return;
