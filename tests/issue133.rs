@@ -4,13 +4,13 @@
 use std::collections::{BTreeSet, HashMap};
 use std::io::Cursor;
 
-use opencadcodec::entities::{Dimension, DimensionLinear, EntityType, Line, MText, Solid};
-use opencadcodec::io::dwg::dwg_document_builder::DwgDocumentBuilder;
-use opencadcodec::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
-use opencadcodec::io::dwg::dwg_stream_writers::object_writer::DwgObjectWriter;
-use opencadcodec::tables::BlockRecord;
-use opencadcodec::types::{DxfVersion, Handle, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::entities::{Dimension, DimensionLinear, EntityType, Line, MText, Solid};
+use acadrust::io::dwg::dwg_document_builder::DwgDocumentBuilder;
+use acadrust::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+use acadrust::io::dwg::dwg_stream_writers::object_writer::DwgObjectWriter;
+use acadrust::tables::BlockRecord;
+use acadrust::types::{DxfVersion, Handle, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 const VERSIONS: [DxfVersion; 8] = [
     DxfVersion::AC1012,

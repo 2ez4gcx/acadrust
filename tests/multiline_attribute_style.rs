@@ -1,8 +1,8 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{AttributeDefinition, AttributeEntity, EntityType, Insert, MText};
-use opencadcodec::tables::TextStyle;
-use opencadcodec::{CadDocument, Color, DwgReader, DwgWriter, DxfVersion, Vector3};
+use acadrust::entities::{AttributeDefinition, AttributeEntity, EntityType, Insert, MText};
+use acadrust::tables::TextStyle;
+use acadrust::{CadDocument, Color, DwgReader, DwgWriter, DxfVersion, Vector3};
 
 #[test]
 fn multiline_attribute_and_definition_styles_survive_a_dwg_roundtrip() {
@@ -81,7 +81,7 @@ fn empty_multiline_values_override_stale_single_line_text() {
 
 #[test]
 fn legacy_multiline_tag_comes_from_the_roundtrip_record() {
-    use opencadcodec::objects::{XRecordEntry, XRecordValue};
+    use acadrust::objects::{XRecordEntry, XRecordValue};
     let mut doc = CadDocument::with_version(DxfVersion::AC1021);
     let handle = doc
         .add_entity(EntityType::AttributeDefinition(

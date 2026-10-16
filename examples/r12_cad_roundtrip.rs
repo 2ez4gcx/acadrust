@@ -1,6 +1,6 @@
 //! Inspect and resave the native AC1009 corpus created by the CAD scripts.
-use opencadcodec::io::dwg::r12::header::read_header;
-use opencadcodec::{DwgReader, DwgWriter, EntityType};
+use acadrust::io::dwg::r12::header::read_header;
+use acadrust::{DwgReader, DwgWriter, EntityType};
 use std::{collections::BTreeMap, fs, io::Cursor, path::PathBuf};
 
 fn main() -> anyhow::Result<()> {
@@ -73,7 +73,7 @@ fn main() -> anyhow::Result<()> {
             println!(" decoded={kinds:?}");
             fs::write(
                 output.join(format!("{name}{suffix}-rust.dxf")),
-                opencadcodec::DxfWriter::new(&document).write_to_vec()?,
+                acadrust::DxfWriter::new(&document).write_to_vec()?,
             )?;
             let saved = DwgWriter::write_to_vec(&document)?;
             anyhow::ensure!(

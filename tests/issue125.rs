@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Text};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, DxfWriter, Vector3};
+use acadrust::entities::{EntityType, Text};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, DxfWriter, Vector3};
 
 const VERSIONS: [DxfVersion; 9] = [
     DxfVersion::AC1009,

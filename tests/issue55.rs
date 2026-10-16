@@ -13,10 +13,10 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{Circle, EntityType, Line, Text};
-use opencadcodec::tables::Layer;
-use opencadcodec::types::{Color, DxfVersion, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::entities::{Circle, EntityType, Line, Text};
+use acadrust::tables::Layer;
+use acadrust::types::{Color, DxfVersion, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 fn sample_document() -> CadDocument {
     let mut doc = CadDocument::with_version(DxfVersion::AC1015);

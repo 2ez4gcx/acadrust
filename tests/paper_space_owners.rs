@@ -1,8 +1,8 @@
 //! Entities of a layout other than the active one keep their owner through
 //! DWG: only the active layout's *Paper_Space is implied by paper-space mode.
-use opencadcodec::entities::Line;
-use opencadcodec::types::Vector3;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, EntityType};
+use acadrust::entities::Line;
+use acadrust::types::Vector3;
+use acadrust::{CadDocument, DwgReader, DwgWriter, EntityType};
 use std::io::Cursor;
 
 #[test]

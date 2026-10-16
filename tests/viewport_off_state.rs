@@ -1,5 +1,5 @@
-use opencadcodec::entities::{Viewport, ViewportStatusFlags};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, EntityType};
+use acadrust::entities::{Viewport, ViewportStatusFlags};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, EntityType};
 use std::io::Cursor;
 
 const ON: i32 = 0x8000;

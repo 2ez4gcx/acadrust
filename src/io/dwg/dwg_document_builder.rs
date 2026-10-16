@@ -212,10 +212,6 @@ struct Pass2Output {
     view_rep_refs: HashMap<Handle, Vec<Handle>>,
     section_view_reps: Vec<Handle>,
     section_view_style: Option<crate::entities::SectionViewStyle>,
-    /// First fatal decode failure found while processing this chunk (e.g. a
-    /// present but truncated handle). Strict reads fail on it; failsafe reads
-    /// report it as an error notification.
-    fatal: Option<String>,
 }
 
 impl Pass2Output {
@@ -247,7 +243,6 @@ impl Pass2Output {
             view_rep_refs: HashMap::new(),
             section_view_reps: Vec::new(),
             section_view_style: None,
-            fatal: None,
         }
     }
 
@@ -343,10 +338,6 @@ pub struct DwgBuildOutcome {
     pub decoded_records: usize,
     pub skipped_records: usize,
     pub diagnostics: Vec<ReadDiagnostic>,
-    /// First fatal record-level decode failure, if any. Strict reads
-    /// (`failsafe` off) turn this into a hard error; failsafe reads keep it
-    /// as an error notification.
-    pub fatal: Option<String>,
 }
 
 /// Handle-to-name resolution maps built from table entries.
@@ -1318,8 +1309,11 @@ impl DwgDocumentBuilder {
                             if bytes.first() == Some(&71) && bytes.len() >= 5 {
                                 let raw =
                                     i32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
-                                layer.transparency =
-                                    crate::types::Transparency::from_layer_value(raw as u32);
+                                if let Some(transparency) =
+                                    crate::types::Transparency::from_layer_alpha_value(raw as u32)
+                                {
+                                    layer.transparency = transparency;
+                                }
                             }
                         }
                     }
@@ -1870,7 +1864,6 @@ impl DwgDocumentBuilder {
 
         let pass2_total = pass2_records.len().max(1);
         let mut pass2_done = 0usize;
-        let mut fatal: Option<String> = None;
         let capture_raw = std::env::var_os("ACADRUST_RAW_ALL").is_some();
         for batch in pass2_records.chunks(batch_size) {
             let decode_started = web_time::Instant::now();
@@ -2054,9 +2047,6 @@ impl DwgDocumentBuilder {
                 decoded_pass2 = decoded_pass2
                     .saturating_add(chunk.output.entities.len())
                     .saturating_add(chunk.output.objects.len());
-                if let Some(message) = chunk.output.fatal.take() {
-                    fatal.get_or_insert(message);
-                }
                 document
                     .eed_by_handle
                     .extend(chunk.output.eed_by_handle.drain());
@@ -3455,7 +3445,6 @@ impl DwgDocumentBuilder {
                 .saturating_add(skipped_pass1 as usize)
                 .saturating_add(skipped_pass2 as usize),
             diagnostics,
-            fatal,
         }
     }
 
@@ -4202,14 +4191,16 @@ impl DwgDocumentBuilder {
                     e.gradient_color.colors = data
                         .gradient_colors
                         .into_iter()
-                        .map(|(value, color, color_name, book_name)| {
-                            crate::entities::hatch::GradientColorEntry {
+                        .map(
+                            |(value, color, color_name, book_name)| {
+                                crate::entities::hatch::GradientColorEntry {
                                 value,
                                 color,
                                 color_name,
                                 book_name,
                             }
-                        })
+                            },
+                        )
                         .collect();
                     e.gradient_color.name = data.gradient_name;
                     // Read boundary object handles from handle stream
@@ -5161,20 +5152,9 @@ impl DwgDocumentBuilder {
                         && !e.common.has_ds_data
                         && reader.handle_remaining_bits() >= 8
                     {
-                        match reader.try_read_handle() {
-                            Some(h) => {
-                                if h != 0 {
-                                    e.history_handle = Some(Handle::new(h));
-                                }
-                            }
-                            None => {
-                                // The slot is announced but its value bytes are
-                                // absent: a truncated handle prefix must fail
-                                // strict decoding rather than read as zero.
-                                document.fatal.get_or_insert_with(|| {
-                                    "BODY history handle is truncated".to_string()
-                                });
-                            }
+                        let h = reader.read_handle();
+                        if h != 0 {
+                            e.history_handle = Some(Handle::new(h));
                         }
                     }
                     let _ = document.add_entity(EntityType::Body(e));

@@ -15,7 +15,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use opencadcodec::io::dwg::dwg_reader::DwgReader;
+//! use acadrust::io::dwg::dwg_reader::DwgReader;
 //!
 //! let reader = DwgReader::from_file("drawing.dwg")?;
 //! let info = reader.read_file_header()?;
@@ -1343,19 +1343,6 @@ impl<R: Read + Seek> DwgReader<R> {
                         }
                         diagnostics.extend(build_outcome.diagnostics);
                         self.notifications.extend(build_outcome.notifications);
-                        if let Some(message) = build_outcome.fatal {
-                            if !failsafe {
-                                return Err(DxfError::Parse(message));
-                            }
-                            report_read_error(
-                                &mut self.notifications,
-                                &mut diagnostics,
-                                "record-decode-fatal",
-                                ReadStage::RecordStream,
-                                Some("AcDb:AcDbObjects"),
-                                message,
-                            );
-                        }
                     },
                     Err(e) => report_read_error(
                         &mut self.notifications,
@@ -3386,12 +3373,14 @@ pub(crate) fn recover_roundtrip_gradients(document: &mut crate::document::CadDoc
                 crate::entities::hatch::GradientColorEntry {
                     value: 0.0,
                     color: Color::from_index(c1 as i16),
-                    ..Default::default()
+                    color_name: None,
+                    book_name: None,
                 },
                 crate::entities::hatch::GradientColorEntry {
                     value: 1.0,
                     color: Color::from_index(c2 as i16),
-                    ..Default::default()
+                    color_name: None,
+                    book_name: None,
                 },
             ];
             h.gradient_color.name = name;

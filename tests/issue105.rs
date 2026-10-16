@@ -1,8 +1,8 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Viewport};
-use opencadcodec::types::DxfVersion;
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Viewport};
+use acadrust::types::DxfVersion;
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 fn read_single_viewport(bytes: Vec<u8>) -> Viewport {
     let document = DxfReader::from_reader(Cursor::new(bytes))

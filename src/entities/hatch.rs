@@ -364,11 +364,10 @@ pub struct GradientColorEntry {
     pub value: f64,
     /// Color at this position
     pub color: Color,
-    /// The color's name in its color book (DWG R2004+ only; DXF stores
-    /// gradient colors without one).
+    /// Optional authored color name from a DWG CMC value.
     #[cfg_attr(feature = "serde", serde(default))]
     pub color_name: Option<String>,
-    /// The color book the color comes from (DWG R2004+ only).
+    /// Optional authored color-book name from a DWG CMC value.
     #[cfg_attr(feature = "serde", serde(default))]
     pub book_name: Option<String>,
 }
@@ -419,7 +418,8 @@ impl HatchGradientPattern {
         self.colors.push(GradientColorEntry {
             value,
             color,
-            ..Default::default()
+            color_name: None,
+            book_name: None,
         });
     }
 }

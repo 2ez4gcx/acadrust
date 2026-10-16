@@ -1,9 +1,9 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::tables::Layer;
-use opencadcodec::types::{DxfVersion, Transparency};
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Line};
+use acadrust::tables::Layer;
+use acadrust::types::{DxfVersion, Transparency};
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 #[test]
 fn layer_transparency_zero_is_explicit_opaque_but_entity_zero_remains_by_layer() {

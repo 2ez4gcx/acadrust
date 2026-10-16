@@ -1,11 +1,11 @@
 use std::io::Cursor;
 
-use opencadcodec::objects::{
+use acadrust::objects::{
     AssocDependency, AssocGeomDependency, AssocPersistentSubentId, AssociativeData,
     AssociativeObject, ObjectType,
 };
-use opencadcodec::types::DxfVersion;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::types::DxfVersion;
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 fn document_with_geom_dependency(version: DxfVersion) -> CadDocument {
     let mut document = CadDocument::with_version(version);

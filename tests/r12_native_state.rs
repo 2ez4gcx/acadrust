@@ -1,5 +1,5 @@
-use opencadcodec::io::dwg::r12::header::read_header;
-use opencadcodec::{
+use acadrust::io::dwg::r12::header::read_header;
+use acadrust::{
     CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, EntityType, Vector2, Vector3,
 };
 use std::{fs, io::Cursor, path::PathBuf};

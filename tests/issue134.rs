@@ -2,14 +2,14 @@
 
 use std::io::Cursor;
 
-use opencadcodec::classes::DxfClass;
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::io::dwg::dwg_reference_type::DwgReferenceType;
-use opencadcodec::io::dwg::dwg_stream_writers::DwgMergedWriter;
-use opencadcodec::io::dwg::{DwgReadOptions, DwgVersion};
-use opencadcodec::objects::{Dictionary, ObjectContextData, ObjectContextKind, ObjectType, Scale};
-use opencadcodec::types::{DxfVersion, Handle};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::classes::DxfClass;
+use acadrust::entities::{EntityType, Line};
+use acadrust::io::dwg::dwg_reference_type::DwgReferenceType;
+use acadrust::io::dwg::dwg_stream_writers::DwgMergedWriter;
+use acadrust::io::dwg::{DwgReadOptions, DwgVersion};
+use acadrust::objects::{Dictionary, ObjectContextData, ObjectContextKind, ObjectType, Scale};
+use acadrust::types::{DxfVersion, Handle};
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 const CONTEXT: &str = "ACDB_MLEADEROBJECTCONTEXTDATA_CLASS";
 
@@ -176,7 +176,7 @@ fn named_auxiliary_failures_are_preserved_in_strict_and_failsafe_reads() {
                         .get_record("ACAD")
                         .unwrap()
                         .values,
-                    vec![opencadcodec::xdata::XDataValue::Integer16(42)]
+                    vec![acadrust::xdata::XDataValue::Integer16(42)]
                 );
                 if name == CONTEXT {
                     let scale = outcome.document.context_scales[&auxiliary];
@@ -254,7 +254,7 @@ fn other_known_object_decode_failures_still_fail_strict_reads() {
         ("CONTEXTDATAMANAGER", 540),
         (
             "LAYER",
-            opencadcodec::io::dwg::dwg_stream_readers::object_reader::common::OBJ_LAYER,
+            acadrust::io::dwg::dwg_stream_readers::object_reader::common::OBJ_LAYER,
         ),
     ] {
         let (source, ..) = auxiliary_fixture(DxfVersion::AC1032, name, type_code, false, false);
@@ -305,7 +305,7 @@ fn strict_error_identifies_the_failed_record_after_auxiliary_recovery() {
 
 #[test]
 fn native_mleader_base_layout_is_preserved_without_fabricated_context_fields() {
-    use opencadcodec::types::Vector3;
+    use acadrust::types::Vector3;
 
     // ODA DWG specification 27.5, pp. 218-219: BS version, B file-to-xdict,
     // B default. Encode this independently of this library's context writer,
@@ -422,9 +422,9 @@ fn valid_mleader_context_still_decodes_to_fields_without_recovery() {
         .objects
         .insert(scale_handle, ObjectType::Scale(scale));
     let auxiliary = source.allocate_handle();
-    let mut context = opencadcodec::entities::MultiLeaderAnnotContext::new();
+    let mut context = acadrust::entities::MultiLeaderAnnotContext::new();
     context.standalone_uses_root_flags = true;
-    context.set_text_content("issue134", opencadcodec::types::Vector3::new(1.0, 2.0, 3.0));
+    context.set_text_content("issue134", acadrust::types::Vector3::new(1.0, 2.0, 3.0));
     let object = ObjectContextData {
         handle: auxiliary,
         owner_handle: Handle::NULL,

@@ -1,13 +1,13 @@
 //! A block record's own XDATA (a dynamic block's AcDbDynamicBlockTrueName,
 //! AcDbDynamicBlockGUID and AcDbBlockRepETag tags) survives DXF and DWG.
 
-use opencadcodec::tables::{AppId, BlockRecord};
-use opencadcodec::types::DxfVersion;
-use opencadcodec::xdata::{ExtendedDataRecord, XDataValue};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::tables::{AppId, BlockRecord};
+use acadrust::types::DxfVersion;
+use acadrust::xdata::{ExtendedDataRecord, XDataValue};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 use std::io::Cursor;
 
-fn tagged() -> (CadDocument, opencadcodec::Handle) {
+fn tagged() -> (CadDocument, acadrust::Handle) {
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
     for name in ["AcDbDynamicBlockTrueName", "AcDbBlockRepETag"] {
         let mut app = AppId::new(name);

@@ -1,12 +1,12 @@
 use std::borrow::Cow;
 use std::io::Cursor;
 
-use opencadcodec::entities::table::{
+use acadrust::entities::table::{
     BorderPropertyFlags, CellEdgeFlags, CellStyle, CellStylePropertyFlags, TableCell,
 };
-use opencadcodec::entities::{EntityType, Table};
-use opencadcodec::types::{Color, DxfVersion, Handle, LineWeight, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Table};
+use acadrust::types::{Color, DxfVersion, Handle, LineWeight, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 fn dxf_document_with_style(version: DxfVersion, style: CellStyle) -> (CadDocument, Handle) {
     let mut document = CadDocument::with_version(version);

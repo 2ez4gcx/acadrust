@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Point, Viewport};
-use opencadcodec::objects::ObjectType;
-use opencadcodec::types::{DxfVersion, Handle};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Point, Viewport};
+use acadrust::objects::ObjectType;
+use acadrust::types::{DxfVersion, Handle};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 #[derive(Clone, Copy)]
 struct ExpectedViewport {

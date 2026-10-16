@@ -1,4 +1,4 @@
-use opencadcodec::types::Transparency;
+use acadrust::types::Transparency;
 
 #[test]
 fn dwg_explicit_transparency_uses_the_by_alpha_method() {

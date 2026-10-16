@@ -1,11 +1,11 @@
 use std::io::Cursor;
 
-use opencadcodec::io::dwg::r12::header::read_header;
-use opencadcodec::tables::{
+use acadrust::io::dwg::r12::header::read_header;
+use acadrust::tables::{
     AppId, BlockRecord, DimStyle, Layer, LineType, LineTypeElement, TextStyle, Ucs, VPort, View,
     VxTableRecord,
 };
-use opencadcodec::{CadDocument, Color, DwgReader, DwgWriter, DxfVersion, Vector2, Vector3};
+use acadrust::{CadDocument, Color, DwgReader, DwgWriter, DxfVersion, Vector2, Vector3};
 
 fn round_trip(document: &CadDocument) -> CadDocument {
     let bytes = DwgWriter::write_to_vec(document).unwrap();
@@ -312,11 +312,11 @@ fn ac1009_resolves_escaped_table_names_and_preserves_text_spaces() {
     document.layers.add(layer.clone()).unwrap();
     document.text_styles.add(style.clone()).unwrap();
     document.line_types.add(linetype.clone()).unwrap();
-    let mut text = opencadcodec::Text::with_value("  label  ", Vector3::ZERO);
+    let mut text = acadrust::Text::with_value("  label  ", Vector3::ZERO);
     text.common.layer = layer.name.clone();
     text.style = style.name.clone();
     document
-        .add_entity(opencadcodec::EntityType::Text(text))
+        .add_entity(acadrust::EntityType::Text(text))
         .unwrap();
 
     let restored = round_trip(&document);
@@ -341,7 +341,7 @@ fn ac1009_resolves_escaped_table_names_and_preserves_text_spaces() {
         restored.line_types.get(&linetype.name).unwrap().description,
         linetype.description
     );
-    let opencadcodec::EntityType::Text(text) = restored.entities().next().unwrap() else {
+    let acadrust::EntityType::Text(text) = restored.entities().next().unwrap() else {
         panic!("expected TEXT");
     };
     assert_eq!(text.value, "  label  ");

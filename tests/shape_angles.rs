@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Shape};
-use opencadcodec::{CadDocument, DxfReader, DxfVersion, DxfWriter, Vector3};
+use acadrust::entities::{EntityType, Shape};
+use acadrust::{CadDocument, DxfReader, DxfVersion, DxfWriter, Vector3};
 
 fn document() -> CadDocument {
     let mut document = CadDocument::with_version(DxfVersion::AC1018);

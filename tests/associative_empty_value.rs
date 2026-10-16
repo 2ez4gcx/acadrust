@@ -1,11 +1,11 @@
 use std::io::Cursor;
 
-use opencadcodec::objects::{
+use acadrust::objects::{
     AssocAction, AssocEvalValue, AssocEvalVariant, AssocValueParam, AssocValueParamVariable,
     AssocVariable, AssociativeData, AssociativeObject, ObjectType,
 };
-use opencadcodec::types::Handle;
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::types::Handle;
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 #[test]
 fn empty_action_value_preserves_following_values_and_handles() {

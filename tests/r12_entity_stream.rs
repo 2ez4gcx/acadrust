@@ -1,13 +1,13 @@
 use std::io::Cursor;
 
-use opencadcodec::document::HeaderVariables;
-use opencadcodec::io::dwg::crc::crc16;
-use opencadcodec::io::dwg::r12::header::{
+use acadrust::document::HeaderVariables;
+use acadrust::io::dwg::crc::crc16;
+use acadrust::io::dwg::r12::header::{
     read_header, write_auxheader, write_header, HeaderLayout, HeaderReferences, TableLocator,
     BLOCK_ENTITIES_BEGIN, BLOCK_ENTITIES_END, ENTITIES_END, ENTITIES_START, EXTRA_ENTITIES_BEGIN,
     EXTRA_ENTITIES_END, TABLE_BEGIN,
 };
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfVersion, EntityType, Handle, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfVersion, EntityType, Handle, Vector3};
 
 // Entity bytes are assembled independently of the native encoder. Field
 // widths and JUMP's section-relative address/early CRC follow the CC0 KSY
@@ -65,7 +65,7 @@ fn seqend(handle: u8, owner_address: u32) -> Vec<u8> {
 fn baseline_dwg() -> Vec<u8> {
     let mut document = CadDocument::with_version(DxfVersion::AC1009);
     document
-        .add_entity(EntityType::Line(opencadcodec::Line::from_coords(
+        .add_entity(EntityType::Line(acadrust::Line::from_coords(
             0.0, 0.0, 0.0, 1.0, 1.0, 0.0,
         )))
         .unwrap();

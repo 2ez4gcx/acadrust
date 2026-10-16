@@ -7,10 +7,10 @@
 //! root dictionary as its `{ACAD_XDICTIONARY`. Strict readers reject such a
 //! file; a Leica field controller refuses to list its layers.
 
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::tables::{AppId, Layer};
-use opencadcodec::types::DxfVersion;
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Line};
+use acadrust::tables::{AppId, Layer};
+use acadrust::types::DxfVersion;
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 use std::io::Cursor;
 
 fn read_dxf(bytes: &[u8]) -> CadDocument {

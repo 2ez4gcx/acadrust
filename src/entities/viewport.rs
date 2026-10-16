@@ -238,8 +238,8 @@ impl GridFlags {
 ///
 /// # Example
 /// ```ignore
-/// use opencadcodec::entities::Viewport;
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::Viewport;
+/// use acadrust::types::Vector3;
 ///
 /// let mut viewport = Viewport::new();
 /// viewport.center = Vector3::new(5.0, 5.0, 0.0);
@@ -272,12 +272,6 @@ pub struct Viewport {
     #[cfg_attr(feature = "serde", serde(default))]
     pub dxf_status: Option<i16>,
     pub off_screen: bool,
-    /// DXF status `68` when positive: the viewport's stacking rank, 1 for
-    /// the active one. Independent of [`id`](Self::id); 0 = the rank equals
-    /// the ID or is unknown (a viewport built in code or read from DWG, which
-    /// keeps no rank), and the writer then ranks by ID.
-    #[cfg_attr(feature = "serde", serde(default))]
-    pub stacking: i16,
     /// View center point (DCS - Display Coordinate System)
     pub view_center: Vector3,
     /// Snap base point
@@ -374,7 +368,6 @@ impl Viewport {
             id: 0,
             dxf_status: None,
             off_screen: false,
-            stacking: 0,
             view_center: Vector3::ZERO,
             snap_base: Vector3::ZERO,
             snap_spacing: Vector3::new(10.0, 10.0, 0.0),

@@ -1,12 +1,12 @@
 use std::io::Cursor;
 
-use opencadcodec::objects::{
+use acadrust::objects::{
     AssocArrayActionBody, AssocArrayItem, AssocArrayModifyActionBody, AssocDimensionAssociation,
     AssociativeData, AssociativeObject, ObjectType, PlaceHolder,
 };
-use opencadcodec::tables::TextStyle;
-use opencadcodec::types::{DxfVersion, Handle};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::tables::TextStyle;
+use acadrust::types::{DxfVersion, Handle};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 fn dwg_roundtrip(document: &CadDocument) -> CadDocument {
     DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(document).unwrap()))

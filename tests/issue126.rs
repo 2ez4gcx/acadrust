@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
-use opencadcodec::entities::{DimensionLinear, EntityType, MText, Polyline2D, PolylineFlags, Vertex2D};
-use opencadcodec::types::{DxfVersion, LineWeight, Vector3};
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::entities::{DimensionLinear, EntityType, MText, Polyline2D, PolylineFlags, Vertex2D};
+use acadrust::types::{DxfVersion, LineWeight, Vector3};
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 fn record_fields(dxf: &[u8], entity_type: &str) -> BTreeMap<i32, String> {
     let source = String::from_utf8(dxf.to_vec()).unwrap();
@@ -34,7 +34,7 @@ fn dimension_writes_all_common_entity_properties_and_insertion_point() {
     dimension.base.insertion_point = Vector3::new(100.0, 50.0, 0.0);
     document
         .add_entity(EntityType::Dimension(Box::new(
-            opencadcodec::entities::Dimension::Linear(dimension),
+            acadrust::entities::Dimension::Linear(dimension),
         )))
         .unwrap();
 
@@ -71,8 +71,8 @@ fn dimension_writes_all_common_entity_properties_and_insertion_point() {
         Vector3::new(100.0, 50.0, 0.0)
     );
 
-    let dwg = opencadcodec::DwgWriter::write_to_vec(&document).unwrap();
-    let from_dwg = opencadcodec::DwgReader::from_stream(Cursor::new(dwg))
+    let dwg = acadrust::DwgWriter::write_to_vec(&document).unwrap();
+    let from_dwg = acadrust::DwgReader::from_stream(Cursor::new(dwg))
         .read()
         .unwrap();
     let dimension = from_dwg
@@ -152,8 +152,8 @@ fn heavy_polyline_writes_ocs_normal_and_mirrored_mtext_writes_wcs_direction() {
         .unwrap();
     assert!((binary_mtext.rotation - 30.0_f64.to_radians()).abs() < 1e-12);
 
-    let dwg = opencadcodec::DwgWriter::write_to_vec(&document).unwrap();
-    let from_dwg = opencadcodec::DwgReader::from_stream(Cursor::new(dwg))
+    let dwg = acadrust::DwgWriter::write_to_vec(&document).unwrap();
+    let from_dwg = acadrust::DwgReader::from_stream(Cursor::new(dwg))
         .read()
         .unwrap();
     let dxf_from_dwg = DxfWriter::new(&from_dwg).write_to_vec().unwrap();

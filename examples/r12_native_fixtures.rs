@@ -8,9 +8,9 @@ use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
 
-use opencadcodec::entities::Shape;
-use opencadcodec::tables::TextStyle;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfVersion, EntityType, Vector3};
+use acadrust::entities::Shape;
+use acadrust::tables::TextStyle;
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfVersion, EntityType, Vector3};
 
 fn main() -> anyhow::Result<()> {
     let output = std::env::args_os()

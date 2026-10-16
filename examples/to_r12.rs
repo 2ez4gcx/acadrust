@@ -1,8 +1,8 @@
 //! Converts a DXF/DWG file to genuine DXF R12 (AC1009).
 //!
 //!   cargo run --example to_r12 -- input.dwg output.dxf
-use opencadcodec::types::DxfVersion;
-use opencadcodec::{DwgReader, DxfReader, DxfWriter};
+use acadrust::types::DxfVersion;
+use acadrust::{DwgReader, DxfReader, DxfWriter};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();

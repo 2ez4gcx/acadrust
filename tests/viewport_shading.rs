@@ -1,5 +1,5 @@
-use opencadcodec::entities::Viewport;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, EntityType};
+use acadrust::entities::Viewport;
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, EntityType};
 use std::io::Cursor;
 
 fn drawing(mode: i16) -> CadDocument {

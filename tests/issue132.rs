@@ -2,13 +2,13 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Line, UnknownEntity};
-use opencadcodec::objects::{BookColor, ObjectType};
-use opencadcodec::tables::{
+use acadrust::entities::{EntityType, Line, UnknownEntity};
+use acadrust::objects::{BookColor, ObjectType};
+use acadrust::tables::{
     AppId, BlockRecord, DimStyle, Layer, LineType, TextStyle, Ucs, VPort, View,
 };
-use opencadcodec::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
-use opencadcodec::{
+use acadrust::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
+use acadrust::{
     CadDocument, Color, DwgReader, DwgWriter, DxfReader, DxfVersion, DxfWriter, Handle, Vector3,
 };
 
@@ -248,7 +248,7 @@ fn all_symbol_table_record_xdata_survives_ascii_binary_and_dwg() {
 
 #[test]
 fn clearing_modeled_table_metadata_preserves_other_values_for_the_same_app() {
-    use opencadcodec::Transparency;
+    use acadrust::Transparency;
 
     fn assert_metadata(document: &CadDocument, expected_cleared: bool, handles: [Handle; 4]) {
         let layer = document.layers.get("META_LAYER").unwrap();

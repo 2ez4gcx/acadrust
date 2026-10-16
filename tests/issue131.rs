@@ -1,18 +1,18 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Text};
-use opencadcodec::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
-use opencadcodec::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
-use opencadcodec::io::dwg::DwgVersion;
-use opencadcodec::io::dxf::code_page::{
+use acadrust::entities::{EntityType, Text};
+use acadrust::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+use acadrust::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+use acadrust::io::dwg::DwgVersion;
+use acadrust::io::dxf::code_page::{
     decode_legacy_escapes, dwg_code_page_index, encode_legacy_string, encoding_from_code_page,
     encoding_from_dwg_code_page,
 };
-use opencadcodec::objects::{ObjectType, XRecord};
-use opencadcodec::tables::{AppId, Layer};
-use opencadcodec::types::{DxfVersion, Vector3};
-use opencadcodec::xdata::{ExtendedDataRecord, XDataValue};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::objects::{ObjectType, XRecord};
+use acadrust::tables::{AppId, Layer};
+use acadrust::types::{DxfVersion, Vector3};
+use acadrust::xdata::{ExtendedDataRecord, XDataValue};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 const SAMPLES: &[(&str, &[u8], &str)] = &[
     ("DOS437", &[0x82], "\u{E9}"),

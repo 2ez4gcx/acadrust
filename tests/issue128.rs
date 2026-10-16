@@ -2,8 +2,8 @@
 
 use std::io::Cursor;
 
-use opencadcodec::tables::LineType;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, DxfWriter};
+use acadrust::tables::LineType;
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, DxfWriter};
 
 #[test]
 fn plain_dash_dot_and_gap_elements_survive_dwg_and_dxf() {
@@ -21,7 +21,7 @@ fn plain_dash_dot_and_gap_elements_survive_dwg_and_dxf() {
         let mut linetype = LineType::dashed();
         linetype
             .elements
-            .push(opencadcodec::tables::linetype::LineTypeElement::dot());
+            .push(acadrust::tables::linetype::LineTypeElement::dot());
         document.line_types.add(linetype.clone()).unwrap();
         let dwg = DwgWriter::write_to_vec(&document).unwrap();
         let restored = DwgReader::from_stream(Cursor::new(dwg)).read().unwrap();

@@ -1,5 +1,5 @@
 use std::io::Cursor;
-use opencadcodec::{CadDocument, DxfReader, DxfVersion, DxfWriter};
+use acadrust::{CadDocument, DxfReader, DxfVersion, DxfWriter};
 
 #[test]
 fn dimjogang_writer_emits_bricscad_safe_lower_bound() {

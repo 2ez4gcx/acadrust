@@ -1,16 +1,16 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
-use opencadcodec::entities::{AttributeEntity, EntityType, Insert};
-use opencadcodec::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
-use opencadcodec::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
-use opencadcodec::io::dwg::dwg_stream_readers::object_reader::objects::read_book_color;
-use opencadcodec::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
-use opencadcodec::io::dwg::DwgVersion;
-use opencadcodec::objects::{BookColor, ObjectType};
-use opencadcodec::tables::BlockRecord;
-use opencadcodec::types::{Color, DxfVersion, Handle, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::entities::{AttributeEntity, EntityType, Insert};
+use acadrust::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+use acadrust::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+use acadrust::io::dwg::dwg_stream_readers::object_reader::objects::read_book_color;
+use acadrust::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+use acadrust::io::dwg::DwgVersion;
+use acadrust::objects::{BookColor, ObjectType};
+use acadrust::tables::BlockRecord;
+use acadrust::types::{Color, DxfVersion, Handle, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 const VERSIONS: &[DxfVersion] = &[
     DxfVersion::AC1018,

@@ -1,18 +1,18 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::acis::primitives::build_box;
-use opencadcodec::entities::solid3d::{AcisData, AcisRevision, Body, Region, Solid3D, Wire};
-use opencadcodec::entities::surface::{Surface, SurfaceKind};
-use opencadcodec::entities::EntityType;
-use opencadcodec::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
-use opencadcodec::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
-use opencadcodec::io::dwg::dwg_stream_readers::object_reader::entities::{
+use acadrust::entities::acis::primitives::build_box;
+use acadrust::entities::solid3d::{AcisData, AcisRevision, Body, Region, Solid3D, Wire};
+use acadrust::entities::surface::{Surface, SurfaceKind};
+use acadrust::entities::EntityType;
+use acadrust::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+use acadrust::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+use acadrust::io::dwg::dwg_stream_readers::object_reader::entities::{
     read_acis_entity, read_surface,
 };
-use opencadcodec::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
-use opencadcodec::io::dwg::DwgVersion;
-use opencadcodec::types::{Color, DxfVersion, Vector3};
-use opencadcodec::{CadDocument, DwgReadOptions, DwgReader, DwgWriter, SabReader, SabWriter};
+use acadrust::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+use acadrust::io::dwg::DwgVersion;
+use acadrust::types::{Color, DxfVersion, Vector3};
+use acadrust::{CadDocument, DwgReadOptions, DwgReader, DwgWriter, SabReader, SabWriter};
 
 const VERSIONS: [DxfVersion; 8] = [
     DxfVersion::AC1012,

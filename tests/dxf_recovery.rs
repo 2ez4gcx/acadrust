@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use opencadcodec::{DxfReader, DxfReaderConfiguration};
+use acadrust::{DxfReader, DxfReaderConfiguration};
 
 fn malformed_entities_dxf() -> Vec<u8> {
     br#"0

@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, DxfWriter};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, DxfWriter};
 
 fn assert_settings(document: &CadDocument) {
     let header = &document.header;

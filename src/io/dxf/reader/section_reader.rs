@@ -9571,8 +9571,11 @@ impl<'a> SectionReader<'a> {
                             _ => None,
                         })
                     }) {
-                        layer.transparency =
-                            crate::types::Transparency::from_layer_value(value as u32);
+                        if let Some(transparency) =
+                            crate::types::Transparency::from_layer_alpha_value(value as u32)
+                        {
+                            layer.transparency = transparency;
+                        }
                     }
                     // The description is the *second* string under
                     // `AcAecLayerStandard`; the first is an empty placeholder.
@@ -9890,14 +9893,12 @@ impl<'a> SectionReader<'a> {
                     document.header.block_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "BLOCK_RECORD" {
-                if let Some((block_record, reactors, xdata)) = self.read_block_record_entry()? {
+                self.reader.record_xdata(true);
+                if let Some((block_record, reactors)) = self.read_block_record_entry()? {
                     if !reactors.is_empty() && !block_record.handle.is_null() {
                         document
                             .reactors_by_handle
                             .insert(block_record.handle, reactors);
-                    }
-                    if !xdata.is_empty() && !block_record.handle.is_null() {
-                        document.object_xdata.insert(block_record.handle, xdata);
                     }
                     let name = block_record.name.clone();
                     if let Err(_) = document.block_records.add(block_record.clone()) {
@@ -9953,35 +9954,36 @@ impl<'a> SectionReader<'a> {
         Ok(())
     }
 
-    /// Read a single BLOCK_RECORD entry and its reactors
-    /// (`{ACAD_REACTORS`, e.g. the dependencies of an associative array).
-    fn read_block_record_entry(
-        &mut self,
-    ) -> Result<Option<(BlockRecord, Vec<Handle>, ExtendedData)>> {
+    fn read_block_record_entry(&mut self) -> Result<Option<(BlockRecord, Vec<Handle>)>> {
         let mut block_record = BlockRecord::new("*Model_Space");
         let mut reactors = Vec::new();
         let mut group = String::new();
+        // Pre-R2007 files carry the units as ACAD `DesignCenter Data`
+        // xdata `{ <version> <units> }` instead of group 70.
         let mut units_seen = false;
-        let mut xdata = ExtendedData::new();
+        let mut design_center: Option<Vec<i16>> = None;
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
                 self.reader.push_back(pair);
                 break;
             }
-            // XDATA closes the record: the dynamic-block tags of a block
-            // (AcDbDynamicBlockTrueName / GUID, AcDbBlockRepBTag) live there.
-            if pair.code == 1001 {
-                self.reader.push_back(pair);
-                let (read, next) = self.read_extended_data()?;
-                if let Some(next) = next {
-                    self.reader.push_back(next);
+
+            match pair.code {
+                1001 => design_center = None,
+                1000 if pair.value_string == "DesignCenter Data" => {
+                    design_center = Some(Vec::new())
                 }
-                xdata = read;
-                break;
-            }
-            if pair.code == 70 {
-                units_seen = true;
+                1070 => {
+                    if let (Some(values), Some(value)) = (design_center.as_mut(), pair.as_i16()) {
+                        values.push(value);
+                        if values.len() == 2 && !units_seen {
+                            block_record.units = value;
+                        }
+                    }
+                }
+                70 => units_seen = true,
+                _ => {}
             }
 
             match pair.code {
@@ -10042,30 +10044,7 @@ impl<'a> SectionReader<'a> {
             }
         }
 
-        // Pre-R2007 files carry the units as ACAD `DesignCenter Data` xdata
-        // `{ <version> <units> }` instead of group 70; that record becomes the
-        // field and is written again from it.
-        let design_center = xdata.get_record("ACAD").and_then(|record| {
-            let mut values = record.values.iter();
-            matches!(values.next(), Some(XDataValue::String(text)) if text == "DesignCenter Data")
-                .then(|| {
-                    values
-                        .filter_map(|value| match value {
-                            XDataValue::Integer16(value) => Some(*value),
-                            _ => None,
-                        })
-                        .nth(1)
-                })
-        });
-        if let Some(units) = design_center {
-            if let Some(units) = units.filter(|_| !units_seen) {
-                block_record.units = units;
-            }
-            // The record stays: the writer replaces only its `DesignCenter
-            // Data` group, so the application's other values survive.
-        }
-
-        Ok(Some((block_record, reactors, xdata)))
+        Ok(Some((block_record, reactors)))
     }
 
     /// Read DIMSTYLE table
@@ -15712,17 +15691,16 @@ impl<'a> SectionReader<'a> {
                                 hatch.gradient_color.colors.push(GradientColorEntry {
                                     value,
                                     color: Color::ByLayer,
-                                    ..Default::default()
+                                    color_name: None,
+                                    book_name: None,
                                 });
                             }
-                            // RGB wins over ACI in either tag order.
                             63 => {
-                                if let (Some(entry), Ok(aci)) = (
-                                    hatch.gradient_color.colors.last_mut(),
-                                    gp.value_string.trim().parse::<i16>(),
-                                ) {
-                                    if !matches!(entry.color, Color::Rgb { .. }) {
-                                        entry.color = Color::from_index(aci);
+                                if let Some(entry) = hatch.gradient_color.colors.last_mut() {
+                                    if let Ok(aci) = gp.value_string.trim().parse::<i16>() {
+                                        if !matches!(entry.color, Color::Rgb { .. }) {
+                                            entry.color = Color::from_index(aci);
+                                        }
                                     }
                                 }
                             }
@@ -17416,10 +17394,6 @@ impl<'a> SectionReader<'a> {
                 vp.status.is_on = status != 0;
             }
         }
-        // A rank equal to the ID is what the writer derives anyway.
-        vp.stacking = status_field
-            .filter(|status| *status > 0 && *status != vp.id)
-            .unwrap_or(0);
         vp.dxf_status = status_field.filter(|value| *value != vp.id);
 
         Ok(Some(vp))

@@ -1,9 +1,9 @@
 
 use std::io::Cursor;
 
-use opencadcodec::tables::{DimStyle, TextStyle};
-use opencadcodec::types::DxfVersion;
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::tables::{DimStyle, TextStyle};
+use acadrust::types::DxfVersion;
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 fn dxf_roundtrip(doc: &CadDocument) -> CadDocument {
     let bytes = DxfWriter::new(doc).write_to_vec().expect("DXF write failed");

@@ -1418,8 +1418,8 @@ impl<T> Default for LegacyBorderOverrides<T> {
 /// # Example
 ///
 /// ```ignore
-/// use opencadcodec::entities::{Table, TableRow};
-/// use opencadcodec::types::Vector3;
+/// use acadrust::entities::{Table, TableRow};
+/// use acadrust::types::Vector3;
 ///
 /// // Create a 3x4 table
 /// let mut table = Table::new(Vector3::new(0.0, 0.0, 0.0), 3, 4);

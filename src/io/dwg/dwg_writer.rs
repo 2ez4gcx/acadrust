@@ -10,8 +10,8 @@
 //! ## Usage
 //!
 //! ```no_run
-//! use opencadcodec::document::CadDocument;
-//! use opencadcodec::io::dwg::DwgWriter;
+//! use acadrust::document::CadDocument;
+//! use acadrust::io::dwg::DwgWriter;
 //!
 //! let doc = CadDocument::new();
 //! DwgWriter::write_to_file("output.dwg", &doc).unwrap();

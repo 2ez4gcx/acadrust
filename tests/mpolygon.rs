@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{BoundaryEdge, BoundaryPath, Hatch};
-use opencadcodec::{CadDocument, Color, DwgReadOptions, DwgReader, DwgWriter, EntityType};
+use acadrust::entities::{BoundaryEdge, BoundaryPath, Hatch};
+use acadrust::{CadDocument, Color, DwgReadOptions, DwgReader, DwgWriter, EntityType};
 
 // Six MPOLYGONs generated as DXF and re-saved as a 2013 DWG by AutoCAD; see
 // mpolygon-fixture.md for the shapes and their expected values.

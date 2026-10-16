@@ -13,14 +13,14 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
-use opencadcodec::io::dwg::dwg_stream_writers::object_writer::DwgObjectWriter;
-use opencadcodec::io::dwg::DwgReferenceType;
-use opencadcodec::objects::{ObjectType, PlotSettings};
-use opencadcodec::tables::{Layer, View};
-use opencadcodec::types::{DxfVersion, Handle};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfWriter};
+use acadrust::entities::{EntityType, Line};
+use acadrust::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+use acadrust::io::dwg::dwg_stream_writers::object_writer::DwgObjectWriter;
+use acadrust::io::dwg::DwgReferenceType;
+use acadrust::objects::{ObjectType, PlotSettings};
+use acadrust::tables::{Layer, View};
+use acadrust::types::{DxfVersion, Handle};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfWriter};
 
 /// A drawing on disk: one layer besides "0", carrying one entity.
 fn source_document(version: DxfVersion) -> CadDocument {

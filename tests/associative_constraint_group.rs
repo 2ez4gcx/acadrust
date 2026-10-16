@@ -1,15 +1,15 @@
 use std::io::Cursor;
 
-use opencadcodec::objects::{
+use acadrust::objects::{
     Assoc2dConstraintGroup, AssocAction, AssocConstraintNode, AssocConstraintNodeData,
     AssociativeData, AssociativeObject, ObjectType,
 };
-use opencadcodec::types::Vector3;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
+use acadrust::types::Vector3;
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 #[test]
 fn r2010_version_two_group_reads_inline_nodes_with_status_and_active_flags() {
-    use opencadcodec::io::dwg::{
+    use acadrust::io::dwg::{
         dwg_reference_type::DwgReferenceType,
         dwg_stream_readers::{
             bit_reader::DwgBitReader, merged_reader::DwgMergedReader,
@@ -18,7 +18,7 @@ fn r2010_version_two_group_reads_inline_nodes_with_status_and_active_flags() {
         dwg_stream_writers::bit_writer::DwgBitWriter,
         DwgVersion,
     };
-    use opencadcodec::types::DxfVersion;
+    use acadrust::types::DxfVersion;
     let dxf = DxfVersion::AC1024;
     let version = DwgVersion::from_dxf_version(dxf).unwrap();
     let mut main = DwgBitWriter::new(version, dxf);

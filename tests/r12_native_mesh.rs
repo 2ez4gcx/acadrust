@@ -1,6 +1,6 @@
 use std::{fs, io::Cursor, path::PathBuf};
 
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, EntityType, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, EntityType, Vector3};
 
 #[derive(Debug, PartialEq)]
 struct NativeGeometry {

@@ -1,9 +1,9 @@
 use std::io::Cursor;
 
-use opencadcodec::io::dwg::dwg_stream_readers::header_reader::read_header;
-use opencadcodec::io::dwg::dwg_stream_writers::header_writer::write_header;
-use opencadcodec::io::dwg::file_headers::section_definition::start_sentinels;
-use opencadcodec::{CadDocument, DwgReadOptions, DwgReader, DwgWriter, DxfVersion};
+use acadrust::io::dwg::dwg_stream_readers::header_reader::read_header;
+use acadrust::io::dwg::dwg_stream_writers::header_writer::write_header;
+use acadrust::io::dwg::file_headers::section_definition::start_sentinels;
+use acadrust::{CadDocument, DwgReadOptions, DwgReader, DwgWriter, DxfVersion};
 
 #[test]
 fn invalid_header_lengths_return_errors_for_all_section_layouts() {

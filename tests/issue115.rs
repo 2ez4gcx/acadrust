@@ -1,8 +1,8 @@
 use std::io::Cursor;
 
-use opencadcodec::tables::Layer;
-use opencadcodec::types::{Color, DxfVersion};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfWriter};
+use acadrust::tables::Layer;
+use acadrust::types::{Color, DxfVersion};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfWriter};
 
 const RGB: Color = Color::from_rgb(200, 100, 50);
 

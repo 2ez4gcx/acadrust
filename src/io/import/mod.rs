@@ -6,7 +6,7 @@
 //! # Quick start
 //!
 //! ```rust,ignore
-//! use opencadcodec::io::import::{import_file, ImportConfig};
+//! use acadrust::io::import::{import_file, ImportConfig};
 //!
 //! let doc = import_file("model.stl", &ImportConfig::default())?;
 //! println!("Imported {} entities", doc.entities().count());

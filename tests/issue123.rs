@@ -1,19 +1,19 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Line, LwPolyline};
-use opencadcodec::io::dwg::crc::{crc16, CRC16_SEED};
-use opencadcodec::io::dwg::dwg_reader::DwgReadOptions;
-use opencadcodec::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
-use opencadcodec::io::dwg::dwg_stream_readers::handle_reader::read_handles;
-use opencadcodec::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
-use opencadcodec::io::dwg::dwg_stream_readers::object_reader::entities::{read_lwpolyline, read_mline};
-use opencadcodec::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
-use opencadcodec::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
-use opencadcodec::io::dwg::dwg_stream_writers::object_writer::common::OBJ_LINE;
-use opencadcodec::io::dwg::dwg_version::DwgVersion;
-use opencadcodec::types::{Handle, Vector2, Vector3};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfVersion};
+use acadrust::entities::{EntityType, Line, LwPolyline};
+use acadrust::io::dwg::crc::{crc16, CRC16_SEED};
+use acadrust::io::dwg::dwg_reader::DwgReadOptions;
+use acadrust::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+use acadrust::io::dwg::dwg_stream_readers::handle_reader::read_handles;
+use acadrust::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+use acadrust::io::dwg::dwg_stream_readers::object_reader::entities::{read_lwpolyline, read_mline};
+use acadrust::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+use acadrust::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+use acadrust::io::dwg::dwg_stream_writers::object_writer::common::OBJ_LINE;
+use acadrust::io::dwg::dwg_version::DwgVersion;
+use acadrust::types::{Handle, Vector2, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfVersion};
 
 fn merged_main(writer: DwgBitWriter, version: DxfVersion) -> DwgMergedReader {
     let bit_length = writer.position_in_bits();
@@ -127,7 +127,7 @@ fn text_lengths_cannot_consume_stream_framing() {
 
 #[test]
 fn datatable_dimensions_are_bounded_even_when_one_dimension_is_zero() {
-    use opencadcodec::io::dwg::dwg_stream_readers::object_reader::class_object::read_class_object_data;
+    use acadrust::io::dwg::dwg_stream_readers::object_reader::class_object::read_class_object_data;
     for (columns, rows) in [(i32::MAX, 0), (0, i32::MAX), (10_000, 10_000)] {
         let mut writer = DwgBitWriter::new(DwgVersion::AC24, DxfVersion::AC1024);
         writer.write_bit_short(0);

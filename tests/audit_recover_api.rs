@@ -1,8 +1,8 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::objects::ObjectType;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, Handle, Layer};
+use acadrust::entities::{EntityType, Line};
+use acadrust::objects::ObjectType;
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter, Handle, Layer};
 
 #[test]
 fn audit_is_read_only_and_clean_for_a_default_document() {
@@ -35,8 +35,8 @@ fn repair_fixes_unambiguous_identity_state_and_is_idempotent() {
     document.get_entity_mut(entity).unwrap().common_mut().handle = Handle::NULL;
 
     let before = document.audit();
-    assert!(before.count(opencadcodec::AuditIssueCode::StaleTableKey) > 0);
-    assert!(before.count(opencadcodec::AuditIssueCode::EntityIndexMismatch) > 0);
+    assert!(before.count(acadrust::AuditIssueCode::StaleTableKey) > 0);
+    assert!(before.count(acadrust::AuditIssueCode::EntityIndexMismatch) > 0);
 
     let repaired = document.repair();
     assert!(!repaired.actions.is_empty());
@@ -50,7 +50,7 @@ fn repair_fixes_unambiguous_identity_state_and_is_idempotent() {
     assert!(second.actions.iter().all(|action| {
         !matches!(
             action,
-            opencadcodec::RepairAction::ResyncTableKeys { count } if *count > 0
+            acadrust::RepairAction::ResyncTableKeys { count } if *count > 0
         )
     }));
 }
@@ -81,7 +81,7 @@ fn recover_rejects_a_stream_without_usable_records() {
         .unwrap()
         .recover();
 
-    assert!(matches!(result, Err(opencadcodec::DxfError::RecoveryFailed(_))));
+    assert!(matches!(result, Err(acadrust::DxfError::RecoveryFailed(_))));
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn audit_reports_raw_object_records_without_mutating_them() {
     let report = document.audit();
 
     assert_eq!(document, snapshot);
-    assert_eq!(report.count(opencadcodec::AuditIssueCode::UnsupportedRecord), 1);
+    assert_eq!(report.count(acadrust::AuditIssueCode::UnsupportedRecord), 1);
 }
 
 #[test]
@@ -140,5 +140,5 @@ fn audit_reports_dangling_object_owner_and_layer_references() {
 
     let report = document.audit();
 
-    assert!(report.count(opencadcodec::AuditIssueCode::DanglingReference) >= 2);
+    assert!(report.count(acadrust::AuditIssueCode::DanglingReference) >= 2);
 }

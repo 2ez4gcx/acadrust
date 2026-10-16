@@ -1,10 +1,10 @@
-use opencadcodec::entities::table::{CellStylePropertyFlags, CellValue};
-use opencadcodec::entities::{Insert, Line, MText, Table};
-use opencadcodec::fields::{self, FieldContext, NewField};
-use opencadcodec::sheet_set::SheetSetDatabase;
-use opencadcodec::tables::{BlockRecord, TextStyle};
-use opencadcodec::types::{Color, Handle, Vector3};
-use opencadcodec::{count, CadDocument, EntityType};
+use acadrust::entities::table::{CellStylePropertyFlags, CellValue};
+use acadrust::entities::{Insert, Line, MText, Table};
+use acadrust::fields::{self, FieldContext, NewField};
+use acadrust::sheet_set::SheetSetDatabase;
+use acadrust::tables::{BlockRecord, TextStyle};
+use acadrust::types::{Color, Handle, Vector3};
+use acadrust::{count, CadDocument, EntityType};
 
 struct Context {
     sheet_set: SheetSetDatabase,
@@ -192,8 +192,8 @@ fn table_formulas_keep_existing_aggregate_functions() {
 
 #[test]
 fn field_in_an_empty_table_cell_survives_refresh_and_serialization() {
-    use opencadcodec::entities::table::TableCellContentType;
-    use opencadcodec::{DwgReader, DwgWriter, DxfReader, DxfWriter};
+    use acadrust::entities::table::TableCellContentType;
+    use acadrust::{DwgReader, DwgWriter, DxfReader, DxfWriter};
     use std::io::Cursor;
 
     let mut doc = CadDocument::new();

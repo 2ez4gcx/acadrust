@@ -1,14 +1,14 @@
-use opencadcodec::entities::solid3d::{
+use acadrust::entities::solid3d::{
     AcisData, AcisMaterial, AcisRevision, Body, Region, Silhouette, Solid3D,
 };
-use opencadcodec::entities::surface::{Surface, SurfaceKind};
-use opencadcodec::io::dwg::dwg_reference_type::DwgReferenceType;
-use opencadcodec::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
-use opencadcodec::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
-use opencadcodec::io::dwg::dwg_stream_readers::object_reader::entities::read_acis_entity;
-use opencadcodec::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
-use opencadcodec::io::dwg::DwgVersion;
-use opencadcodec::{
+use acadrust::entities::surface::{Surface, SurfaceKind};
+use acadrust::io::dwg::dwg_reference_type::DwgReferenceType;
+use acadrust::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+use acadrust::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+use acadrust::io::dwg::dwg_stream_readers::object_reader::entities::read_acis_entity;
+use acadrust::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+use acadrust::io::dwg::DwgVersion;
+use acadrust::{
     CadDocument, DwgReader, DwgWriter, DxfVersion, EntityType, Handle, SabWriter, Vector3,
 };
 use std::io::Cursor;
@@ -206,9 +206,9 @@ fn acds_material_bindings_precede_the_revision_in_split_streams() {
 fn acds_material_bindings_survive_modeler_entity_roundtrips() {
     for version in [DxfVersion::AC1027, DxfVersion::AC1032] {
         let mut document = CadDocument::with_version(version);
-        let geometry = opencadcodec::entities::acis::primitives::build_box([0.0; 3], 2.0, 3.0, 4.0);
+        let geometry = acadrust::entities::acis::primitives::build_box([0.0; 3], 2.0, 3.0, 4.0);
         let mut data = AcisData::from_sab(SabWriter::write(&geometry));
-        let mut material = opencadcodec::objects::Material::new();
+        let mut material = acadrust::objects::Material::new();
         material.handle = document.allocate_handle();
         material.name = "Test material".to_owned();
         data.materials.push(AcisMaterial {
@@ -218,7 +218,7 @@ fn acds_material_bindings_survive_modeler_entity_roundtrips() {
         });
         document.objects.insert(
             material.handle,
-            opencadcodec::objects::ObjectType::Material(material),
+            acadrust::objects::ObjectType::Material(material),
         );
         let mut solid = Solid3D::new();
         solid.acis_data = data.clone();

@@ -1,8 +1,8 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Hatch, HatchGradientPattern};
-use opencadcodec::types::{Color, DxfVersion};
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::entities::{EntityType, Hatch, HatchGradientPattern};
+use acadrust::types::{Color, DxfVersion};
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 fn gradient_document() -> CadDocument {
     let mut document = CadDocument::with_version(DxfVersion::AC1032);
@@ -11,13 +11,13 @@ fn gradient_document() -> CadDocument {
     hatch.gradient_color = HatchGradientPattern {
         enabled: true,
         colors: vec![
-            opencadcodec::entities::hatch::GradientColorEntry {
+            acadrust::entities::hatch::GradientColorEntry {
                 value: 0.0,
                 color: Color::Rgb { r: 0x12, g: 0x34, b: 0x56 },
                 color_name: None,
                 book_name: None,
             },
-            opencadcodec::entities::hatch::GradientColorEntry {
+            acadrust::entities::hatch::GradientColorEntry {
                 value: 1.0,
                 color: Color::Rgb { r: 0x65, g: 0x43, b: 0x21 },
                 color_name: None,

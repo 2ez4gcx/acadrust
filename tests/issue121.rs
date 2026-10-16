@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::Cursor;
 
-use opencadcodec::entities::{EntityType, Line};
-use opencadcodec::io::dwg::dwg_document_builder::DwgDocumentBuilder;
-use opencadcodec::io::dwg::dwg_stream_readers::object_reader::tables::read_block_header;
-use opencadcodec::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
-use opencadcodec::io::dwg::dwg_stream_writers::object_writer::DwgObjectWriter;
-use opencadcodec::objects::ObjectType;
-use opencadcodec::types::{DxfVersion, Handle};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::entities::{EntityType, Line};
+use acadrust::io::dwg::dwg_document_builder::DwgDocumentBuilder;
+use acadrust::io::dwg::dwg_stream_readers::object_reader::tables::read_block_header;
+use acadrust::io::dwg::dwg_stream_readers::object_reader::DwgObjectReader;
+use acadrust::io::dwg::dwg_stream_writers::object_writer::DwgObjectWriter;
+use acadrust::objects::ObjectType;
+use acadrust::types::{DxfVersion, Handle};
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 fn layout_memberships(document: &CadDocument) -> BTreeMap<String, (Handle, Vec<Handle>)> {
     document

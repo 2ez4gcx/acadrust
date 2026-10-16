@@ -1,9 +1,9 @@
-use opencadcodec::entities::UnknownEntity;
-use opencadcodec::io::dwg::dwg_reference_type::DwgReferenceType;
-use opencadcodec::io::dwg::dwg_stream_writers::DwgMergedWriter;
-use opencadcodec::io::dwg::DwgVersion;
-use opencadcodec::types::Transparency;
-use opencadcodec::{CadDocument, Color, DwgReader, DwgWriter, DxfVersion, EntityType, Handle};
+use acadrust::entities::UnknownEntity;
+use acadrust::io::dwg::dwg_reference_type::DwgReferenceType;
+use acadrust::io::dwg::dwg_stream_writers::DwgMergedWriter;
+use acadrust::io::dwg::DwgVersion;
+use acadrust::types::Transparency;
+use acadrust::{CadDocument, Color, DwgReader, DwgWriter, DxfVersion, EntityType, Handle};
 use std::io::Cursor;
 
 // Assemble a small BODY independently of the production BODY writer. Native

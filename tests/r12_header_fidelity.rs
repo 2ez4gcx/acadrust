@@ -1,12 +1,12 @@
 use std::io::Cursor;
 
-use opencadcodec::document::HeaderVariables;
-use opencadcodec::io::dwg::crc::{crc16, CRC16_SEED};
-use opencadcodec::io::dwg::r12::header::{
+use acadrust::document::HeaderVariables;
+use acadrust::io::dwg::crc::{crc16, CRC16_SEED};
+use acadrust::io::dwg::r12::header::{
     read_header, write_header, HeaderLayout, HeaderReferences, TableLocator, ENTITIES_BEGIN,
     ENTITIES_END,
 };
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfVersion, Vector3};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfVersion, Vector3};
 
 // Fixed offsets come from the independent CC0 AC1009 Kaitai layout:
 // https://github.com/michal-josef-spacek/CAD-Format-DWG-AC1009/blob/main/dwg_ac1009.ksy

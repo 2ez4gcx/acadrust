@@ -1,4 +1,4 @@
-use opencadcodec::io::dxf::{DxfBinaryWriter, DxfStreamWriter};
+use acadrust::io::dxf::{DxfBinaryWriter, DxfStreamWriter};
 
 const BINARY_DXF_SENTINEL: &[u8] = b"AutoCAD Binary DXF\r\n\x1a\0";
 
@@ -51,7 +51,7 @@ fn write_integer(
     writer_kind: IntegerWriter,
     code: i32,
     value: i64,
-) -> opencadcodec::Result<()> {
+) -> acadrust::Result<()> {
     match writer_kind {
         IntegerWriter::Byte => writer.write_byte(code, value as u8),
         IntegerWriter::I16 => writer.write_i16(code, value as i16),
@@ -130,7 +130,7 @@ fn integer_writers_reject_nonnumeric_groups_without_partial_records() {
             let mut writer = DxfBinaryWriter::new(Vec::new()).unwrap();
             let result = write_integer(&mut writer, writer_kind, code, 1);
             assert!(
-                matches!(result, Err(opencadcodec::DxfError::InvalidDxfCode(value)) if value == code),
+                matches!(result, Err(acadrust::DxfError::InvalidDxfCode(value)) if value == code),
                 "{writer_kind:?} must reject nonnumeric group {code}"
             );
             assert_eq!(

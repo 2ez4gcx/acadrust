@@ -4,13 +4,13 @@ use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
-use opencadcodec::entities::acis::primitives::build_box;
-use opencadcodec::entities::solid3d::{Solid3D, Wire};
-use opencadcodec::entities::{CellRange, EntityType, Line, Table, Text};
-use opencadcodec::objects::ObjectType;
-use opencadcodec::tables::{AppId, Layer, LineType};
-use opencadcodec::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
-use opencadcodec::{
+use acadrust::entities::acis::primitives::build_box;
+use acadrust::entities::solid3d::{Solid3D, Wire};
+use acadrust::entities::{CellRange, EntityType, Line, Table, Text};
+use acadrust::objects::ObjectType;
+use acadrust::tables::{AppId, Layer, LineType};
+use acadrust::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
+use acadrust::{
     CadDocument, Color, DwgReader, DwgWriter, DxfVersion, DxfWriter, SabWriter, Vector3,
 };
 

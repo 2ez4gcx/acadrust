@@ -2,8 +2,8 @@
 //! fit-spline parameterization; matching two lossy codec chains is insufficient.
 use std::io::Cursor;
 
-use opencadcodec::entities::{Helix, Spline};
-use opencadcodec::{
+use acadrust::entities::{Helix, Spline};
+use acadrust::{
     CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, DxfWriter, EntityType, Vector3,
 };
 

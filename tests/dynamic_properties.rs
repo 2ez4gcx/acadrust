@@ -1,4 +1,4 @@
-use opencadcodec::{
+use acadrust::{
     objects::{BlockEvalValue, DynamicBlockData, ObjectType},
     CadDocument, DwgReader, EntityType,
 };
@@ -43,7 +43,7 @@ fn saved_parameters_and_definition_defaults_match_autocad() {
     for (file, property, expected_default, instance, expected_saved) in cases {
         let bytes = fixture_data::fixture(file);
         let doc = read_fixture(file);
-        let handle = opencadcodec::Handle::new(u64::from_str_radix(instance, 16).unwrap());
+        let handle = acadrust::Handle::new(u64::from_str_radix(instance, 16).unwrap());
         let definition = doc.dynamic_definition_for_insert(handle).unwrap();
         for (insert, expected) in [(None, expected_default), (Some(handle), expected_saved)] {
             let properties = doc.dynamic_block_properties(definition, insert).unwrap();
@@ -71,7 +71,7 @@ fn visibility_and_flip_are_typed_choices_with_saved_states() {
         ("BLOCKFLIPPARAMETER", 0x28B, BlockEvalValue::Short(1)),
     ] {
         let doc = read_fixture(file);
-        let handle = opencadcodec::Handle::new(instance);
+        let handle = acadrust::Handle::new(instance);
         let definition = doc.dynamic_definition_for_insert(handle).unwrap();
         let values = doc
             .dynamic_block_properties(definition, Some(handle))
@@ -136,7 +136,7 @@ fn lookup_descriptors_are_per_column_and_preserve_choices_and_custom_labels() {
 #[test]
 fn scale_changes_distances_but_not_definition_defaults() {
     let mut doc = read_fixture("BLOCKLINEARPARAMETER");
-    let handle = opencadcodec::Handle::new(0x284);
+    let handle = acadrust::Handle::new(0x284);
     let definition = doc.dynamic_definition_for_insert(handle).unwrap();
     for (x, y, z, expected) in [
         (2., 2., 2., Some(15.)),
@@ -199,7 +199,7 @@ fn older_drawings_restore_dynamic_definition_names() {
 #[test]
 fn rotation_angles_above_pi_are_not_folded() {
     let doc = read_fixture("ROTATION_270");
-    let insert = opencadcodec::Handle::new(0x27C);
+    let insert = acadrust::Handle::new(0x27C);
     let definition = doc.dynamic_definition_for_insert(insert).unwrap();
     let properties = doc
         .dynamic_block_properties(definition, Some(insert))
@@ -219,7 +219,7 @@ fn stale_marker_suffixes_do_not_override_autocad_reopen_names() {
         (0x395, "*U4"),
         (0x39E, "*U5"),
     ] {
-        let EntityType::Insert(insert) = doc.get_entity(opencadcodec::Handle::new(handle)).unwrap()
+        let EntityType::Insert(insert) = doc.get_entity(acadrust::Handle::new(handle)).unwrap()
         else {
             panic!()
         };
@@ -234,7 +234,7 @@ fn stale_marker_suffixes_do_not_override_autocad_reopen_names() {
 
 #[test]
 fn reflected_rotation_keeps_its_parameter_orientation_and_rejects_broken_caches() {
-    use opencadcodec::{objects::*, Handle};
+    use acadrust::{objects::*, Handle};
     let mut doc = read_fixture("ROTATION_270");
     let insert = Handle::new(0x27C);
     let definition = doc.dynamic_definition_for_insert(insert).unwrap();
@@ -260,7 +260,7 @@ fn reflected_rotation_keeps_its_parameter_orientation_and_rejects_broken_caches(
             _ => None,
         })
         .unwrap();
-    let dict = |doc: &opencadcodec::CadDocument, h, key| match &doc.objects[&h] {
+    let dict = |doc: &acadrust::CadDocument, h, key| match &doc.objects[&h] {
         ObjectType::Dictionary(d) => d.get(key).unwrap(),
         _ => panic!(),
     };
@@ -333,7 +333,7 @@ fn reflected_rotation_keeps_its_parameter_orientation_and_rejects_broken_caches(
 
 #[test]
 fn lookup_and_axis_descriptors_survive_dwg_and_dxf_roundtrips() {
-    use opencadcodec::{DwgWriter, DxfReader, DxfWriter};
+    use acadrust::{DwgWriter, DxfReader, DxfWriter};
     use std::io::Cursor;
     for name in [
         "BLOCKLOOKUPPARAMETER",

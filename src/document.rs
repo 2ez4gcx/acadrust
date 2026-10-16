@@ -7,13 +7,13 @@
 //! # Creating a document
 //!
 //! ```rust
-//! use opencadcodec::CadDocument;
+//! use acadrust::CadDocument;
 //!
 //! // Default version (R2018 / AC1032)
 //! let doc = CadDocument::new();
 //!
 //! // Specific version
-//! use opencadcodec::types::DxfVersion;
+//! use acadrust::types::DxfVersion;
 //! let doc = CadDocument::with_version(DxfVersion::AC1015); // R2000
 //! ```
 
@@ -3539,7 +3539,7 @@ impl CadDocument {
     ///
     /// # Example
     /// ```ignore
-    /// use opencadcodec::entities::{Viewport, EntityType};
+    /// use acadrust::entities::{Viewport, EntityType};
     ///
     /// let vp = Viewport::new();
     /// document.add_entity_to_layout(EntityType::Viewport(vp), "Layout1")?;

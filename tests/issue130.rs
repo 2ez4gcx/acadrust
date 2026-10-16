@@ -3,9 +3,9 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::{CellRange, EntityType, Table};
-use opencadcodec::objects::{ObjectType, TableStyle, TableStyleFlags};
-use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, DxfWriter, Vector3};
+use acadrust::entities::{CellRange, EntityType, Table};
+use acadrust::objects::{ObjectType, TableStyle, TableStyleFlags};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfVersion, DxfWriter, Vector3};
 
 const MODERN_VERSIONS: [DxfVersion; 3] =
     [DxfVersion::AC1024, DxfVersion::AC1027, DxfVersion::AC1032];

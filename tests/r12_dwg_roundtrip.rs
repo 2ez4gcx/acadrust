@@ -1,17 +1,17 @@
 use std::io::Cursor;
 
-use opencadcodec::entities::{Face3D, Solid};
-use opencadcodec::io::dwg::DwgVersion;
-use opencadcodec::tables::BlockRecord;
-use opencadcodec::tables::Layer;
-use opencadcodec::{
+use acadrust::entities::{Face3D, Solid};
+use acadrust::io::dwg::DwgVersion;
+use acadrust::tables::BlockRecord;
+use acadrust::tables::Layer;
+use acadrust::{
     Arc, CadDocument, Circle, DwgReader, DwgWriter, DxfVersion, EntityType, Line, Point, Text,
     Vector3,
 };
 
 #[test]
 fn ac1009_keeps_imported_layout_references_when_applying_legacy_header() {
-    use opencadcodec::objects::ObjectType;
+    use acadrust::objects::ObjectType;
 
     let mut document = CadDocument::with_version(DxfVersion::AC1009);
     document.header.model_space_insertion_base = Vector3::new(3.0, 7.0, 0.0);

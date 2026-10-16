@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::io::Cursor;
 
-use opencadcodec::types::DxfVersion;
-use opencadcodec::{CadDocument, DwgReader, DwgWriter};
+use acadrust::types::DxfVersion;
+use acadrust::{CadDocument, DwgReader, DwgWriter};
 
 /// A drawing whose ACAD application id owns the handle that a fresh document
 /// gives to its default `AcadAnnotative` entry (older DWGs carry no such entry).

@@ -1,4 +1,4 @@
-use opencadcodec::{DwgReader, EntityType, Handle};
+use acadrust::{DwgReader, EntityType, Handle};
 use std::path::PathBuf;
 
 #[test]

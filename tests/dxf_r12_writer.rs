@@ -2,10 +2,10 @@
 
 use std::io::Cursor;
 
-use opencadcodec::entities::*;
-use opencadcodec::tables::Layer;
-use opencadcodec::types::{DxfVersion, Vector2, Vector3};
-use opencadcodec::{CadDocument, DxfReader, DxfWriter};
+use acadrust::entities::*;
+use acadrust::tables::Layer;
+use acadrust::types::{DxfVersion, Vector2, Vector3};
+use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 /// (group code, value) pairs of an ASCII DXF.
 fn pairs(text: &str) -> Vec<(i32, String)> {

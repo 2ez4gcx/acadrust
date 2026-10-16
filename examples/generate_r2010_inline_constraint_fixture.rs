@@ -1,10 +1,10 @@
 //! Generate a synthetic DWG with a hand-encoded R2010 version-2 inline group.
 //! No external drawings or CAD installation are required.
-use opencadcodec::io::dwg::{
+use acadrust::io::dwg::{
     dwg_reference_type::DwgReferenceType, dwg_stream_writers::merged_writer::DwgMergedWriter,
     DwgVersion,
 };
-use opencadcodec::{
+use acadrust::{
     classes::DxfClass,
     entities::Line,
     objects::ObjectType,

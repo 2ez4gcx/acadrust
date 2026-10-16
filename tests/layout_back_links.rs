@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use opencadcodec::{objects::ObjectType, CadDocument, DwgReader, DwgWriter, DxfVersion, Handle};
+use acadrust::{objects::ObjectType, CadDocument, DwgReader, DwgWriter, DxfVersion, Handle};
 
 #[test]
 fn saved_self_reference_survives_read_without_losing_reverse_layout_link() {
