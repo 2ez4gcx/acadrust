@@ -2011,9 +2011,6 @@ impl<'a> DwgObjectWriter<'a> {
         self.register_object(e.common.handle);
     }
 
-    /// Writes a count followed by MPOLYGON loops: closed polylines without
-    /// flags, typed edges or boundary handles. Paths that are not a single
-    /// polyline edge cannot be expressed in this format and are skipped.
     fn write_mpolygon_loops(&mut self, paths: &[BoundaryPath], invalid: bool) {
         let loops: Vec<&PolylineEdge> = paths
             .iter()
@@ -3248,7 +3245,7 @@ impl<'a> DwgObjectWriter<'a> {
     ///
     // ── Table (ACAD_TABLE) ──────────────────────────────────────────
     //
-    // Inverse of the table reader. Cell styles / borders opencadcodec does not
+    // Inverse of the table reader. Cell styles / borders acadrust does not
     // model are written as empty presence-flag stubs (the anonymous block
     // renders the visual), and the retained data — dimensions, cell contents
     // (text/number) — is written in full so it round-trips.
@@ -5428,7 +5425,6 @@ impl<'a> DwgObjectWriter<'a> {
     ///
     /// For R2013 and later, ACIS data lives in the AcDsPrototype_1b section.
     /// The entity stream indicates that modeler geometry is not inline, but its
-    /// native COMMON_3DSOLID wireframe cache header still remains in the entity.
     fn write_acis_empty(&mut self, acis: &AcisData) {
         // R2013+ AcDs-backed records no longer carry the legacy leading
         // `acis_empty` bit.  Their first modeler-geometry bit is the
@@ -5489,8 +5485,6 @@ impl<'a> DwgObjectWriter<'a> {
         }
     }
 
-    /// Modeler block: B, then BS 2 and SAB bytes, or BS 1 and the
-    /// encrypted SAT text in length-prefixed blocks ending with 0.
     fn write_modeler_block(&mut self, extra: &AcisData) {
         self.writer.write_bit(false);
         if extra.is_binary && !extra.sab_data.is_empty() {
@@ -5531,9 +5525,6 @@ impl<'a> DwgObjectWriter<'a> {
         self.queue_sab_entry(acis, entity.common().handle);
     }
 
-    /// SAT text to SAB. A body whose text carries no save date gets the
-    /// drawing's save date (TDUPDATE), as the reference application stamps
-    /// its save time there.
     fn sab_from_sat(&self, sat: &crate::entities::acis::SatDocument) -> Vec<u8> {
         let julian = self.document.header.update_date_julian;
         if !sat.header.date.is_empty() || julian <= 0.0 {
@@ -5587,8 +5578,6 @@ impl<'a> DwgObjectWriter<'a> {
         self.write_acis_data_impl(point, acis, wires, silhouettes, false)
     }
 
-    /// Modeler data of a B-rep history node. From R2007 on the record ends
-    /// with the SAB stream: no wireframe cache, materials or revision follow.
     pub(super) fn write_history_acis_data(&mut self, acis: &AcisData) {
         if !self.version.r2007_plus() {
             self.write_acis_data(Vector3::ZERO, acis, &[], &[]);
@@ -5784,7 +5773,11 @@ impl<'a> DwgObjectWriter<'a> {
 
             self.writer.write_bit_long(silhouettes.len() as i32);
             for sil in silhouettes {
-                self.writer.write_bit_long_long(sil.viewport_id);
+                if self.version.r2010_plus() {
+                    self.writer.write_bit_long_long(sil.viewport_id);
+                } else {
+                    self.writer.write_bit_long(sil.viewport_id as i32);
+                }
                 self.writer.write_3bit_double(sil.target);
                 self.writer.write_3bit_double(sil.view_direction);
                 self.writer.write_3bit_double(sil.up_vector);
@@ -5805,7 +5798,7 @@ impl<'a> DwgObjectWriter<'a> {
 
     /// Write a single wire struct (shared by wires and silhouette wires).
     /// Field order/types per LibreDWG `Dwg_3DSOLID_wire` (mirrors the reader):
-    /// RC type, BLd selection_marker, BS/BL color, BLd acis_index, BL num_points.
+    /// RC type, BLd selection_marker, BS color, BLd acis_index, BL num_points.
     fn write_wire(&mut self, wire: &Wire) {
         self.writer.write_byte(wire.wire_type as u8);
         self.writer.write_bit_long(wire.selection_marker);
@@ -5815,11 +5808,7 @@ impl<'a> DwgObjectWriter<'a> {
             crate::types::Color::Index(idx) => idx as i16,
             _ => 256,
         };
-        if self.version.r2004_plus() {
-            self.writer.write_bit_long(color_val as i32);
-        } else {
-            self.writer.write_bit_short(color_val);
-        }
+        self.writer.write_bit_short(color_val);
         self.writer.write_bit_long(wire.acis_index);
         self.writer.write_bit_long(wire.points.len() as i32);
         for pt in &wire.points {
@@ -5844,7 +5833,7 @@ mod tests {
     use super::*;
     use crate::document::CadDocument;
     use crate::entities::{EntityCommon, Line, Point};
-    use crate::types::{Handle, Vector3};
+    use crate::types::{DxfVersion, Handle, Vector3};
 
     fn make_doc_with_entity(entity: EntityType) -> CadDocument {
         let mut doc = CadDocument::new();
@@ -5856,6 +5845,63 @@ mod tests {
             br.entity_handles.push(handle);
         }
         doc
+    }
+
+    #[test]
+    fn wire_color_uses_bit_short_in_every_dwg_version() {
+        use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+
+        for dxf_version in [
+            DxfVersion::AC1012,
+            DxfVersion::AC1014,
+            DxfVersion::AC1015,
+            DxfVersion::AC1018,
+            DxfVersion::AC1021,
+            DxfVersion::AC1024,
+            DxfVersion::AC1027,
+            DxfVersion::AC1032,
+        ] {
+            let document = CadDocument::with_version(dxf_version);
+            for color in [
+                Color::ByBlock,
+                Color::Index(1),
+                Color::Index(255),
+                Color::ByLayer,
+            ] {
+                let mut writer = DwgObjectWriter::new(&document).unwrap();
+                let wire = Wire {
+                    color,
+                    selection_marker: -1,
+                    acis_index: 0x80FA,
+                    points: vec![Vector3::ZERO, Vector3::UNIT_X],
+                    ..Wire::default()
+                };
+                writer.write_wire(&wire);
+                let mut reader = DwgBitReader::new(
+                    writer.writer.main().to_bytes_snapshot(),
+                    writer.version,
+                    dxf_version,
+                );
+                assert_eq!(reader.read_byte(), wire.wire_type as u8);
+                assert_eq!(reader.read_bit_long(), -1);
+                assert_eq!(
+                    reader.read_bit_short(),
+                    match color {
+                        Color::ByBlock => 0,
+                        Color::ByLayer => 256,
+                        Color::Index(index) => i16::from(index),
+                        _ => unreachable!(),
+                    },
+                    "{dxf_version:?} {color:?}"
+                );
+                assert_eq!(reader.read_bit_long(), wire.acis_index);
+                assert_eq!(reader.read_bit_long(), 2);
+                assert_eq!(reader.read_3bit_double(), Vector3::ZERO);
+                assert_eq!(reader.read_3bit_double(), Vector3::UNIT_X);
+                assert!(!reader.read_bit());
+                reader.check_error().unwrap();
+            }
+        }
     }
 
     #[test]

@@ -1,5 +1,50 @@
 ## Changelog
 
+### 0.6.4
+
+- **DXF header fidelity (issue #127)** - Writes and round-trips angle base,
+  angle direction, elevation, thickness, fillet, and chamfer settings.
+- **DWG linetype fidelity (issue #128)** - Plain dashed elements with native
+  zero scales no longer become complex shape elements.
+- **ACIS/DWG decoding (issue #129)** - Corrects generation-specific silhouette
+  viewport widths and inline surface parsing. The supplied six-file corpus now
+  reads strictly, retaining all reported 3DSOLID and SURFACE entities.
+- **Table conversion (issue #130)** - Preserves merged cells, table row
+  suppression, and table metadata through DWG/DXF conversions.
+- **Legacy encodings (issue #131)** - Adds exact OEM, Mac Roman, and Johab
+  decoding/encoding for legacy DXF and DWG text.
+- **DWG data preservation (issue #132)** - Preserves named colors, table-record
+  XDATA, nested INSERT attribute colors, and reports unsupported custom records
+  instead of silently dropping them.
+- **BricsCAD compatibility** - Fixes legacy binary DXF output promotion and
+  DIMJOGANG degree/range handling. BricsCAD V20 still drops modern DWG
+  TABLESTYLE suppression when reopening its own files.
+
+### 0.6.3
+
+- **DXF color interoperability** - Layers now emit the nearest ACI fallback
+  alongside their exact true color.
+- **DWG transparency interoperability** - Explicit transparency uses the
+  standard `kByAlpha` method byte while legacy method-3 values remain readable.
+
+### 0.6.2
+
+- **AC1009/R12 DWG support** - Added native pre-R13 DWG read/write support,
+  including fixed-layout headers, symbol tables, entity records, CRC checks,
+  XDATA, compound sequences, and exhaustive entity coverage.
+
+### 0.6.1
+
+- **Fields and tables** - Added sheet-set, count, object-property, and table
+  formula support, including numeric cell rendering and refresh-safe table
+  formatting.
+- **DWG/DXF fidelity** - Improved associative data, ACIS/SAB, summary info,
+  table styles, legacy text, viewport metadata, spatial filters, and retained
+  TrueType font flags and object references.
+- **Round-trip reliability** - Preserved opaque records and extension data,
+  repaired empty associative values, table-cell overrides, and legacy border
+  visibility across conversions.
+
 ### 0.6.0
 
 - **DXF color and class parsing** - Preserved unsigned `AcCmColor` values and

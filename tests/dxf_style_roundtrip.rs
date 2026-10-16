@@ -1,6 +1,3 @@
-//! DXF write -> read round-trip for text styles and dimension styles: each test
-//! builds a style with non-default values, round-trips it through the DXF writer
-//! and reader, and checks what the writer emits comes back.
 
 use std::io::Cursor;
 

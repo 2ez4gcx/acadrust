@@ -104,7 +104,6 @@ impl SmoothSurfaceType {
         *self as i16
     }
 
-    /// From the curve-type byte of a DWG 3D polyline (1 quadratic, 2 cubic).
     pub fn from_dwg_code(code: u8) -> Self {
         match code {
             1 => SmoothSurfaceType::QuadraticBSpline,
@@ -113,7 +112,6 @@ impl SmoothSurfaceType {
         }
     }
 
-    /// The curve-type byte of a DWG 3D polyline.
     pub fn to_dwg_code(&self) -> u8 {
         match self {
             SmoothSurfaceType::QuadraticBSpline => 1,

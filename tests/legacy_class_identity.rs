@@ -1,6 +1,3 @@
-//! A synthetic R2007 document with one leader and an unreferenced class.
-//! Native records embed numeric class IDs, including classes the application
-//! itself never edits. No customer drawing is required to reproduce this loss.
 use opencadcodec::{
     entities::{EntityType, Line, MultiLeader},
     types::{DxfVersion, Vector3},

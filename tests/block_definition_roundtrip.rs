@@ -1,6 +1,3 @@
-//! A block definition's description and base point are one definition seen
-//! from two sides: the `BlockRecord` and the public BLOCK marker. These check
-//! that neither codec drops the description and that the two views agree.
 
 use std::io::Cursor;
 
@@ -17,7 +14,6 @@ fn dxf_roundtrip(doc: &CadDocument) -> CadDocument {
         .expect("DXF read failed")
 }
 
-/// A `Door` block with one line inside it, a base point and a description.
 fn door(description: &str) -> CadDocument {
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
     let mut record = BlockRecord::new("Door");

@@ -3,7 +3,7 @@
 mod associative;
 mod table_content;
 
-use super::stream_reader::{DxfStreamReader, PointReader};
+use super::stream_reader::{DxfStreamContext, DxfStreamReader, PointReader};
 use crate::document::CadDocument;
 use crate::entities::*;
 use crate::error::Result;
@@ -995,7 +995,13 @@ impl DynamicDxfFields {
             .into_iter()
             .flatten()
             .filter(|(item_code, _)| *item_code == code)
-            .map(|(_, value)| if preserve_whitespace { value.as_str() } else { value.trim() })
+            .map(|(_, value)| {
+                if preserve_whitespace {
+                    value.as_str()
+                } else {
+                    value.trim()
+                }
+            })
             .collect()
     }
 
@@ -1036,9 +1042,15 @@ impl DynamicDxfFields {
             .unwrap_or(Handle::NULL)
     }
 
-    /// Vector stored as 140/141/142 (AutoCAD) or 140/150/160 (older opencadcodec output).
+    /// Vector stored as 140/141/142 (AutoCAD) or 140/150/160 (older acadrust output).
     fn vector_140(&self, section: &str) -> Vector3 {
-        let pick = |a: i32, b: i32| if self.values(section, a).is_empty() { self.f64(section, b) } else { self.f64(section, a) };
+        let pick = |a: i32, b: i32| {
+            if self.values(section, a).is_empty() {
+                self.f64(section, b)
+            } else {
+                self.f64(section, a)
+            }
+        };
         Vector3::new(self.f64(section, 140), pick(141, 150), pick(142, 160))
     }
 
@@ -1060,8 +1072,10 @@ fn dynamic_dxf_eval(fields: &DynamicDxfFields) -> BlockEvalExpression {
         // No 70 group means "no value" (-9999).
         .unwrap_or(-9999);
     let value = match value_code {
-        // AutoCAD writes a real value as 140; older opencadcodec output used 40.
-        40 if !fields.values(section, 140).is_empty() => BlockEvalValue::Real(fields.f64(section, 140)),
+        // AutoCAD writes a real value as 140; older acadrust output used 40.
+        40 if !fields.values(section, 140).is_empty() => {
+            BlockEvalValue::Real(fields.f64(section, 140))
+        }
         40 => BlockEvalValue::Real(fields.f64(section, 40)),
         10 | 11 => BlockEvalValue::Point([
             fields.f64(section, value_code as i32),
@@ -1226,7 +1240,7 @@ fn dynamic_dxf_action(fields: &DynamicDxfFields) -> BlockAction {
             .into_iter()
             .map(parse_dxf_handle)
             .collect(),
-        parameter_ids: fields
+        action_ids: fields
             .values(section, 91)
             .into_iter()
             .filter_map(|value| value.parse().ok())
@@ -1393,7 +1407,13 @@ fn dynamic_dxf_history_sweep(
                 acis_data: AcisData::from_sat(&AcisData::decode_sat_binary(&sats[index])),
             });
         }
-        crate::io::dwg::embedded_entity::decode_embedded_entity(type_code, bits, bytes, dwg_version, dxf_version)
+        crate::io::dwg::embedded_entity::decode_embedded_entity(
+            type_code,
+            bits,
+            bytes,
+            dwg_version,
+            dxf_version,
+        )
     });
     SolidHistorySweep {
         base: dynamic_dxf_history_base(fields),
@@ -1439,6 +1459,16 @@ enum MeshReadState {
 pub struct SectionReader<'a> {
     reader: &'a mut Box<dyn DxfStreamReader>,
     decoded_records: usize,
+    failsafe: bool,
+    skipped_records: usize,
+    recovery_errors: Vec<SectionRecoveryError>,
+}
+
+/// A record-level error recovered by a section reader.
+#[derive(Debug, Clone)]
+pub struct SectionRecoveryError {
+    pub message: String,
+    pub context: DxfStreamContext,
 }
 
 impl<'a> SectionReader<'a> {
@@ -1447,11 +1477,80 @@ impl<'a> SectionReader<'a> {
         Self {
             reader,
             decoded_records: 0,
+            failsafe: false,
+            skipped_records: 0,
+            recovery_errors: Vec::new(),
         }
+    }
+
+    /// Enable bounded record-level recovery. Strict readers retain the
+    /// historical behavior and propagate the first parsing error.
+    pub fn with_failsafe(mut self, failsafe: bool) -> Self {
+        self.failsafe = failsafe;
+        self
     }
 
     pub fn decoded_records(&self) -> usize {
         self.decoded_records
+    }
+
+    pub fn skipped_records(&self) -> usize {
+        self.skipped_records
+    }
+
+    pub fn take_recovery_errors(&mut self) -> Vec<SectionRecoveryError> {
+        std::mem::take(&mut self.recovery_errors)
+    }
+
+    fn read_section_pair(&mut self) -> Result<Option<super::stream_reader::DxfCodePair>> {
+        match self.reader.read_pair() {
+            Err(error) if self.failsafe => {
+                self.recover_record(error)?;
+                self.reader.read_pair()
+            }
+            result => result,
+        }
+    }
+
+    /// Skip the remainder of a malformed record and leave the next code-0
+    /// marker queued for the section loop. Text DXF readers can recover from a
+    /// malformed code line by continuing to read pairs; the bounded loop keeps
+    /// corrupt binary data and pathological input from causing an unbounded
+    /// scan.
+    fn recover_record(&mut self, error: impl std::fmt::Display) -> Result<()> {
+        self.skipped_records = self.skipped_records.saturating_add(1);
+        self.recovery_errors.push(SectionRecoveryError {
+            message: error.to_string(),
+            context: self.reader.diagnostic_context(),
+        });
+
+        const MAX_RESYNC_PAIRS: usize = 4096;
+        let mut previous = self.reader.diagnostic_context();
+        for _ in 0..MAX_RESYNC_PAIRS {
+            match self.reader.read_pair() {
+                Ok(Some(pair)) if pair.code == 0 => {
+                    self.reader.push_back(pair);
+                    return Ok(());
+                }
+                Ok(Some(_)) => {
+                    previous = self.reader.diagnostic_context();
+                }
+                Ok(None) => return Ok(()),
+                Err(_) => {
+                    let current = self.reader.diagnostic_context();
+                    // At EOF a stream reader reports the same offset/line on
+                    // every attempt; stop rather than spending the bound on
+                    // a non-progressing read.
+                    if current.source_offset == previous.source_offset
+                        && current.source_line == previous.source_line
+                    {
+                        return Ok(());
+                    }
+                    previous = current;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Read the HEADER section
@@ -1459,6 +1558,7 @@ impl<'a> SectionReader<'a> {
         let hdr = &mut document.header;
         // A $CUSTOMPROPERTYTAG waits for its $CUSTOMPROPERTY value.
         let mut custom_value_pending = false;
+        let mut code_page_seen = false;
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
@@ -1475,6 +1575,15 @@ impl<'a> SectionReader<'a> {
                 "$ACADVER" => {
                     if let Some(p) = self.reader.read_pair()? {
                         document.version = DxfVersion::from_version_string(&p.value_string);
+                        if document.version >= DxfVersion::AC1021 {
+                            self.reader.set_encoding(encoding_rs::UTF_8.into());
+                        } else if code_page_seen {
+                            if let Some(encoding) =
+                                crate::io::dxf::code_page::encoding_from_code_page(&hdr.code_page)
+                            {
+                                self.reader.set_encoding(encoding);
+                            }
+                        }
                     }
                 }
                 "$ACADMAINTVER" => {
@@ -1490,6 +1599,7 @@ impl<'a> SectionReader<'a> {
                 "$DWGCODEPAGE" => {
                     if let Some(p) = self.reader.read_pair()? {
                         hdr.code_page = p.value_string.clone();
+                        code_page_seen = true;
                         // Set encoding immediately for pre-2007 files
                         if document.version < DxfVersion::AC1021 {
                             if let Some(enc) =
@@ -2208,7 +2318,7 @@ impl<'a> SectionReader<'a> {
                 "$ANGBASE" => {
                     if let Some(p) = self.reader.read_pair()? {
                         if let Some(v) = p.as_double() {
-                            hdr.angle_base = v;
+                            hdr.angle_base = v.to_radians();
                         }
                     }
                 }
@@ -3161,13 +3271,14 @@ impl<'a> SectionReader<'a> {
     /// Read the TABLES section
     pub fn read_tables(&mut self, document: &mut CadDocument) -> Result<()> {
         // Read tables until ENDSEC
-        while let Some(pair) = self.reader.read_pair()? {
+        while let Some(pair) = self.read_section_pair()? {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
                 break;
             }
 
             // Tables start with code 0 = "TABLE"
             if pair.code == 0 && pair.value_string == "TABLE" {
+                let result: Result<()> = (|| {
                 // Read table name (code 2)
                 if let Some(name_pair) = self.reader.read_pair()? {
                     if name_pair.code == 2 {
@@ -3181,11 +3292,17 @@ impl<'a> SectionReader<'a> {
                             "VIEW" => self.read_view_table(document)?,
                             "VPORT" => self.read_vport_table(document)?,
                             "UCS" => self.read_ucs_table(document)?,
-                            _ => {
-                                // Skip unknown table
-                                self.skip_to_endtab()?;
+                                _ => self.skip_to_endtab()?,
                             }
                         }
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    if self.failsafe {
+                        self.recover_record(error)?;
+                    } else {
+                        return Err(error);
                     }
                 }
             }
@@ -3197,15 +3314,22 @@ impl<'a> SectionReader<'a> {
     /// Read the BLOCKS section
     pub fn read_blocks(&mut self, document: &mut CadDocument) -> Result<()> {
         // Read blocks until ENDSEC
-        while let Some(pair) = self.reader.read_pair()? {
+        while let Some(pair) = self.read_section_pair()? {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
                 break;
             }
 
             // Blocks start with code 0 = "BLOCK"
             if pair.code == 0 && pair.value_string == "BLOCK" {
-                if self.read_block(document)? {
+                match self.read_block(document) {
+                    Ok(true) => {
                     self.decoded_records = self.decoded_records.saturating_add(1);
+                }
+                    Ok(false) => {}
+                    Err(error) if self.failsafe => {
+                        self.recover_record(error)?;
+                    }
+                    Err(error) => return Err(error),
                 }
             }
         }
@@ -3420,7 +3544,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "MTEXT" => {
                         if let Some(entity) = self.read_mtext()? {
-                            block_entities.push(EntityType::MText(entity));
+                            block_entities.push(EntityType::MText(Box::new(entity)));
                         }
                     }
                     "SPLINE" => {
@@ -3435,22 +3559,22 @@ impl<'a> SectionReader<'a> {
                     }
                     "DIMENSION" => {
                         if let Some(entity) = self.read_dimension()? {
-                            block_entities.push(EntityType::Dimension(entity));
+                            block_entities.push(EntityType::Dimension(Box::new(entity)));
                         }
                     }
                     "ARC_DIMENSION" | "LARGE_RADIAL_DIMENSION" => {
                         if let Some(entity) = self.read_extended_dimension(&pair.value_string)? {
-                            block_entities.push(EntityType::Dimension(entity));
+                            block_entities.push(EntityType::Dimension(Box::new(entity)));
                         }
                     }
                     "HATCH" => {
                         if let Some(entity) = self.read_hatch()? {
-                            block_entities.push(EntityType::Hatch(entity));
+                            block_entities.push(EntityType::Hatch(Box::new(entity)));
                         }
                     }
                     "MPOLYGON" => {
                         if let Some(entity) = self.read_mpolygon()? {
-                            block_entities.push(EntityType::Hatch(entity));
+                            block_entities.push(EntityType::Hatch(Box::new(entity)));
                         }
                     }
                     "SOLID" => {
@@ -3511,7 +3635,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "VIEWPORT" => {
                         if let Some(entity) = self.read_viewport()? {
-                            block_entities.push(EntityType::Viewport(entity));
+                            block_entities.push(EntityType::Viewport(Box::new(entity)));
                         }
                     }
                     "LEADER" => {
@@ -3566,7 +3690,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "OLE2FRAME" => {
                         if let Some(entity) = self.read_ole2frame()? {
-                            block_entities.push(EntityType::Ole2Frame(entity));
+                            block_entities.push(EntityType::Ole2Frame(Box::new(entity)));
                         }
                     }
                     "SECTIONLINE" => {
@@ -3671,7 +3795,7 @@ impl<'a> SectionReader<'a> {
     /// Read the ENTITIES section
     pub fn read_entities(&mut self, document: &mut CadDocument) -> Result<()> {
         // Read entities until ENDSEC
-        while let Some(pair) = self.reader.read_pair()? {
+        while let Some(pair) = self.read_section_pair()? {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
                 break;
             }
@@ -3686,6 +3810,7 @@ impl<'a> SectionReader<'a> {
                 // for every record.
                 let before = document.entities.len();
 
+                let result: Result<()> = (|| {
                 match entity_type.as_str() {
                     "POINT" => {
                         if let Some(entity) = self.read_point()? {
@@ -3729,7 +3854,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "MTEXT" => {
                         if let Some(entity) = self.read_mtext()? {
-                            let _ = document.add_entity(EntityType::MText(entity));
+                            let _ = document.add_entity(EntityType::MText(Box::new(entity)));
                         }
                     }
                     "SPLINE" => {
@@ -3744,22 +3869,24 @@ impl<'a> SectionReader<'a> {
                     }
                     "DIMENSION" => {
                         if let Some(entity) = self.read_dimension()? {
-                            let _ = document.add_entity(EntityType::Dimension(entity));
+                                let _ =
+                                    document.add_entity(EntityType::Dimension(Box::new(entity)));
                         }
                     }
                     "ARC_DIMENSION" | "LARGE_RADIAL_DIMENSION" => {
                         if let Some(entity) = self.read_extended_dimension(&entity_type)? {
-                            let _ = document.add_entity(EntityType::Dimension(entity));
+                                let _ =
+                                    document.add_entity(EntityType::Dimension(Box::new(entity)));
                         }
                     }
                     "HATCH" => {
                         if let Some(entity) = self.read_hatch()? {
-                            let _ = document.add_entity(EntityType::Hatch(entity));
+                            let _ = document.add_entity(EntityType::Hatch(Box::new(entity)));
                         }
                     }
                     "MPOLYGON" => {
                         if let Some(entity) = self.read_mpolygon()? {
-                            let _ = document.add_entity(EntityType::Hatch(entity));
+                            let _ = document.add_entity(EntityType::Hatch(Box::new(entity)));
                         }
                     }
                     "SOLID" => {
@@ -3795,7 +3922,8 @@ impl<'a> SectionReader<'a> {
                     }
                     "ATTDEF" => {
                         if let Some(entity) = self.read_attdef()? {
-                            let _ = document.add_entity(EntityType::AttributeDefinition(entity));
+                                let _ =
+                                    document.add_entity(EntityType::AttributeDefinition(entity));
                         }
                     }
                     "TOLERANCE" => {
@@ -3815,7 +3943,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "VIEWPORT" => {
                         if let Some(entity) = self.read_viewport()? {
-                            let _ = document.add_entity(EntityType::Viewport(entity));
+                            let _ = document.add_entity(EntityType::Viewport(Box::new(entity)));
                         }
                     }
                     "ATTRIB" => {
@@ -3830,7 +3958,8 @@ impl<'a> SectionReader<'a> {
                     }
                     "MULTILEADER" | "MLEADER" => {
                         if let Some(entity) = self.read_multileader()? {
-                            let _ = document.add_entity(EntityType::MultiLeader(Box::new(entity)));
+                                let _ =
+                                    document.add_entity(EntityType::MultiLeader(Box::new(entity)));
                         }
                     }
                     "MLINE" => {
@@ -3865,7 +3994,7 @@ impl<'a> SectionReader<'a> {
                     }
                     "LIGHT" => {
                         if let Some(entity) = self.read_light_entity()? {
-                            let _ = document.add_entity(EntityType::Light(entity));
+                            let _ = document.add_entity(EntityType::Light(Box::new(entity)));
                         }
                     }
                     "SURFACE" | "PLANESURFACE" | "EXTRUDEDSURFACE" | "LOFTEDSURFACE"
@@ -3896,7 +4025,8 @@ impl<'a> SectionReader<'a> {
                     }
                     "OLE2FRAME" => {
                         if let Some(entity) = self.read_ole2frame()? {
-                            let _ = document.add_entity(EntityType::Ole2Frame(entity));
+                                let _ =
+                                    document.add_entity(EntityType::Ole2Frame(Box::new(entity)));
                         }
                     }
                     "CAMERA"
@@ -3959,6 +4089,15 @@ impl<'a> SectionReader<'a> {
                         let entity = self.read_unknown_entity(&entity_type)?;
                         let _ = document.add_entity(EntityType::Unknown(entity));
                     }
+                }
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    if self.failsafe {
+                        self.recover_record(error)?;
+                        continue;
+                    }
+                    return Err(error);
                 }
                 self.decoded_records = self
                     .decoded_records
@@ -4220,12 +4359,9 @@ impl<'a> SectionReader<'a> {
                 let mut bodies: Vec<(i32, i32, usize, Vec<u8>)> = Vec::new();
                 for (code, value) in fields.sections.get(section).into_iter().flatten() {
                     match *code {
-                        93 | 96 | 98 => bodies.push((
-                            *code,
-                            value.trim().parse().unwrap_or(0),
-                            0,
-                            Vec::new(),
-                        )),
+                        93 | 96 | 98 => {
+                            bodies.push((*code, value.trim().parse().unwrap_or(0), 0, Vec::new()))
+                        }
                         94 | 97 | 99 => {
                             if let Some(body) = bodies.last_mut() {
                                 body.2 = value.trim().parse().unwrap_or(0);
@@ -4608,26 +4744,26 @@ impl<'a> SectionReader<'a> {
                     .map(|index| BlockLookupColumn {
                         node_id: code0
                             .get(index)
-                            .and_then(|value| value.parse().ok())
+                            .and_then(|value| value.trim().parse().ok())
                             .unwrap_or(0),
                         value_type: code1
                             .get(index)
-                            .and_then(|value| value.parse().ok())
+                            .and_then(|value| value.trim().parse().ok())
                             .unwrap_or(0),
                         property_type: code2
                             .get(index)
-                            .and_then(|value| value.parse().ok())
+                            .and_then(|value| value.trim().parse().ok())
                             .unwrap_or(0),
                         unmatched_name: name2.get(index).copied().unwrap_or("").to_string(),
                         connection_name: name1.get(index).copied().unwrap_or("").to_string(),
                         lookup_property: flag282
                             .get(index)
-                            .and_then(|value| value.parse::<i32>().ok())
+                            .and_then(|value| value.trim().parse::<i32>().ok())
                             .unwrap_or(0)
                             != 0,
                         writable: flag281
                             .get(index)
-                            .and_then(|value| value.parse::<i32>().ok())
+                            .and_then(|value| value.trim().parse::<i32>().ok())
                             .unwrap_or(0)
                             != 0,
                     })
@@ -5017,7 +5153,7 @@ impl<'a> SectionReader<'a> {
             "ACDB_MTEXTOBJECTCONTEXTDATA_CLASS" => {
                 // AutoCAD: no subclass marker, fields follow the annotation
                 // scale groups, 10 = x-axis direction, 11 = insertion point.
-                // Older opencadcodec output: an AcDbMTextObjectContextData marker
+                // Older acadrust output: an AcDbMTextObjectContextData marker
                 // with the two points the other way round.
                 let legacy = fields.has("AcDbMTextObjectContextData", 70);
                 let section = if legacy {
@@ -5273,7 +5409,11 @@ impl<'a> SectionReader<'a> {
         })
     }
 
-    fn read_class_object_dxf(&mut self, dxf_name: &str, version: DxfVersion) -> Result<ClassObject> {
+    fn read_class_object_dxf(
+        &mut self,
+        dxf_name: &str,
+        version: DxfVersion,
+    ) -> Result<ClassObject> {
         let mut object = ClassObject::default();
         let mut fields = ClassDxfFields::default();
         let mut section = String::new();
@@ -5471,14 +5611,12 @@ impl<'a> SectionReader<'a> {
                     shadow_softness: fields.i16(section, 280) as u8,
                 })
             }
-            "RENDERSETTINGS" => {
-                ClassObjectData::RenderSettings(class_dxf_render_settings(
+            "RENDERSETTINGS" => ClassObjectData::RenderSettings(class_dxf_render_settings(
                     &mut fields,
                     version >= DxfVersion::AC1027,
                     false,
                     version,
-                ))
-            }
+            )),
             "MENTALRAYRENDERSETTINGS" => {
                 let base = class_dxf_render_settings(&mut fields, false, false, version);
                 let section = "AcDbMentalRayRenderSettings";
@@ -5732,9 +5870,12 @@ impl<'a> SectionReader<'a> {
             "ACDBPOINTCLOUDDEF" | "POINTCLOUDDEF" => ClassObjectData::PointCloudDefinition(
                 class_dxf_point_cloud_definition(&mut fields, "AcDbPointCloudDef"),
             ),
-            "ACDBPOINTCLOUDDEF_EX" | "ACDBPOINTCLOUDDEFEX" | "POINTCLOUDDEFEX" => ClassObjectData::PointCloudDefinitionEx(
-                class_dxf_point_cloud_definition(&mut fields, "AcDbPointCloudDefEx"),
-            ),
+            "ACDBPOINTCLOUDDEF_EX" | "ACDBPOINTCLOUDDEFEX" | "POINTCLOUDDEFEX" => {
+                ClassObjectData::PointCloudDefinitionEx(class_dxf_point_cloud_definition(
+                    &mut fields,
+                    "AcDbPointCloudDefEx",
+                ))
+            }
             "ACDBPOINTCLOUDDEF_REACTOR" | "POINTCLOUDDEF_REACTOR" => {
                 ClassObjectData::PointCloudDefinitionReactor(PointCloudDefinitionReactor {
                     class_version: fields.i32("AcDbPointCloudDefReactor", 90),
@@ -5877,7 +6018,9 @@ impl<'a> SectionReader<'a> {
                             DataTableCellType::Double => value.real = fields.f64(section, 40),
                             DataTableCellType::Text => value.text = fields.string(section, 3),
                             DataTableCellType::Point => value.point = fields.point3(section, 10),
-                            DataTableCellType::ObjectId => value.handle = fields.handle(section, 331),
+                            DataTableCellType::ObjectId => {
+                                value.handle = fields.handle(section, 331)
+                            }
                             _ => unreachable!("cell type checked above"),
                         }
                         rows.push(value);
@@ -6484,7 +6627,7 @@ impl<'a> SectionReader<'a> {
         // orphaned dictionary entries.
         document.objects.clear();
 
-        while let Some(pair) = self.reader.read_pair()? {
+        while let Some(pair) = self.read_section_pair()? {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
                 break;
             }
@@ -6492,6 +6635,7 @@ impl<'a> SectionReader<'a> {
             if pair.code == 0 {
                 let before = document.objects.len();
                 self.reader.record_xdata(true);
+                let result: Result<()> = (|| {
                 match pair.value_string.as_str() {
                     "DICTIONARY" => {
                         if let Some(obj) = self.read_dictionary()? {
@@ -6701,7 +6845,8 @@ impl<'a> SectionReader<'a> {
                             .insert(obj.handle, ObjectType::FieldList(obj));
                     }
                     name if is_dynamic_block_object_name(name) => {
-                        let object = self.read_dynamic_block_object_dxf(name, document.version)?;
+                            let object =
+                                self.read_dynamic_block_object_dxf(name, document.version)?;
                         if let DynamicBlockData::VisibilityParameter(parameter) = &object.data {
                             document
                                 .block_visibility_params
@@ -6738,7 +6883,8 @@ impl<'a> SectionReader<'a> {
                             .insert(object.handle, ObjectType::ObjectContextData(object));
                     }
                     name if is_associative_object_name(name) => {
-                        let object = self.read_associative_object_dxf(name, document.version)?;
+                            let object =
+                                self.read_associative_object_dxf(name, document.version)?;
                         document
                             .objects
                             .insert(object.handle, ObjectType::Associative(object));
@@ -6746,7 +6892,8 @@ impl<'a> SectionReader<'a> {
                     name if is_class_object_name(name) => {
                         let object = self.read_class_object_dxf(name, document.version)?;
                         if let ClassObjectData::SectionViewStyle(style) = &object.data {
-                            document.section_view_style = Some(crate::entities::SectionViewStyle {
+                                document.section_view_style =
+                                    Some(crate::entities::SectionViewStyle {
                                 show_arrows: style.flags & 0x02 != 0,
                                 show_plane_line: style.flags & 0x08 != 0,
                                 show_end_lines: style.flags & 0x20 != 0,
@@ -6833,6 +6980,15 @@ impl<'a> SectionReader<'a> {
                             },
                         );
                     }
+                }
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    if self.failsafe {
+                        self.recover_record(error)?;
+                        continue;
+                    }
+                    return Err(error);
                 }
                 self.decoded_records = self
                     .decoded_records
@@ -7391,7 +7547,8 @@ impl<'a> SectionReader<'a> {
             40, 41, 63, 64, 65, 75, 42, 92, 66, 43, 76, 77, 78, 67, 79, 170, 171, 290, 174, 175,
             93, 44, 173, 45,
         ];
-        let mut legacy_properties: Vec<VisualStyleProperty> = VisualStyle::new().legacy_properties();
+        let mut legacy_properties: Vec<VisualStyleProperty> =
+            VisualStyle::new().legacy_properties();
         let mut legacy_color_slot: Option<usize> = None;
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -9188,7 +9345,14 @@ impl<'a> SectionReader<'a> {
             match pair.code {
                 5 => value.handle = parse_dxf_handle(&pair.value_string),
                 330 if value.owner.is_null() => value.owner = parse_dxf_handle(&pair.value_string),
-                90 => count = pair.value_string.trim().parse::<usize>().unwrap_or(0).min(20_000),
+                90 => {
+                    count = pair
+                        .value_string
+                        .trim()
+                        .parse::<usize>()
+                        .unwrap_or(0)
+                        .min(20_000)
+                }
                 290 => value.unknown = pair.value_string.trim().parse::<i32>().unwrap_or(0) != 0,
                 330 => {
                     if value.fields.len() < count {
@@ -9259,6 +9423,7 @@ impl<'a> SectionReader<'a> {
             }
 
             if pair.code == 0 && pair.value_string == "LAYER" {
+                self.reader.record_xdata(true);
                 if let Some((layer, xdictionary)) = self.read_layer_entry()? {
                     if let Some(xdictionary) = xdictionary {
                         document.xdic_by_handle.insert(layer.handle, xdictionary);
@@ -9266,6 +9431,7 @@ impl<'a> SectionReader<'a> {
                     document.layers.add_or_replace(layer);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             } else if pair.code == 5 {
                 if let Ok(handle) = u64::from_str_radix(pair.value_string.trim(), 16) {
                     table_handle = Handle::new(handle);
@@ -9400,10 +9566,12 @@ impl<'a> SectionReader<'a> {
                     document.header.linetype_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "LTYPE" {
+                self.reader.record_xdata(true);
                 if let Some(linetype) = self.read_linetype_entry()? {
                     document.line_types.add_or_replace(linetype);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -9545,6 +9713,7 @@ impl<'a> SectionReader<'a> {
                     document.header.style_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "STYLE" {
+                self.reader.record_xdata(true);
                 if let Some(style) = self.read_textstyle_entry()? {
                     // Shape-file styles all have an empty name; keep each one
                     // (as the DWG reader does) or every shape linetype but
@@ -9556,6 +9725,7 @@ impl<'a> SectionReader<'a> {
                     }
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -9642,6 +9812,14 @@ impl<'a> SectionReader<'a> {
                     }) {
                         style.true_type_font = face;
                     }
+                    if let Some(flags) = xdata.get_record("ACAD").and_then(|record| {
+                        record.values.iter().find_map(|value| match value {
+                            XDataValue::Integer32(flags) => Some(*flags),
+                            _ => None,
+                        })
+                    }) {
+                        style.true_type_font_flags = flags;
+                    }
                 }
                 _ => {}
             }
@@ -9698,6 +9876,7 @@ impl<'a> SectionReader<'a> {
                     }
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
 
@@ -9841,7 +10020,8 @@ impl<'a> SectionReader<'a> {
             if let Some(units) = units.filter(|_| !units_seen) {
                 block_record.units = units;
             }
-            xdata.remove_record("ACAD");
+            // The record stays: the writer replaces only its `DesignCenter
+            // Data` group, so the application's other values survive.
         }
 
         Ok(Some((block_record, reactors, xdata)))
@@ -9864,6 +10044,7 @@ impl<'a> SectionReader<'a> {
                     document.header.dimstyle_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "DIMSTYLE" {
+                self.reader.record_xdata(true);
                 if let Some(mut dimstyle) = self.read_dimstyle_entry()? {
                     // DXF names the dimension text style only by handle (group 340);
                     // resolve the name from the STYLE table, which is read first.
@@ -9879,6 +10060,7 @@ impl<'a> SectionReader<'a> {
                     document.dim_styles.add_or_replace(dimstyle);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -9961,7 +10143,7 @@ impl<'a> SectionReader<'a> {
                 }
                 50 => {
                     if let Some(v) = pair.as_double() {
-                        ds.dimjogang = v;
+                        ds.dimjogang = v.to_radians();
                     }
                 }
                 140 => {
@@ -10317,10 +10499,12 @@ impl<'a> SectionReader<'a> {
                     document.header.appid_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "APPID" {
+                self.reader.record_xdata(true);
                 if let Some(appid) = self.read_appid_entry()? {
                     document.app_ids.add_or_replace(appid);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -10367,10 +10551,12 @@ impl<'a> SectionReader<'a> {
                     document.header.view_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "VIEW" {
+                self.reader.record_xdata(true);
                 if let Some(view) = self.read_view_entry()? {
                     document.views.add_or_replace(view);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -10592,10 +10778,12 @@ impl<'a> SectionReader<'a> {
                     document.header.vport_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "VPORT" {
+                self.reader.record_xdata(true);
                 if let Some(vport) = self.read_vport_entry()? {
                     document.vports.add_allow_duplicate(vport);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -10949,10 +11137,12 @@ impl<'a> SectionReader<'a> {
                     document.header.ucs_control_handle = Handle::new(handle);
                 }
             } else if pair.code == 0 && pair.value_string == "UCS" {
+                self.reader.record_xdata(true);
                 if let Some(ucs) = self.read_ucs_entry()? {
                     document.ucss.add_or_replace(ucs);
                     self.decoded_records = self.decoded_records.saturating_add(1);
                 }
+                self.read_object_xdata(document)?;
             }
         }
         Ok(())
@@ -11038,9 +11228,9 @@ impl<'a> SectionReader<'a> {
 
     // ===== Common Entity/Object Code Helpers =====
 
-    /// Read an ATTRIB/ATTDEF R2018+ embedded MTEXT object (code 101 block). A
-    /// multiline attribute keeps its real text here (the entity's own code 1
-    /// is empty), so the caller adopts the value when non-empty.
+    /// Read an ATTRIB/ATTDEF R2018+ embedded MTEXT object (code 101 block) and
+    /// return its text. A multiline attribute keeps its real text here (the
+    /// entity's own code 1 is empty), so the caller adopts this when non-empty.
     /// MTEXT splits long text into 250-char `3` continuation chunks ending in a
     /// final `1` chunk; concatenate in that order.
     fn read_attrib_embedded_mtext(&mut self) -> Result<MText> {
@@ -11054,6 +11244,7 @@ impl<'a> SectionReader<'a> {
         let mut insertion = PointReader::new();
         let mut normal = PointReader::new();
         let mut x_direction = PointReader::new();
+        let mut rotation_from_code50 = None;
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 || pair.code >= 1000 {
                 self.reader.push_back(pair);
@@ -11082,7 +11273,7 @@ impl<'a> SectionReader<'a> {
                 46 => {
                     mtext.rectangle_height = pair.as_double().filter(|h| *h != 0.0);
                 }
-                50 => mtext.rotation = pair.as_double().unwrap_or(0.0).to_radians(),
+                50 => rotation_from_code50 = pair.as_double().map(f64::to_radians),
                 71 => {
                     mtext.attachment_point = match pair.as_i16().unwrap_or(1) {
                         2 => AttachmentPoint::TopCenter,
@@ -11123,6 +11314,11 @@ impl<'a> SectionReader<'a> {
                 mtext.rotation = xd.y.atan2(xd.x);
                 mtext.dwg_x_direction = Some(xd);
             }
+        } else if let Some(rotation) = rotation_from_code50 {
+            let direction = crate::types::Matrix3::arbitrary_axis(mtext.normal)
+                * Vector3::new(rotation.cos(), rotation.sin(), 0.0);
+            mtext.rotation = direction.y.atan2(direction.x);
+            mtext.dwg_x_direction = Some(direction);
         }
         Ok(mtext)
     }
@@ -12946,6 +13142,7 @@ impl<'a> SectionReader<'a> {
         let mut insertion = PointReader::new();
         let mut normal = PointReader::new();
         let mut x_direction = PointReader::new();
+        let mut rotation_from_code50 = None;
         let mut reading_columns = false;
 
         while let Some(pair) = self.reader.read_pair()? {
@@ -13005,7 +13202,7 @@ impl<'a> SectionReader<'a> {
                                 columns.heights.push(value);
                             }
                         } else {
-                            mtext.rotation = value.to_radians();
+                            rotation_from_code50 = Some(value.to_radians());
                         }
                     }
                 }
@@ -13146,7 +13343,13 @@ impl<'a> SectionReader<'a> {
         if let Some(xd) = x_direction.get_point() {
             if xd.x != 0.0 || xd.y != 0.0 {
                 mtext.rotation = xd.y.atan2(xd.x);
+                mtext.dwg_x_direction = Some(xd);
             }
+        } else if let Some(rotation) = rotation_from_code50 {
+            let direction = crate::types::Matrix3::arbitrary_axis(mtext.normal)
+                * Vector3::new(rotation.cos(), rotation.sin(), 0.0);
+            mtext.rotation = direction.y.atan2(direction.x);
+            mtext.dwg_x_direction = Some(direction);
         }
 
         Ok(Some(mtext))
@@ -14512,8 +14715,10 @@ impl<'a> SectionReader<'a> {
                     if crop_points_expected == 0 {
                         if let Some(mut value) = crop.take() {
                             value.plane = crop_plane.get_point().unwrap_or(Vector3::ZERO);
-                            value.x_direction = crop_x_direction.get_point().unwrap_or(Vector3::UNIT_X);
-                            value.y_direction = crop_y_direction.get_point().unwrap_or(Vector3::UNIT_Y);
+                            value.x_direction =
+                                crop_x_direction.get_point().unwrap_or(Vector3::UNIT_X);
+                            value.y_direction =
+                                crop_y_direction.get_point().unwrap_or(Vector3::UNIT_Y);
                             croppings.push(value);
                         }
                     }
@@ -14543,11 +14748,16 @@ impl<'a> SectionReader<'a> {
                         }
                         crop_point = PointReader::new();
                         // The crop's last point ends it.
-                        if crop.as_ref().is_some_and(|value| value.points.len() >= crop_points_expected) {
+                        if crop
+                            .as_ref()
+                            .is_some_and(|value| value.points.len() >= crop_points_expected)
+                        {
                             if let Some(mut value) = crop.take() {
                                 value.plane = crop_plane.get_point().unwrap_or(Vector3::ZERO);
-                                value.x_direction = crop_x_direction.get_point().unwrap_or(Vector3::UNIT_X);
-                                value.y_direction = crop_y_direction.get_point().unwrap_or(Vector3::UNIT_Y);
+                                value.x_direction =
+                                    crop_x_direction.get_point().unwrap_or(Vector3::UNIT_X);
+                                value.y_direction =
+                                    crop_y_direction.get_point().unwrap_or(Vector3::UNIT_Y);
                                 croppings.push(value);
                             }
                         }
@@ -15177,6 +15387,9 @@ impl<'a> SectionReader<'a> {
             }
             dc.text_rotation = text_rotation;
             dc.horizontal_direction = horizontal_direction;
+            if let Some(point) = insertion_point.get_point() {
+                dc.insertion_point = point;
+            }
             dc.text_user_positioned = text_user_positioned;
             dc.attachment_point = attachment_point;
             dc.line_spacing_style = line_spacing_style;
@@ -16136,8 +16349,16 @@ impl<'a> SectionReader<'a> {
                                 }
                             }
                             "SEQEND" => {
-                                // Consume SEQEND contents and stop
-                                self.skip_entity()?;
+                                // The sequence marker has its own persistent identity.
+                                while let Some(pair) = self.reader.read_pair()? {
+                                    if pair.code == 0 {
+                                        self.reader.push_back(pair);
+                                        break;
+                                    }
+                                    if pair.code == 5 {
+                                        insert.seqend_handle = pair.as_handle().map(Handle::new);
+                                    }
+                                }
                                 break;
                             }
                             _ => {
@@ -16535,7 +16756,9 @@ impl<'a> SectionReader<'a> {
                 }
                 50 => {
                     if let Some(r) = pair.as_double() {
-                        shape.rotation = r;
+                        // DXF stores SHAPE rotation in degrees; the entity
+                        // model uses radians, like the DWG reader and writer.
+                        shape.rotation = r.to_radians();
                     }
                 }
                 // Previously dropped: thickness, relative X scale, oblique
@@ -16552,7 +16775,8 @@ impl<'a> SectionReader<'a> {
                 }
                 51 => {
                     if let Some(o) = pair.as_double() {
-                        shape.oblique_angle = o;
+                        // DXF stores SHAPE oblique angle in degrees.
+                        shape.oblique_angle = o.to_radians();
                     }
                 }
                 210 | 220 | 230 => {
@@ -17044,7 +17268,8 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 340 => {
-                    vp.clip_boundary_handle = pair.as_handle().map(Handle::new).unwrap_or(Handle::NULL);
+                    vp.clip_boundary_handle =
+                        pair.as_handle().map(Handle::new).unwrap_or(Handle::NULL);
                 }
                 281 => {
                     if let Some(v) = pair.as_i16() {
@@ -17151,6 +17376,7 @@ impl<'a> SectionReader<'a> {
         vp.stacking = status_field
             .filter(|status| *status > 0 && *status != vp.id)
             .unwrap_or(0);
+        vp.dxf_status = status_field.filter(|value| *value != vp.id);
 
         Ok(Some(vp))
     }
@@ -20124,14 +20350,17 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 284..=289 if cur.is_none() => {
-                    if let (Some(overrides), Some(value)) =
-                        (table.legacy_border_visibility.as_mut(), pair.as_bool())
-                    {
+                    if let (Some(overrides), Some(value)) = (
+                        table.legacy_border_visibility.as_mut(),
+                        pair.as_i16().map(|value| value != 0),
+                    ) {
                         overrides.values.push(value);
                     }
                 }
                 285 | 286 | 288 | 289 => {
-                    if let (Some(c), Some(value)) = (cur.as_mut(), pair.as_bool()) {
+                    if let (Some(c), Some(value)) =
+                        (cur.as_mut(), pair.as_i16().map(|value| value != 0))
+                    {
                         let style = c.style.get_or_insert_with(crate::entities::CellStyle::new);
                         let border = match pair.code {
                             285 => &mut style.right_border,
@@ -21196,6 +21425,7 @@ impl<'a> SectionReader<'a> {
         if let Some(row) = rows.get(2) {
             ts.header_row_style = row.clone();
         }
+        ts.sync_suppression_flags();
         ts.raw_dxf_codes = Some(raw_dxf_codes);
         Ok(Some(ts))
     }
@@ -21243,8 +21473,6 @@ impl<'a> SectionReader<'a> {
         Ok(Some(scale))
     }
 
-    /// Store the XDATA recorded while an object was read in
-    /// `object_xdata`, unless the object keeps it in its own form.
     fn read_object_xdata(&mut self, document: &mut CadDocument) -> Result<()> {
         let (handle, pairs) = self.reader.take_recorded_xdata();
         self.reader.record_xdata(false);
@@ -21258,7 +21486,7 @@ impl<'a> SectionReader<'a> {
             || document
                 .objects
                 .get(&handle)
-                .is_none_or(crate::io::dxf::object_has_own_dxf_xdata)
+                .is_some_and(crate::io::dxf::object_has_own_dxf_xdata)
         {
             return Ok(());
         }
@@ -21687,7 +21915,7 @@ mod tests {
         mtext.drawing_direction = DrawingDirection::TopToBottom;
         mtext.line_spacing_factor = 1.5;
         mtext.normal = Vector3::new(0.0, 0.0, -1.0);
-        let _ = doc.add_entity(EntityType::MText(mtext));
+        let _ = doc.add_entity(EntityType::MText(Box::new(mtext)));
 
         let doc2 = roundtrip(doc);
         let entities: Vec<_> = doc2.entities().collect();
@@ -22030,7 +22258,7 @@ mod tests {
         let mut mtext = crate::entities::mtext::MText::new();
         mtext.value = "Hello\nWorld".to_string();
         mtext.insertion_point = Vector3::new(10.0, 20.0, 0.0);
-        let _ = doc.add_entity(EntityType::MText(mtext));
+        let _ = doc.add_entity(EntityType::MText(Box::new(mtext)));
 
         let doc2 = roundtrip_binary(doc);
         let entities: Vec<_> = doc2.entities().collect();
@@ -22181,8 +22409,6 @@ mod tests {
         );
     }
 
-    /// A SPATIAL_FILTER with a translated inverse must survive a DXF
-    /// write/read round-trip with its translation intact.
     #[test]
     fn spatial_filter_dxf_roundtrip_preserves_translation() {
         use crate::objects::{ObjectType, SpatialFilter};

@@ -13,7 +13,7 @@ fn drawing(bits: i16) -> CadDocument {
     view.height = 100.;
     view.grid_flags = GridFlags::from_bits(bits);
     view.status = opencadcodec::entities::ViewportStatusFlags::from_bits(NON_GRID_FLAGS);
-    doc.add_entity_to_layout(EntityType::Viewport(view), "Layout1")
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(view)), "Layout1")
         .unwrap();
     doc
 }

@@ -2,7 +2,7 @@
 //!
 //! A pure Rust library for reading, writing, and inspecting CAD files in DXF
 //! (ASCII and binary) and native binary DWG formats. DXF support spans R12
-//! through R2018+; DWG support spans R13 through R2018+.
+//! through R2018+; DWG support spans R12 through R2018+.
 //!
 //! ## Highlights
 //!
@@ -139,7 +139,7 @@
 //!
 //! | Code | AutoCAD | DXF | DWG |
 //! |------|---------|-----|-----|
-//! | AC1009 | R12 | R/W | — |
+//! | AC1009 | R12 | R/W | R/W |
 //! | AC1012 | R13 | R/W | R/W |
 //! | AC1014 | R14 | R/W | R/W |
 //! | AC1015 | 2000 | R/W | R/W |
@@ -179,6 +179,10 @@ pub mod vba;
 pub mod xdata;
 
 // Re-export commonly used types
+pub use audit::{
+    AuditIssue, AuditIssueCode, AuditLocation, AuditReport, AuditSeverity, RepairAction,
+    RepairReport,
+};
 pub use error::{DxfError, Result};
 pub use types::{
     BoundingBox2D, BoundingBox3D, Color, DxfVersion, Handle, LineWeight, Transparency, Vector2,
@@ -213,6 +217,7 @@ pub use io::read::{
     push_read_diagnostic, ReadDiagnostic, ReadOutcome, ReadStage, ReadStats, SourceFormat,
     MAX_READ_DIAGNOSTICS,
 };
+pub use io::recover::RecoverOutcome;
 
 // Re-export ACIS types
 pub use entities::acis::primitives;
@@ -228,6 +233,8 @@ pub use io::import::{
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub mod audit;
 
 #[cfg(test)]
 mod tests {

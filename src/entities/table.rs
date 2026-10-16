@@ -644,7 +644,6 @@ pub struct CellContent {
 }
 
 impl CellContent {
-    /// Whether this content's own format sets `property`.
     pub fn sets(&self, property: CellStylePropertyFlags) -> bool {
         let bits = (self.format_property_flags | self.format_override_flags) as u32;
         bits & property.bits() == property.bits()
@@ -773,8 +772,6 @@ pub struct CellStyle {
     pub property_flags: CellStylePropertyFlags,
     /// Complete style override flag word.
     pub override_flags: i32,
-    /// `override_flags` holds the legacy DXF cell bits (a cell read from
-    /// DXF) rather than the binary layout's property bits.
     #[cfg_attr(feature = "serde", serde(default))]
     pub legacy_override_bits: bool,
     /// Nested content-format metadata.
@@ -829,9 +826,6 @@ pub struct CellStyle {
 }
 
 impl CellStyle {
-    /// The properties this style sets: the ones it names, plus its override
-    /// bits — in the binary layout, or the legacy DXF layout a style read
-    /// from DXF keeps (whose meaning `property_flags` already holds).
     pub fn overridden(&self) -> CellStylePropertyFlags {
         if self.legacy_override_bits {
             self.property_flags
@@ -840,7 +834,6 @@ impl CellStyle {
         }
     }
 
-    /// Whether this style sets `property`.
     pub fn sets(&self, property: CellStylePropertyFlags) -> bool {
         self.overridden().contains(property)
     }
@@ -1045,16 +1038,6 @@ impl TableCell {
             .unwrap_or("")
     }
 
-    /// The cell as the binary format keeps it. A cell read from DXF carries
-    /// its own overrides as legacy bits on its style; the binary format keeps
-    /// the text height, text style and content colour on the content (format
-    /// override bits 128, 64, 32) and the alignment and background on the
-    /// style (16, 512), and types a content: a value is a string (data type
-    /// 4, override bits 1 and 2), an empty content a general value (512).
-    ///
-    /// A cell already in the binary layout — read from a binary file, or
-    /// written by this crate — is returned as it is, so saving a drawing
-    /// nobody edited does not rewrite its cells.
     pub fn binary_layout(&self) -> std::borrow::Cow<'_, TableCell> {
         use CellStylePropertyFlags as P;
         const CONTENT: P = P::TEXT_HEIGHT.union(P::TEXT_STYLE).union(P::CONTENT_COLOR);
@@ -1096,6 +1079,26 @@ impl TableCell {
                 }
             }
             if let Some(style) = cell.style.as_mut() {
+                if p.contains(P::BACKGROUND_COLOR) && !style.fill_enabled {
+                    style.background_color = Color::ByBlock;
+                }
+                for (color_bit, weight_bit, edge, border) in [
+                    (0x40, 0x400, CellEdgeFlags::TOP, &mut style.top_border),
+                    (0x80, 0x800, CellEdgeFlags::RIGHT, &mut style.right_border),
+                    (0x100, 0x1000, CellEdgeFlags::BOTTOM, &mut style.bottom_border),
+                    (0x200, 0x2000, CellEdgeFlags::LEFT, &mut style.left_border),
+                ] {
+                    if own.override_flags & color_bit != 0 {
+                        border.override_flags |= BorderPropertyFlags::COLOR;
+                    }
+                    if own.override_flags & weight_bit != 0 {
+                        border.override_flags |=
+                            BorderPropertyFlags::LINE_WEIGHT | BorderPropertyFlags::INVISIBILITY;
+                    }
+                    if own.override_flags & (color_bit | weight_bit) != 0 {
+                        style.applied_border_edges |= edge;
+                    }
+                }
                 style.override_flags = (p & !CONTENT).bits() as i32;
                 style.property_flags = P::NONE;
                 style.legacy_override_bits = false;
@@ -1564,17 +1567,17 @@ fn visit_table_cell_handles(value: &mut TableCell, visit: &mut impl FnMut(&mut H
 }
 
 impl Table {
-    /// Rebuild `merged_ranges` from the per-cell merge dimensions.
-    ///
-    /// DXF stores a merge as the origin cell's `merge_width`/`merge_height`
-    /// (groups 175/176); readers that only see those fields call this so the
-    /// range list agrees with the cells, as it does after a DWG read.
     pub fn sync_merged_ranges_from_cells(&mut self) {
         let ranges = self.canonical_merged_ranges();
         self.merged_ranges = ranges;
     }
 
-    fn canonical_merged_ranges(&self) -> Vec<CellRange> {
+    pub(crate) fn sync_cells_from_merged_ranges(&mut self) {
+        let ranges = self.canonical_merged_ranges();
+        self.set_merged_ranges(ranges);
+    }
+
+    pub(crate) fn canonical_merged_ranges(&self) -> Vec<CellRange> {
         let row_count = self.rows.len();
         let column_count = self.columns.len();
         if row_count == 0 || column_count == 0 {
@@ -1626,15 +1629,32 @@ impl Table {
             for cell in &mut row.cells {
                 cell.merge_width = 1;
                 cell.merge_height = 1;
+                cell.merged = 0;
             }
         }
         self.merged_ranges = ranges;
         for range in &self.merged_ranges {
+            for row in self
+                .rows
+                .iter_mut()
+                .take(range.bottom_row + 1)
+                .skip(range.top_row)
+            {
+                for cell in row
+                    .cells
+                    .iter_mut()
+                    .take(range.right_col + 1)
+                    .skip(range.left_col)
+                {
+                    cell.merged = 1;
+                }
+            }
             if let Some(cell) = self
                 .rows
                 .get_mut(range.top_row)
                 .and_then(|row| row.cells.get_mut(range.left_col))
             {
+                cell.merged = 0;
                 cell.merge_width = range.col_count() as i32;
                 cell.merge_height = range.row_count() as i32;
             }
@@ -2370,9 +2390,6 @@ mod tests {
     }
 }
 
-/// The cell style properties a legacy cell override bit set covers
-/// (`CellStyle::override_flags`): 0x01 alignment, 0x02 / 0x04 background,
-/// 0x08 content colour, 0x10 text style, 0x20 text height.
 pub fn legacy_override_properties(flags: i32) -> CellStylePropertyFlags {
     let mut properties = CellStylePropertyFlags::NONE;
     for (bit, property) in [
@@ -2390,8 +2407,6 @@ pub fn legacy_override_properties(flags: i32) -> CellStylePropertyFlags {
     properties
 }
 
-/// The cell style override bit a DXF group code of a table cell sets (the
-/// legacy layout DXF table cells use in `CellStyle::override_flags`).
 pub fn cell_override_bit(code: i32) -> Option<i32> {
     Some(match code {
         170 => 0x01,

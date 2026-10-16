@@ -1,6 +1,3 @@
-//! DXF write -> read round-trip regressions: each test builds an entity with
-//! non-default values, round-trips it through the DXF writer and reader, and
-//! checks the fields the writer emits come back.
 
 use std::io::Cursor;
 
@@ -89,7 +86,7 @@ fn light_boolean_flags_survive_dxf_roundtrip() {
     l.use_attenuation_limits = true;
     l.cast_shadows = true;
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
-    doc.add_entity(EntityType::Light(l)).unwrap();
+    doc.add_entity(EntityType::Light(Box::new(l))).unwrap();
     let rt = dxf_roundtrip(&doc);
     let l = rt
         .entities()

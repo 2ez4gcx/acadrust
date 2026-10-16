@@ -81,7 +81,7 @@ fn dwg_keeps_gradient_color_book_names() {
         },
     ];
     let mut doc = CadDocument::new();
-    doc.add_entity(EntityType::Hatch(hatch.clone())).unwrap();
+    doc.add_entity(EntityType::Hatch(Box::new(hatch.clone()))).unwrap();
     let bytes = DwgWriter::write_to_vec(&doc).unwrap();
     let back = DwgReader::from_stream_with_options(Cursor::new(bytes), DwgReadOptions::failsafe())
         .read()

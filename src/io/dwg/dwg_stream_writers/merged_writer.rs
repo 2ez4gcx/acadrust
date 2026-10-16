@@ -81,8 +81,9 @@ impl DwgMergedWriter {
     pub fn with_encoding(
         version: DwgVersion,
         dxf_version: DxfVersion,
-        encoding: &'static encoding_rs::Encoding,
+        encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
     ) -> Self {
+        let encoding = encoding.into();
         let mode = if version >= DwgVersion::AC21 {
             MergeMode::ThreeStream
         } else {

@@ -9,7 +9,7 @@ fn drawing(mode: i16) -> CadDocument {
     view.width = 160.;
     view.height = 100.;
     view.shade_plot_mode = mode;
-    doc.add_entity_to_layout(EntityType::Viewport(view), "Layout1")
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(view)), "Layout1")
         .unwrap();
     doc
 }

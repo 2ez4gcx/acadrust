@@ -1,7 +1,7 @@
 //! Import external 3D file formats into [`CadDocument`].
 //!
 //! This module provides importers that convert common 3D interchange formats
-//! into opencadcodec entities.  Tessellated formats produce [`Mesh`] entities.
+//! into acadrust entities.  Tessellated formats produce [`Mesh`] entities.
 //!
 //! # Quick start
 //!

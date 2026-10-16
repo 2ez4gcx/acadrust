@@ -105,7 +105,7 @@ fn transcode_xrecord_xdata(
     raw: &[u8],
     src_unicode: bool,
     tgt_unicode: bool,
-    target_encoding: &'static encoding_rs::Encoding,
+    target_encoding: crate::io::dxf::code_page::LegacyEncoding,
     target_code_page: u8,
 ) -> Vec<u8> {
     if src_unicode == tgt_unicode {
@@ -208,7 +208,7 @@ fn transcode_xrecord_xdata(
 fn encode_xrecord_entries(
     entries: &[XRecordEntry],
     unicode: bool,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
     code_page: u8,
 ) -> Vec<u8> {
     let mut output = Vec::new();
@@ -338,8 +338,6 @@ pub(crate) fn object_class_names(object: &ObjectType) -> Vec<std::borrow::Cow<'_
     vec![Cow::Borrowed(name)]
 }
 
-/// Table style flag bit 8 is found in older files but never written back:
-/// a re-save of such a style stores the flags without it.
 const STALE_TABLE_STYLE_FLAG: i16 = 8;
 
 impl<'a> DwgObjectWriter<'a> {
@@ -373,13 +371,19 @@ impl<'a> DwgObjectWriter<'a> {
         if self.lacks_object_class(obj) {
             return;
         }
-        let preserved_handle = match obj {
-            ObjectType::DynamicBlock(value) => Some(value.handle),
-            ObjectType::Associative(value) => Some(value.handle),
+        let preserved_record = match obj {
+            ObjectType::DynamicBlock(value) => Some((value.handle, value.xdictionary_handle)),
+            ObjectType::Associative(value) => Some((value.handle, value.xdictionary_handle)),
             _ => None,
         };
-        if let Some(handle) = preserved_handle {
-            if self.document.original_objects.get(&handle) == Some(obj) {
+        if let Some((handle, source_dictionary)) = preserved_record {
+            let effective_dictionary = source_dictionary.or_else(|| {
+                self.extension_dictionary_handle(handle)
+                    .filter(|dictionary| self.document.objects.contains_key(dictionary))
+            });
+            if self.document.original_objects.get(&handle) == Some(obj)
+                && effective_dictionary == source_dictionary
+            {
                 if let Some((_, raw)) = self.document.raw_records.get(&handle.value()) {
                     if raw.version == self.dxf_version {
                         let raw = raw.clone();
@@ -1157,11 +1161,12 @@ impl<'a> DwgObjectWriter<'a> {
         if !self.version.r2010_plus() {
             self.writer.write_variable_text(&value.name);
             self.writer.write_bit_short(value.flow_direction as i16);
-            self.writer.write_bit_short(value.flags.bits() & !STALE_TABLE_STYLE_FLAG);
+            self.writer
+                .write_bit_short(value.effective_flags().bits() & !STALE_TABLE_STYLE_FLAG);
             self.writer.write_bit_double(value.horizontal_margin);
             self.writer.write_bit_double(value.vertical_margin);
-            self.writer.write_bit(value.title_suppressed);
-            self.writer.write_bit(value.header_suppressed);
+            self.writer.write_bit(!value.has_title_row());
+            self.writer.write_bit(!value.has_header_row());
             self.write_legacy_table_row_style(&value.data_row_style);
             self.write_legacy_table_row_style(&value.title_row_style);
             self.write_legacy_table_row_style(&value.header_row_style);
@@ -1169,7 +1174,8 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_byte(value.modern_unknown_byte);
             self.writer.write_variable_text(&value.name);
             // The R2010+ flags field carries the table style flags.
-            self.writer.write_bit_long((value.flags.bits() & !STALE_TABLE_STYLE_FLAG) as i32);
+            self.writer
+                .write_bit_long((value.effective_flags().bits() & !STALE_TABLE_STYLE_FLAG) as i32);
             self.writer.write_bit_long(value.modern_unknown_long2);
             self.writer.write_handle(
                 DwgReferenceType::HardOwnership,
@@ -1309,9 +1315,6 @@ impl<'a> DwgObjectWriter<'a> {
         self.write_named_table_cell_style(&value);
     }
 
-    /// The base "Table" cell style of a style without one: only the margins
-    /// come from the style; content, fill and borders are left to the named
-    /// cell styles.
     fn write_default_modern_table_cell_style(&mut self, value: &TableStyle) {
         let cell_style = TableCellStyleData {
             style_type: 5,
@@ -2242,7 +2245,7 @@ impl<'a> DwgObjectWriter<'a> {
                 let encoding = crate::io::dxf::code_page::encoding_from_code_page(
                     &self.document.header.code_page,
                 )
-                .unwrap_or(encoding_rs::WINDOWS_1252);
+                .unwrap_or(encoding_rs::WINDOWS_1252.into());
                 let bytes = crate::io::dwg::eed_codec::encode_values_with_encoding(
                     self.version.r2007_plus(),
                     &[crate::xdata::XDataValue::String("NOLOAD".to_string())],
@@ -2960,8 +2963,15 @@ impl<'a> DwgObjectWriter<'a> {
 
         if self.version.r2004_plus() {
             self.writer.write_bit_short(0);
-            let (r, g, b) = bc.color.rgb().unwrap_or((0, 0, 0));
-            let true_color = (0xC2u32 << 24) | ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
+            let true_color = match bc.color {
+                crate::types::Color::ByLayer => 0xC000_0000,
+                crate::types::Color::ByBlock => 0xC100_0000,
+                crate::types::Color::Index(index) => 0xC300_0000 | u32::from(index),
+                crate::types::Color::None => 0xC800_0000,
+                crate::types::Color::Rgb { r, g, b } => {
+                    0xC200_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)
+                }
+            };
             self.writer.write_bit_long(true_color as i32);
 
             let mut flags = 0u8;
