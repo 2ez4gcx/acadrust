@@ -3084,14 +3084,22 @@ impl SatDocument {
     /// errors in the ACIS kernel when encountered in SAB binary data.
     ///
     /// This method removes all non-core entities and remaps pointer
-    /// references in the remaining records.
+    /// references in the remaining records. Face and edge colour attributes
+    /// stay: the modeler's own binary data carries them, and they are what
+    /// gives a face a colour of its own.
     pub fn strip_for_sab(&mut self) {
         // Determine which records to keep.
         // Core ACIS base types (last segment after hyphen split):
         let keep: Vec<bool> = self
             .records
             .iter()
-            .map(|r| Self::is_core_geometry_type(&r.entity_type))
+            .map(|r| {
+                Self::is_core_geometry_type(&r.entity_type)
+                    || matches!(
+                        r.entity_type.as_str(),
+                        "color-adesk-attrib" | "truecolor-adesk-attrib"
+                    )
+            })
             .collect();
 
         let kept_count = keep.iter().filter(|&&k| k).count();
@@ -3129,7 +3137,7 @@ impl SatDocument {
             let mut rec = record;
             rec.index = index_map[old_idx];
 
-            // Remap attribute pointer — always null since all attribs are stripped
+            // Remap the attribute pointer: null unless a kept attribute heads it.
             rec.attribute = SatPointer::new(remap(rec.attribute.0));
 
             // Remap all pointer tokens
@@ -3209,6 +3217,84 @@ impl SatDocument {
             }
             _ => None,
         }
+    }
+
+    /// One document per `body` record, each holding that body's records —
+    /// everything its pointers reach without crossing into another body —
+    /// renumbered in their original order, plus any `asmheader` record.
+    ///
+    /// A file with several bodies restores as several objects, one each; a
+    /// document with at most one body comes back unchanged.
+    pub fn split_bodies(&self) -> Vec<SatDocument> {
+        let position = |pointer: SatPointer| -> Option<usize> {
+            let at = pointer.index()?;
+            if self.records.get(at).is_some_and(|record| record.index == at as i32) {
+                return Some(at);
+            }
+            self.records.iter().position(|record| record.index == pointer.0)
+        };
+        let bodies: Vec<usize> = (0..self.records.len())
+            .filter(|&at| self.records[at].entity_type == "body")
+            .collect();
+        if bodies.len() <= 1 {
+            return vec![self.clone()];
+        }
+        bodies
+            .iter()
+            .map(|&body| {
+                let mut keep = vec![false; self.records.len()];
+                for (at, record) in self.records.iter().enumerate() {
+                    keep[at] = record.entity_type == "asmheader";
+                }
+                let mut pending = vec![body];
+                keep[body] = true;
+                while let Some(at) = pending.pop() {
+                    for pointer in self.records[at].pointers() {
+                        let Some(next) = position(pointer) else {
+                            continue;
+                        };
+                        if !keep[next] && self.records[next].entity_type != "body" {
+                            keep[next] = true;
+                            pending.push(next);
+                        }
+                    }
+                }
+                let mut index_map = vec![-1i32; self.records.len()];
+                let mut count = 0;
+                for at in 0..self.records.len() {
+                    if keep[at] {
+                        index_map[at] = count;
+                        count += 1;
+                    }
+                }
+                let remap = |pointer: &mut SatPointer| {
+                    if let Some(at) = position(*pointer) {
+                        pointer.0 = index_map[at];
+                    }
+                };
+                let mut document = SatDocument::with_header(self.header.clone());
+                for (at, record) in self.records.iter().enumerate() {
+                    if !keep[at] {
+                        continue;
+                    }
+                    let mut record = record.clone();
+                    record.index = index_map[at];
+                    record.raw_text = None;
+                    remap(&mut record.attribute);
+                    for token in &mut record.tokens {
+                        if let SatToken::Pointer(pointer) = token {
+                            remap(pointer);
+                        }
+                    }
+                    document.records.push(record);
+                }
+                document.header.num_records = document.records.len();
+                document.header.num_bodies = 1;
+                // History records belong to no body and are left behind.
+                document.header.has_history = false;
+                document
+            })
+            .collect()
     }
 
     fn bodies_first(&mut self) {
