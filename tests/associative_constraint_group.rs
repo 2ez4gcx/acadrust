@@ -8,6 +8,90 @@ use opencadcodec::types::Vector3;
 use opencadcodec::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 #[test]
+fn r2010_version_two_group_reads_inline_nodes_with_status_and_active_flags() {
+    use opencadcodec::io::dwg::{
+        dwg_reference_type::DwgReferenceType,
+        dwg_stream_readers::{
+            bit_reader::DwgBitReader, merged_reader::DwgMergedReader,
+            object_reader::associative::read_associative_data,
+        },
+        dwg_stream_writers::bit_writer::DwgBitWriter,
+        DwgVersion,
+    };
+    use opencadcodec::types::DxfVersion;
+    let dxf = DxfVersion::AC1024;
+    let version = DwgVersion::from_dxf_version(dxf).unwrap();
+    let mut main = DwgBitWriter::new(version, dxf);
+    let mut text = DwgBitWriter::new(version, dxf);
+    let mut handles = DwgBitWriter::new(version, dxf);
+    main.write_bit_short(2);
+    main.write_bit_long(0); // action version/status
+    for _ in 0..3 {
+        main.write_bit_long(0);
+    } // action index, max dependency, count
+    for _ in 0..2 {
+        main.write_bit_short(0);
+        main.write_bit_long(0);
+    } // owned params/values
+    main.write_bit_long(2);
+    main.write_bit(false);
+    for point in [Vector3::ZERO, Vector3::UNIT_X, Vector3::UNIT_Y] {
+        main.write_3bit_double(point);
+    }
+    main.write_bit_long(0); // actions
+    main.write_bit_long(9); // next node ID is not a node count
+    main.write_bit_long(2); // inline count; no serialized root or class registry
+    text.write_variable_text("AcConstrainedBoundedLine");
+    main.write_bit_long(1);
+    main.write_byte(3);
+    main.write_bit_long(1);
+    main.write_bit_long(4);
+    main.write_bit_long(0);
+    main.write_3bit_double(Vector3::ZERO);
+    main.write_3bit_double(Vector3::UNIT_X);
+    main.write_bit(false);
+    main.write_3bit_double(Vector3::ZERO);
+    main.write_3bit_double(Vector3::UNIT_X);
+    text.write_variable_text("AcFixedConstraint");
+    main.write_bit_long(4);
+    main.write_byte(7);
+    main.write_bit_long(1);
+    main.write_bit_long(1);
+    main.write_bit_long(1);
+    main.write_bit(false);
+    main.write_bit(true);
+    for _ in 0..4 {
+        handles.write_handle(DwgReferenceType::SoftPointer, 0);
+    }
+    let mut reader = DwgMergedReader::from_readers(
+        DwgBitReader::new(main.take_bytes(), version, dxf),
+        Some(DwgBitReader::new(text.take_bytes(), version, dxf)),
+        Some(DwgBitReader::new(handles.take_bytes(), version, dxf)),
+        dxf,
+    );
+    let AssociativeData::ConstraintGroup(group) =
+        read_associative_data(&mut reader, "ASSOC2DCONSTRAINTGROUP", version, dxf).unwrap()
+    else {
+        panic!()
+    };
+    reader.check_error().unwrap();
+    assert_eq!(group.version, 2);
+    assert_eq!(group.next_node_id, 9);
+    assert_eq!(group.nodes.len(), 3);
+    assert_eq!((group.nodes[1].node_id, group.nodes[1].status), (1, 3));
+    assert_eq!((group.nodes[2].node_id, group.nodes[2].status), (4, 7));
+    assert_eq!(group.nodes[1].connections, vec![4]);
+    assert!(matches!(
+        group.nodes[2].data,
+        AssocConstraintNodeData::Geometrical {
+            owner_id: 1,
+            is_implied: false,
+            is_active: true
+        }
+    ));
+}
+
+#[test]
 fn dwg_constraint_group_counts_only_registered_nodes() {
     let mut document = CadDocument::new();
     let handle = document.allocate_handle();
