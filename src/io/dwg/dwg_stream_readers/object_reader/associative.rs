@@ -1205,27 +1205,40 @@ pub fn read_associative_data(
             // class table, registry or status byte. They load into the
             // current layout and are written back as version 2.
             let legacy = group_version == 0;
-            if legacy {
+            // R2010 version-2 groups also have an inline count/class/node
+            // sequence, with status bytes and active flags. Older releases
+            // of this codec emitted the later registry layout with root ID
+            // zero even for R2010; retain that read compatibility.
+            let inline_nodes = legacy
+                || (!version.r2013_plus(dxf_version) && {
+                    let position = reader.position_in_bits();
+                    let count = reader.read_bit_long();
+                    reader.set_position_in_bits(position);
+                    count > 0
+                });
+            if inline_nodes {
                 let count = safe_count(reader.read_bit_long(), reader);
                 nodes.reserve(count as usize + 1);
                 nodes.push(AssocConstraintNode::default());
                 for _ in 0..count {
                     let class_name = reader.read_variable_text();
-                    let node_id = reader.read_bit_long();
-                    let connection_count = safe_count(reader.read_bit_long(), reader);
-                    let mut connections = Vec::with_capacity(connection_count as usize);
-                    for _ in 0..connection_count {
-                        connections.push(reader.read_bit_long());
-                    }
-                    let data = read_constraint_node_data(reader, &class_name, true);
+                    let mut node = if legacy {
+                        let node_id = reader.read_bit_long();
+                        let count = safe_count(reader.read_bit_long(), reader);
+                        let connections = (0..count).map(|_| reader.read_bit_long()).collect();
+                        AssocConstraintNode {
+                            node_id,
+                            connections,
+                            ..Default::default()
+                        }
+                    } else {
+                        read_constraint_node_common(reader, version, dxf_version)
+                    };
+                    let data = read_constraint_node_data(reader, &class_name, legacy);
                     let unknown = matches!(data, AssocConstraintNodeData::None);
-                    nodes.push(AssocConstraintNode {
-                        node_id,
-                        connections,
-                        class_name,
-                        data,
-                        ..Default::default()
-                    });
+                    node.class_name = class_name;
+                    node.data = data;
+                    nodes.push(node);
                     // An unknown class's data length is unknown; what
                     // follows it cannot be found.
                     if unknown {
