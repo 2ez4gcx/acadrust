@@ -82,7 +82,7 @@ fn r2000_with_template_and_aux_header_after_handles_reads_fully() {
     let doc = sample_document();
     let bytes = DwgWriter::write_to_vec(&doc).expect("DWG write failed");
 
-    // Baseline: opencadcodec's own layout (Template/AuxHeader before Handles).
+    // Baseline: acadrust's own layout (Template/AuxHeader before Handles).
     let baseline = read_dwg(bytes.clone());
     let expected = baseline.entities().count();
     assert!(expected > 0, "baseline DWG must contain entities");

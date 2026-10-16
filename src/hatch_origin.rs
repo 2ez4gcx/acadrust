@@ -209,7 +209,7 @@ mod tests {
         let stale = crate::io::dwg::eed_codec::encode_values_with_encoding(
             true,
             &[XDataValue::Point3D(Vector3::new(1.0, 2.0, 0.0))],
-            encoding_rs::WINDOWS_1252,
+            encoding_rs::WINDOWS_1252.into(),
             30,
             |_| 0,
         );
@@ -222,7 +222,7 @@ mod tests {
                 .raw_dwg_eed
                 .push((app_handle, stale.clone()));
             assert!(hatch.record_pattern_origin(Vector2::new(origin[0], origin[1])));
-            document.add_entity(EntityType::Hatch(hatch)).unwrap();
+            document.add_entity(EntityType::Hatch(Box::new(hatch))).unwrap();
         }
 
         let bytes = DwgWriter::write_to_vec(&document).unwrap();

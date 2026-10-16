@@ -1,24 +1,26 @@
-# opencadcodec
+# acadrust
 
+[![CI](https://github.com/hakanaktt/acadrust/actions/workflows/ci.yml/badge.svg)](https://github.com/hakanaktt/acadrust/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/acadrust.svg)](https://crates.io/crates/acadrust)
+[![Documentation](https://docs.rs/acadrust/badge.svg)](https://docs.rs/acadrust)
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
 
 **A pure Rust crate for reading, writing, and inspecting CAD files.**
 
-opencadcodec handles ASCII and binary DXF plus native binary DWG without requiring
-an installed CAD application. File support spans DXF R12 through R2018+ and DWG
-R13 through R2018+.
+acadrust handles ASCII and binary DXF plus native binary DWG without requiring
+an installed CAD application. File support spans DXF and DWG R12 through R2018+.
 
 ## Quick Start
 
 ```toml
 [dependencies]
-opencadcodec = "0.6.0"
+acadrust = "0.6.4"
 ```
 
 ```rust
-use opencadcodec::{DxfReader, DxfWriter};
+use acadrust::{DxfReader, DxfWriter};
 
-fn main() -> opencadcodec::Result<()> {
+fn main() -> acadrust::Result<()> {
     let doc = DxfReader::from_file("input.dxf")?.read()?;
     println!("{} entities", doc.entities().count());
 
@@ -41,13 +43,13 @@ Enable optional features as needed:
 
 ```toml
 [dependencies]
-opencadcodec = { version = "0.6.0", features = ["serde", "import"] }
+acadrust = { version = "0.6.4", features = ["serde", "import"] }
 ```
 
 ## Features
 
 - **DXF I/O** — ASCII and binary formats, R12 through R2018+
-- **DWG I/O** — Native binary formats, R13 through R2018+
+- **DWG I/O** — Native binary formats, R12 through R2018+
 - **Broad entity coverage** — 48 top-level `EntityType` variants covering 2D
   geometry, annotations, dimensions, meshes, underlays, viewports, 3D solids,
   regions, bodies, and native surfaces
@@ -61,13 +63,13 @@ opencadcodec = { version = "0.6.0", features = ["serde", "import"] }
   pre-2007 drawings
 - **Optional serialization** — Serde support for document data
 - **Optional 3D imports** — STL, COLLADA, OBJ, glTF/GLB, and FBX converted to
-  opencadcodec documents
+  acadrust documents
 
 ## File Version Support
 
 | File code | Release era | DXF | DWG |
 |-----------|-----------------|-----|-----|
-| AC1009 | R12 | R/W | — |
+| AC1009 | R12 | R/W | R/W |
 | AC1012 | R13 | R/W | R/W |
 | AC1014 | R14 | R/W | R/W |
 | AC1015 | 2000 | R/W | R/W |
@@ -78,6 +80,9 @@ opencadcodec = { version = "0.6.0", features = ["serde", "import"] }
 | AC1032 | 2018+ | R/W | R/W |
 
 `R/W` means read and write support. Entity availability varies by file version.
+AC1009 DWG fidelity is incomplete; see the
+[R12 support status and remaining work](src/docs/ac1009_support.md).
+DXF export of R12 documents is promoted to R13 or later.
 
 ## Examples
 
@@ -85,9 +90,9 @@ opencadcodec = { version = "0.6.0", features = ["serde", "import"] }
 <summary>DWG Read/Write</summary>
 
 ```rust
-use opencadcodec::{CadDocument, Color, DwgReader, DwgWriter, EntityType, Line};
+use acadrust::{CadDocument, Color, DwgReader, DwgWriter, EntityType, Line};
 
-fn main() -> opencadcodec::Result<()> {
+fn main() -> acadrust::Result<()> {
     let mut reader = DwgReader::from_file("drawing.dwg")?;
     let doc = reader.read()?;
 
@@ -109,15 +114,15 @@ fn main() -> opencadcodec::Result<()> {
 <summary>Paper Space Layouts & Viewports</summary>
 
 ```rust
-use opencadcodec::{CadDocument, DxfVersion, DxfWriter};
-use opencadcodec::entities::{EntityType, Viewport};
-use opencadcodec::types::Vector3;
+use acadrust::{CadDocument, DxfVersion, DxfWriter};
+use acadrust::entities::{EntityType, Viewport};
+use acadrust::types::Vector3;
 
-fn main() -> opencadcodec::Result<()> {
+fn main() -> acadrust::Result<()> {
     let mut doc = CadDocument::with_version(DxfVersion::AC1027);
 
     // Add geometry to model space
-    let line = opencadcodec::entities::Line::from_coords(0.0, 0.0, 0.0, 100.0, 100.0, 0.0);
+    let line = acadrust::entities::Line::from_coords(0.0, 0.0, 0.0, 100.0, 100.0, 0.0);
     doc.add_entity(EntityType::Line(line))?;
 
     // Overall viewport (ID=1) for default Layout1
@@ -151,9 +156,9 @@ fn main() -> opencadcodec::Result<()> {
 <summary>Failsafe Reading and Diagnostics</summary>
 
 ```rust
-use opencadcodec::{DxfReader, DxfReaderConfiguration};
+use acadrust::{DxfReader, DxfReaderConfiguration};
 
-fn main() -> opencadcodec::Result<()> {
+fn main() -> acadrust::Result<()> {
     let config = DxfReaderConfiguration {
         failsafe: true,
         ..Default::default()
@@ -177,9 +182,9 @@ fn main() -> opencadcodec::Result<()> {
 Requires `features = ["import"]`.
 
 ```rust
-use opencadcodec::{import_file, DwgWriter, ImportConfig};
+use acadrust::{import_file, DwgWriter, ImportConfig};
 
-fn main() -> opencadcodec::Result<()> {
+fn main() -> acadrust::Result<()> {
     let doc = import_file("model.glb", &ImportConfig::default())?;
     DwgWriter::write_to_file("model.dwg", &doc)?;
     Ok(())
@@ -191,9 +196,9 @@ fn main() -> opencadcodec::Result<()> {
 <summary>Serde / JSON</summary>
 
 ```rust
-use opencadcodec::{CadDocument, DxfReader};
+use acadrust::{CadDocument, DxfReader};
 
-fn main() -> opencadcodec::Result<()> {
+fn main() -> acadrust::Result<()> {
     let doc = DxfReader::from_file("drawing.dxf")?.read()?;
     let json = serde_json::to_string_pretty(&doc).unwrap();
     let doc2: CadDocument = serde_json::from_str(&json).unwrap();
@@ -205,6 +210,7 @@ fn main() -> opencadcodec::Result<()> {
 
 ## Documentation
 
+- [API documentation](https://docs.rs/acadrust)
 - [Paper-space viewport example](examples/viewport_layouts.rs)
 
 ## Development
@@ -215,10 +221,15 @@ cargo test --all-features
 cargo check --all-targets --all-features
 ```
 
+GitHub Actions runs these checks with stable Rust on Linux, Windows, and macOS
+for pull requests and pushes to `main`. It also checks default and all-feature
+library builds for `wasm32-unknown-unknown`.
+
 ---
 
 ## Used By
-- [Open CAD Studio](https://github.com/HakanSeven12/OpenCADStudio) An open-source (GPLv3) CAD application that uses opencadcodec as its core native DWG/DXF engine for read/write operations and 3D modeling.
+- [Open CAD Studio](https://github.com/HakanSeven12/OpenCADStudio) An open-source (GPLv3) CAD application that uses acadrust as its core native DWG/DXF engine for read/write operations and 3D modeling.
+- [CADCraft](https://github.com/storytold/cadcraft) An open-source, AutoCAD-style drafting application written in Rust that uses acadrust for DWG read/write operations.
 
 ## Support & Sponsorship
 

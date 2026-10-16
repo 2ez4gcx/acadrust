@@ -1,6 +1,3 @@
-//! Drawing properties (DWGPROPS, the `AcDb:SummaryInfo` section) survive a
-//! DWG write and read: the eight document strings and the custom properties,
-//! including non-ASCII text in R2004 (drawing code page) and R2007+ (UTF-16).
 
 use std::io::Cursor;
 

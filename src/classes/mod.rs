@@ -154,7 +154,14 @@ impl DxfClassCollection {
             self.entries[idx].instance_count = class.instance_count;
         } else {
             if class.class_number < 500 {
-                class.class_number = 500 + self.entries.len() as i16;
+                // Its position names it, unless a source class already holds
+                // that number; two classes must never share one.
+                let positional = 500 + self.entries.len() as i16;
+                class.class_number = if self.entries.iter().any(|c| c.class_number == positional) {
+                    self.entries.iter().map(|c| c.class_number).max().unwrap_or(499) + 1
+                } else {
+                    positional
+                };
             }
             let idx = self.entries.len();
             self.name_index.insert(key, idx);

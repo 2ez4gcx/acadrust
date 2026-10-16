@@ -47,7 +47,7 @@ pub struct DwgMergedReader {
     /// Raw data (kept for lazy text/handle setup in ThreeStream mode)
     raw_data: Option<Vec<u8>>,
     /// Document code page used by lazily-created stream readers.
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
     /// Handle-stream bit count from the R2010+ MC framing field.
     /// Stored so unknown entities can reproduce the correct framing on write.
     handle_bits: i64,
@@ -94,8 +94,9 @@ impl DwgMergedReader {
         data: Vec<u8>,
         dxf_version: DxfVersion,
         handle_start_bits: i64,
-        encoding: &'static encoding_rs::Encoding,
+        encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
     ) -> Self {
+        let encoding = encoding.into();
         let dwg = DwgVersion::from_dxf_version(dxf_version).unwrap_or(DwgVersion::AC15);
 
         let mode = if dxf_version >= DxfVersion::AC1021 {
@@ -180,7 +181,7 @@ impl DwgMergedReader {
             _mode: mode,
             dxf_version,
             raw_data: None,
-            encoding: encoding_rs::WINDOWS_1252,
+            encoding: encoding_rs::WINDOWS_1252.into(),
             handle_bits: 0,
             ref_handle: 0,
             handle_start_bit: 0,
@@ -252,16 +253,90 @@ impl DwgMergedReader {
     }
     /// Bytes left in the main data stream from the current position.
     pub fn remaining_bytes(&self) -> usize {
-        self.main.data_len().saturating_sub(self.main.position())
+        (self.main_remaining_bits() / 8) as usize
     }
     /// Bits remaining in entity main-data stream, excluding text and handles.
     pub fn main_remaining_bits(&self) -> i64 {
+        if self.has_error() {
+            return 0;
+        }
         let end = if self.text_start_bit > 0 {
             self.text_start_bit
         } else {
             self.handle_start_bit
         };
-        (end - self.main.position_in_bits()).max(0)
+        if end > 0 {
+            (end - self.main.position_in_bits())
+                .max(0)
+                .min(self.main.remaining_bits())
+        } else {
+            self.main.remaining_bits()
+        }
+    }
+
+    /// Validate all component streams before accepting a decoded record.
+    pub fn check_error(&self) -> crate::error::Result<()> {
+        self.main.check_error()?;
+        if let Some(reader) = &self.text {
+            reader.check_error()?;
+        }
+        if let Some(reader) = &self.handle {
+            reader.check_error()?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn has_error(&self) -> bool {
+        self.main.has_error()
+            || self.text.as_ref().is_some_and(DwgBitReader::has_error)
+            || self.handle.as_ref().is_some_and(DwgBitReader::has_error)
+    }
+
+    pub(crate) fn invalidate(&self, message: impl Into<String>) {
+        self.main.invalidate(message);
+    }
+
+    /// Conservative array bound: every stored item consumes at least one bit
+    /// in main, text, or handle data. More specific codecs can require more.
+    pub(crate) fn checked_count(&self, count: i64) -> i64 {
+        let remaining = self
+            .main_remaining_bits()
+            .saturating_add(self.text_remaining_bits())
+            .saturating_add(self.handle_remaining_bits().max(0));
+        if self.has_error() {
+            return 0;
+        }
+        if count < 0 || count > remaining {
+            self.invalidate(format!(
+                "Invalid DWG array count {count}: {remaining} record bits remain"
+            ));
+            return 0;
+        }
+        count
+    }
+
+    pub(crate) fn read_count(&mut self) -> i32 {
+        let count = self.read_bit_long();
+        self.checked_count(i64::from(count)) as i32
+    }
+
+    pub(crate) fn read_short_count(&mut self) -> i16 {
+        let count = self.read_bit_short();
+        self.checked_count(i64::from(count)) as i16
+    }
+
+    pub(crate) fn checked_main_count(&self, count: i64, bits_per_item: i64) -> i64 {
+        if self.has_error() {
+            return 0;
+        }
+        if count < 0 || bits_per_item <= 0 || count > self.main_remaining_bits() / bits_per_item {
+            self.invalidate(format!(
+                "Invalid DWG count {count}: needs {bits_per_item} main bits per item, {} remain",
+                self.main_remaining_bits()
+            ));
+            return 0;
+        }
+        count
     }
     pub fn read_bit_short(&mut self) -> i16 {
         self.main.read_bit_short()
@@ -436,6 +511,7 @@ impl DwgMergedReader {
         self.handle_start_bit = bit_position;
         if self.text.is_none() {
             self.text_start_bit = bit_position;
+            self.main.set_end_bit(bit_position);
         }
     }
 
@@ -454,7 +530,26 @@ impl DwgMergedReader {
         }
     }
 
+    /// Read a handle reference, returning `None` when a present handle's
+    /// value bytes run past the end of the stream (separate R2007+ handle
+    /// stream or the main stream for older versions), so callers can reject
+    /// a present but truncated handle prefix.
+    pub fn try_read_handle(&mut self) -> Option<u64> {
+        let mut ref_type = crate::io::dwg::dwg_reference_type::DwgReferenceType::SoftOwnership;
+        match &mut self.handle {
+            Some(handle_reader) => {
+                handle_reader.try_read_handle_reference(self.ref_handle, &mut ref_type)
+            }
+            None => self
+                .main
+                .try_read_handle_reference(self.ref_handle, &mut ref_type),
+        }
+    }
+
     pub fn handle_remaining_bits(&self) -> i64 {
+        if self.has_error() {
+            return 0;
+        }
         match &self.handle {
             Some(reader) => reader.data_len() as i64 * 8 - reader.position_in_bits(),
             None => self.main.data_len() as i64 * 8 - self.main.position_in_bits(),
@@ -559,6 +654,9 @@ impl DwgMergedReader {
     /// string bytes into the payload.
     pub fn set_main_data_end(&mut self, bit: i64) {
         self.text_start_bit = bit;
+        if bit != 0 {
+            self.main.set_end_bit(bit);
+        }
     }
 }
 

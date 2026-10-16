@@ -49,7 +49,7 @@ struct SectionWriter {
 }
 
 impl SectionWriter {
-    fn with_encoding(version: DxfVersion, encoding: &'static encoding_rs::Encoding) -> Self {
+    fn with_encoding(version: DxfVersion, encoding: crate::io::dxf::code_page::LegacyEncoding) -> Self {
         let dwg = DwgVersion::from_dxf_version(version).unwrap_or(DwgVersion::AC15);
 
         let inner = if version >= DxfVersion::AC1021 {
@@ -223,9 +223,9 @@ pub fn write_header_with_encoding(
     version: DxfVersion,
     header: &HeaderVariables,
     maintenance_version: u8,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
 ) -> Vec<u8> {
-    let mut w = SectionWriter::with_encoding(version, encoding);
+    let mut w = SectionWriter::with_encoding(version, encoding.into());
     write_header_fields(&mut w, version, header);
     let section_data = w.finalize();
     wrap_with_sentinels_and_crc(version, maintenance_version, &section_data)

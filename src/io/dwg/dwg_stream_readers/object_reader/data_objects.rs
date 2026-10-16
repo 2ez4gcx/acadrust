@@ -8,8 +8,8 @@ use crate::objects::{
 };
 use crate::types::Handle;
 
-fn count(value: i32, limit: i32) -> usize {
-    value.max(0).min(limit) as usize
+fn count(value: i32, reader: &DwgMergedReader) -> usize {
+    reader.checked_count(i64::from(value)) as usize
 }
 
 pub fn read_data_object_data(
@@ -20,7 +20,7 @@ pub fn read_data_object_data(
         "BREAKDATA" => {
             let version = reader.read_bit_short();
             let mut point_references = Vec::new();
-            for _ in 0..count(reader.read_bit_long(), 100_000) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 point_references.push(BreakPointReference {
                     version: reader.read_bit_short(),
                     reserved: reader.read_bit() as i16,
@@ -44,7 +44,7 @@ pub fn read_data_object_data(
         "BREAKPOINTREF" => DataObjectData::BreakPointRef,
         "CELLSTYLEMAP" => {
             let mut cells = Vec::new();
-            for _ in 0..count(reader.read_bit_long(), 10_000) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 cells.push(super::objects::read_named_table_cell_style(reader));
             }
             DataObjectData::CellStyleMap(CellStyleMap { cells })
@@ -54,7 +54,7 @@ pub fn read_data_object_data(
         "IDBUFFER" => {
             let flags = reader.read_byte();
             let mut object_ids = Vec::new();
-            for _ in 0..count(reader.read_bit_long(), 10_000) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 object_ids.push(Handle::from(reader.read_handle()));
             }
             DataObjectData::IdBuffer(IdBuffer { flags, object_ids })
@@ -67,7 +67,7 @@ pub fn read_data_object_data(
             let last_updated_julian_day = reader.read_bit_long();
             let last_updated_milliseconds = reader.read_bit_long();
             let mut entries = Vec::new();
-            for _ in 0..count(reader.read_bit_long(), 20_000) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 entries.push(LayerIndexEntry {
                     layer_count: reader.read_bit_long(),
                     name: reader.read_variable_text(),
@@ -86,13 +86,13 @@ pub fn read_data_object_data(
             let rows = reader.read_bit_long();
             let columns = reader.read_bit_long();
             let mut cells = Vec::new();
-            for _ in 0..count(reader.read_bit_long(), 10_000) {
+            for _ in 0..count(reader.read_bit_long(), reader) {
                 let geometry_data_flag = reader.read_bit_long();
                 let width_with_gap = reader.read_bit_double();
                 let height_with_gap = reader.read_bit_double();
                 let table_geometry = Handle::from(reader.read_handle());
                 let mut geometry = Vec::new();
-                for _ in 0..count(reader.read_bit_long(), 10_000) {
+                for _ in 0..count(reader.read_bit_long(), reader) {
                     geometry.push(CellContentGeometry {
                         distance_to_top_left: reader.read_3bit_double(),
                         distance_to_center: reader.read_3bit_double(),

@@ -1,7 +1,3 @@
-//! Minimal public AutoCAD feature samples, not application/project drawings.
-//! Source: DomCR/ACadSharp, commit 4cd77590a654329b0a26808521685b99467c668c,
-//! samples/dynamic-blocks/BLOCK{POINT,XY,LOOKUP,POLAR}PARAMETER.dwg.
-//! Original MIT attribution is retained in fixtures/dynamic-blocks/LICENSE.
 
 use opencadcodec::{
     objects::{DynamicBlockData, ObjectType},

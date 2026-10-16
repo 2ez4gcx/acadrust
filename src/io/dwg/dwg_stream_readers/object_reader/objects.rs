@@ -251,7 +251,7 @@ fn read_material_texture(reader: &mut DwgMergedReader, depth: usize) -> Material
             4 => Some(MaterialProceduralValue::Color(reader.read_cm_color())),
             5 => Some(MaterialProceduralValue::Text(reader.read_variable_text())),
             6 if depth < 8 => {
-                let count = safe_count(reader.read_bit_short() as i32);
+                let count = safe_count(reader.read_bit_short() as i32, reader);
                 let mut rows = Vec::with_capacity(count as usize);
                 for _ in 0..count {
                     let name = reader.read_variable_text();
@@ -394,7 +394,7 @@ pub(super) fn read_table_cell_style_data(reader: &mut DwgMergedReader) -> TableC
         value.horizontal_spacing = reader.read_bit_double();
         value.vertical_spacing = reader.read_bit_double();
     }
-    let count = safe_count(reader.read_bit_long()).min(6);
+    let count = safe_count(reader.read_bit_long(), reader).min(6);
     value.borders.reserve(count as usize);
     for _ in 0..count {
         let index_mask = reader.read_bit_long();
@@ -453,6 +453,7 @@ pub fn read_table_style(reader: &mut DwgMergedReader, version: DwgVersion) -> Ta
         value.data_row_style = read_legacy_table_row_style(reader, version);
         value.title_row_style = read_legacy_table_row_style(reader, version);
         value.header_row_style = read_legacy_table_row_style(reader, version);
+        value.sync_suppression_flags();
         return value;
     }
     value.modern_unknown_byte = reader.read_byte();
@@ -461,6 +462,7 @@ pub fn read_table_style(reader: &mut DwgMergedReader, version: DwgVersion) -> Ta
     // The R2010+ table style flags (title / header suppressed).
     value.flags =
         crate::objects::TableStyleFlags::from_bits_retain(value.modern_unknown_long1 as i16);
+    value.sync_suppression_flags();
     value.modern_unknown_long2 = reader.read_bit_long();
     value.modern_cell_style_handle = Handle::from(reader.read_handle());
     let modern_style = read_named_table_cell_style(reader);
@@ -468,7 +470,7 @@ pub fn read_table_style(reader: &mut DwgMergedReader, version: DwgVersion) -> Ta
     value.vertical_margin = modern_style.cell_style.vertical_margin;
     apply_cell_style_to_row(&mut value.data_row_style, &modern_style.cell_style);
     value.modern_style = Some(modern_style);
-    let override_count = safe_count(reader.read_bit_long()).min(64);
+    let override_count = safe_count(reader.read_bit_long(), reader).min(64);
     value.modern_overrides.reserve(override_count as usize);
     for _ in 0..override_count {
         let key = reader.read_bit_long();
@@ -803,7 +805,7 @@ fn clean_dict_key(name: String) -> String {
 }
 
 pub fn read_dictionary(reader: &mut DwgMergedReader, version: DwgVersion) -> DictionaryData {
-    let num_entries = safe_count(reader.read_bit_long());
+    let num_entries = safe_count(reader.read_bit_long(), reader);
 
     let mut duplicate_cloning = 0i16;
     let mut hard_owner = false;
@@ -829,7 +831,7 @@ pub fn read_dictionary(reader: &mut DwgMergedReader, version: DwgVersion) -> Dic
 }
 
 pub fn read_dictionary_with_default(reader: &mut DwgMergedReader) -> DictionaryWithDefaultData {
-    let num_entries = safe_count(reader.read_bit_long());
+    let num_entries = safe_count(reader.read_bit_long(), reader);
     let duplicate_cloning = reader.read_bit_short();
     let hard_owner = reader.read_byte() != 0;
 
@@ -910,7 +912,7 @@ pub fn read_block_visibility_parameter(
     p.def_point = reader.read_3bit_double(); // 3BD def_pt (1010)
                                              // Two PropInfo blocks: each is a BL connection count + (BL code, T name) pairs.
     for property_index in 0..2 {
-        let n = safe_count(reader.read_bit_long());
+        let n = safe_count(reader.read_bit_long(), reader);
         for _ in 0..n {
             p.property_info[property_index].connections.push(
                 crate::objects::BlockParameterConnection {
@@ -928,24 +930,24 @@ pub fn read_block_visibility_parameter(
     p.description = reader.read_variable_text(); // T blockvisi_desc (302)
     p.unknown_bool = reader.read_bit();
 
-    let num_blocks = safe_count(reader.read_bit_long()); // BL num_blocks (93)
+    let num_blocks = safe_count(reader.read_bit_long(), reader); // BL num_blocks (93)
     for _ in 0..num_blocks {
         p.all_blocks
             .push(crate::types::Handle::from(reader.read_handle()));
     }
 
-    let num_states = safe_count(reader.read_bit_long()); // BL num_states (92)
+    let num_states = safe_count(reader.read_bit_long(), reader); // BL num_states (92)
     for _ in 0..num_states {
         let mut st = BlockVisibilityState {
             name: reader.read_variable_text(), // T state name (303)
             ..Default::default()
         };
-        let nb = safe_count(reader.read_bit_long()); // BL (94)
+        let nb = safe_count(reader.read_bit_long(), reader); // BL (94)
         for _ in 0..nb {
             st.visible_blocks
                 .push(crate::types::Handle::from(reader.read_handle()));
         }
-        let np = safe_count(reader.read_bit_long()); // BL (95)
+        let np = safe_count(reader.read_bit_long(), reader); // BL (95)
         for _ in 0..np {
             st.visible_params
                 .push(crate::types::Handle::from(reader.read_handle()));
@@ -986,8 +988,8 @@ pub struct FieldReadData {
 pub fn read_field(reader: &mut DwgMergedReader) -> FieldReadData {
     let id = reader.read_variable_text();
     let code = reader.read_variable_text();
-    let num_childs = safe_count(reader.read_bit_long());
-    let num_objects = safe_count(reader.read_bit_long());
+    let num_childs = safe_count(reader.read_bit_long(), reader);
+    let num_objects = safe_count(reader.read_bit_long(), reader);
     // Object-specific handles follow the common owner/reactor/xdict handles in
     // the handle stream: the child fields first (recovered instead from object
     // owners, so skipped here), then the referenced objects.
@@ -1121,7 +1123,7 @@ pub fn read_layout(reader: &mut DwgMergedReader, version: DwgVersion) -> LayoutD
     let max_extents = reader.read_3bit_double();
 
     let viewport_count = if version.r2004_plus() {
-        safe_count(reader.read_bit_long())
+        safe_count(reader.read_bit_long(), reader)
     } else {
         0
     };
@@ -1175,7 +1177,7 @@ pub fn read_group(reader: &mut DwgMergedReader) -> GroupData {
     let unnamed = reader.read_bit_short();
     let selectable = reader.read_bit_short() != 0;
 
-    let num_entities = safe_count(reader.read_bit_long());
+    let num_entities = safe_count(reader.read_bit_long(), reader);
     let mut entity_handles = Vec::with_capacity(num_entities as usize);
     for _ in 0..num_entities {
         entity_handles.push(reader.read_handle());
@@ -1401,7 +1403,7 @@ pub fn read_scale(reader: &mut DwgMergedReader) -> ScaleData {
 }
 
 pub fn read_sort_entities_table(reader: &mut DwgMergedReader) -> SortEntitiesTableData {
-    let num_entries = safe_count(reader.read_bit_long());
+    let num_entries = safe_count(reader.read_bit_long(), reader);
     // The per-entry sort handles are stored inline in the DATA section; the
     // owner block and the sorted entity handles follow in the handle stream
     // (owner first, then one handle per entry). The previous code read a
@@ -1488,7 +1490,7 @@ fn decode_xrecord_entries(raw: &[u8], unicode: bool) -> (Vec<XRecordEntry>, bool
                         .0
                         .into_owned();
                     position += length;
-                    value
+                    crate::io::dxf::code_page::decode_legacy_escapes(&value)
                 };
                 XRecordValue::String(text)
             }
@@ -1561,16 +1563,12 @@ fn decode_xrecord_entries(raw: &[u8], unicode: bool) -> (Vec<XRecordEntry>, bool
 
 pub fn read_xrecord(reader: &mut DwgMergedReader) -> XRecordData {
     // This field is a byte length, not an array item count. Real application
-    // payloads (FBXASSET in particular) routinely exceed MAX_ARRAY_COUNT.
+    // payloads (FBXASSET in particular) routinely exceed 100,000 bytes.
     // Bound corrupt declarations by the containing object's main-data stream
     // instead of truncating valid XRecords at 100,000 bytes.
-    let declared_size = reader.read_bit_long().max(0) as usize;
-    let available_size = (reader.main_remaining_bits().max(0) as usize) / 8;
-    let data_size = declared_size.min(available_size);
-    let mut raw_data = Vec::with_capacity(data_size);
-    for _ in 0..data_size {
-        raw_data.push(reader.read_byte());
-    }
+    let declared_size = reader.read_bit_long();
+    let data_size = reader.checked_main_count(i64::from(declared_size), 8) as usize;
+    let raw_data = reader.read_bytes(data_size);
     let cloning_flags = if reader.dxf_version() >= DxfVersion::AC1015 {
         reader.read_bit_short()
     } else {
@@ -1656,11 +1654,17 @@ pub fn read_book_color(reader: &mut DwgMergedReader) -> BookColorData {
             String::new()
         };
         BookColorData {
-            color: Color::from_rgb(
-                ((true_color >> 16) & 0xFF) as u8,
-                ((true_color >> 8) & 0xFF) as u8,
-                (true_color & 0xFF) as u8,
-            ),
+            color: match true_color >> 24 {
+                0xC0 => Color::ByLayer,
+                0xC1 => Color::ByBlock,
+                0xC3 => Color::from_index((true_color & 0xFF) as i16),
+                0xC8 => Color::None,
+                _ => Color::from_rgb(
+                    ((true_color >> 16) & 0xFF) as u8,
+                    ((true_color >> 8) & 0xFF) as u8,
+                    (true_color & 0xFF) as u8,
+                ),
+            },
             color_name,
             book_name,
         }
@@ -1785,13 +1789,13 @@ pub fn read_geodata(reader: &mut DwgMergedReader) -> GeoDataData {
     d.observation_from_tag = reader.read_variable_text();
     d.observation_to_tag = reader.read_variable_text();
     d.observation_coverage_tag = reader.read_variable_text();
-    let point_count = safe_count(reader.read_bit_long()).min(50_000);
+    let point_count = safe_count(reader.read_bit_long(), reader).min(50_000);
     d.mesh_points.reserve(point_count as usize);
     for _ in 0..point_count {
         d.mesh_points
             .push((reader.read_2raw_double(), reader.read_2raw_double()));
     }
-    let face_count = safe_count(reader.read_bit_long()).min(50_000);
+    let face_count = safe_count(reader.read_bit_long(), reader).min(50_000);
     d.mesh_faces.reserve(face_count as usize);
     for _ in 0..face_count {
         d.mesh_faces.push((
@@ -1850,7 +1854,7 @@ pub struct SpatialFilterData {
 /// column-major layout as DXF code 40.
 pub fn read_spatial_filter(reader: &mut DwgMergedReader) -> SpatialFilterData {
     let mut d = SpatialFilterData::default();
-    let num = safe_count(reader.read_bit_short() as i32);
+    let num = safe_count(reader.read_bit_short() as i32, reader);
     for _ in 0..num {
         d.points.push(reader.read_2raw_double());
     }

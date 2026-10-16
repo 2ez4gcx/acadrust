@@ -56,8 +56,6 @@ pub struct DxfReader {
     config: DxfReaderConfiguration,
     /// Estimated entity count based on stream size (used for pre-allocation).
     estimated_entities: usize,
-    /// Source path, when opened from a file — copied onto the document so the
-    /// `Filename` / `Filesize` / date fields can resolve.
     source_path: Option<String>,
 }
 
@@ -168,6 +166,13 @@ impl DxfReader {
         self.read_with_stats().map(|outcome| outcome.document)
     }
 
+    /// Recover as much usable drawing data as possible and apply conservative
+    /// document repairs. Recovery always enables failsafe parsing.
+    pub fn recover(mut self) -> Result<crate::io::recover::RecoverOutcome> {
+        self.config.failsafe = true;
+        crate::io::recover::RecoverOutcome::from_read_outcome(self.read_with_stats()?)
+    }
+
     /// Read a DXF file and return the document with source/decode statistics.
     pub fn read_with_stats(mut self) -> Result<crate::io::read::ReadOutcome> {
         // Set default encoding if provided
@@ -202,7 +207,7 @@ impl DxfReader {
         loop {
             let pair = match self.reader.read_pair() {
                 Ok(Some(pair)) => pair,
-                Ok(None) if failsafe && decoded_source_records > 0 => {
+                Ok(None) if failsafe => {
                     let message = "Drawing stream ended before the EOF marker".to_string();
                     document.notifications.notify(
                         crate::notification::NotificationType::Error,
@@ -223,7 +228,7 @@ impl DxfReader {
                         "drawing stream ended before the EOF marker".to_string(),
                     ));
                 }
-                Err(error) if failsafe && decoded_source_records > 0 => {
+                Err(error) if failsafe => {
                     let message = format!("Error reading drawing stream: {}", error);
                     document.notifications.notify(
                         crate::notification::NotificationType::Error,
@@ -245,7 +250,7 @@ impl DxfReader {
                 // Read section name
                 let section_pair = match self.reader.read_pair() {
                     Ok(Some(section_pair)) => Some(section_pair),
-                    Ok(None) if failsafe && decoded_source_records > 0 => {
+                    Ok(None) if failsafe => {
                         let message = "Drawing stream ended before the section name".to_string();
                         document.notifications.notify(
                             crate::notification::NotificationType::Error,
@@ -266,7 +271,7 @@ impl DxfReader {
                             "drawing stream ended before the section name".to_string(),
                         ));
                     }
-                    Err(error) if failsafe && decoded_source_records > 0 => {
+                    Err(error) if failsafe => {
                         let message = format!("Error reading section name: {}", error);
                         document.notifications.notify(
                             crate::notification::NotificationType::Error,
@@ -295,16 +300,30 @@ impl DxfReader {
                         let result = match section_name.as_str() {
                             "HEADER" => self.read_header_section(&mut document),
                             "CLASSES" => self.read_classes_section(&mut document),
-                            "TABLES" => {
-                                self.read_tables_section(&mut document, &mut decoded_source_records)
-                            }
-                            "BLOCKS" => {
-                                self.read_blocks_section(&mut document, &mut decoded_source_records)
-                            }
-                            "ENTITIES" => self
-                                .read_entities_section(&mut document, &mut decoded_source_records),
-                            "OBJECTS" => self
-                                .read_objects_section(&mut document, &mut decoded_source_records),
+                            "TABLES" => self.read_tables_section(
+                                &mut document,
+                                &mut decoded_source_records,
+                                &mut skipped_source_records,
+                                &mut diagnostics,
+                            ),
+                            "BLOCKS" => self.read_blocks_section(
+                                &mut document,
+                                &mut decoded_source_records,
+                                &mut skipped_source_records,
+                                &mut diagnostics,
+                            ),
+                            "ENTITIES" => self.read_entities_section(
+                                &mut document,
+                                &mut decoded_source_records,
+                                &mut skipped_source_records,
+                                &mut diagnostics,
+                            ),
+                            "OBJECTS" => self.read_objects_section(
+                                &mut document,
+                                &mut decoded_source_records,
+                                &mut skipped_source_records,
+                                &mut diagnostics,
+                            ),
                             "ACDSDATA" => self.read_acdsdata_section(&mut document),
                             "THUMBNAILIMAGE" => {
                                 document.notifications.notify(
@@ -369,6 +388,14 @@ impl DxfReader {
         rewire_stale_text_style_references(&mut document);
         rewire_dangling_layout_block_records(&mut document);
         document.ensure_model_layout();
+        if document.version == crate::types::DxfVersion::AC1009 {
+            let layers: HashMap<_, _> = document.layers.iter().map(|layer| (layer.name.to_uppercase(), layer.handle)).collect();
+            for entity in document.entities_mut_keep_raw() {
+                if let EntityType::Viewport(viewport) = entity {
+                    crate::io::dwg::legacy_viewport::restore_r12(viewport, |name| layers.get(&name.to_uppercase()).copied());
+                }
+            }
+        }
 
         // Pre-R2004 (R2000/R14) down-saved gradient hatches keep their gradient
         // in the ACAD round-trip metadata (GradientColor1/2ACI EED + an
@@ -419,10 +446,20 @@ impl DxfReader {
         &mut self,
         document: &mut CadDocument,
         decoded_records: &mut usize,
+        skipped_records: &mut usize,
+        diagnostics: &mut Vec<ReadDiagnostic>,
     ) -> Result<()> {
-        let mut section_reader = SectionReader::new(&mut self.reader);
+        let mut section_reader =
+            SectionReader::new(&mut self.reader).with_failsafe(self.config.failsafe);
         let result = section_reader.read_tables(document);
         *decoded_records = decoded_records.saturating_add(section_reader.decoded_records());
+        Self::collect_section_recovery(
+            &mut section_reader,
+            document,
+            "TABLES",
+            skipped_records,
+            diagnostics,
+        );
         result
     }
 
@@ -431,10 +468,20 @@ impl DxfReader {
         &mut self,
         document: &mut CadDocument,
         decoded_records: &mut usize,
+        skipped_records: &mut usize,
+        diagnostics: &mut Vec<ReadDiagnostic>,
     ) -> Result<()> {
-        let mut section_reader = SectionReader::new(&mut self.reader);
+        let mut section_reader =
+            SectionReader::new(&mut self.reader).with_failsafe(self.config.failsafe);
         let result = section_reader.read_blocks(document);
         *decoded_records = decoded_records.saturating_add(section_reader.decoded_records());
+        Self::collect_section_recovery(
+            &mut section_reader,
+            document,
+            "BLOCKS",
+            skipped_records,
+            diagnostics,
+        );
         result
     }
 
@@ -443,10 +490,20 @@ impl DxfReader {
         &mut self,
         document: &mut CadDocument,
         decoded_records: &mut usize,
+        skipped_records: &mut usize,
+        diagnostics: &mut Vec<ReadDiagnostic>,
     ) -> Result<()> {
-        let mut section_reader = SectionReader::new(&mut self.reader);
+        let mut section_reader =
+            SectionReader::new(&mut self.reader).with_failsafe(self.config.failsafe);
         let result = section_reader.read_entities(document);
         *decoded_records = decoded_records.saturating_add(section_reader.decoded_records());
+        Self::collect_section_recovery(
+            &mut section_reader,
+            document,
+            "ENTITIES",
+            skipped_records,
+            diagnostics,
+        );
         result
     }
 
@@ -455,11 +512,50 @@ impl DxfReader {
         &mut self,
         document: &mut CadDocument,
         decoded_records: &mut usize,
+        skipped_records: &mut usize,
+        diagnostics: &mut Vec<ReadDiagnostic>,
     ) -> Result<()> {
-        let mut section_reader = SectionReader::new(&mut self.reader);
+        let mut section_reader =
+            SectionReader::new(&mut self.reader).with_failsafe(self.config.failsafe);
         let result = section_reader.read_objects(document);
         *decoded_records = decoded_records.saturating_add(section_reader.decoded_records());
+        Self::collect_section_recovery(
+            &mut section_reader,
+            document,
+            "OBJECTS",
+            skipped_records,
+            diagnostics,
+        );
         result
+    }
+
+    fn collect_section_recovery(
+        section_reader: &mut SectionReader<'_>,
+        document: &mut CadDocument,
+        section: &str,
+        skipped_records: &mut usize,
+        diagnostics: &mut Vec<ReadDiagnostic>,
+    ) {
+        *skipped_records = skipped_records.saturating_add(section_reader.skipped_records());
+        for recovery in section_reader.take_recovery_errors() {
+            let message = format!("Error reading {} record: {}", section, recovery.message);
+            document.notifications.notify(
+                crate::notification::NotificationType::Error,
+                message.clone(),
+            );
+            let mut diagnostic = ReadDiagnostic::new(
+                "record-read-failed",
+                ReadStage::RecordStream,
+                message,
+            );
+            diagnostic.section = Some(section.to_string());
+            diagnostic.source_offset = recovery.context.source_offset;
+            diagnostic.source_offset_basis = Some("file-byte".to_string());
+            diagnostic.source_line = recovery.context.source_line;
+            diagnostic.record_handle = recovery.context.record_handle;
+            diagnostic.record_type = recovery.context.record_type;
+            push_read_diagnostic(diagnostics, diagnostic);
+        }
     }
 
     /// Read the ACDSDATA section (the AcDb data store).
@@ -758,13 +854,6 @@ fn rehandle_colliding_default_entries(
     }
 }
 
-/// Re-point LAYOUT objects whose block-record reference resolves to nothing.
-///
-/// Some exporters (QGIS) write the LAYOUT objects of a template with that
-/// template's handles while the BLOCK_RECORD table carries fresh ones, so the
-/// Model layout names a record that does not exist and model space reads as
-/// empty. Model goes back to `*Model_Space`; paper layouts, in tab order, take
-/// the `*Paper_Space*` records no valid layout already owns.
 fn rewire_dangling_layout_block_records(document: &mut CadDocument) {
     use crate::objects::ObjectType;
 

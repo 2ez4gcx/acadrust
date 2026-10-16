@@ -121,7 +121,7 @@ fn repro_issue80_entity_on_undefined_layer_is_not_a_null_pointer() {
     // A layer name that was never added must not become a NULL hard pointer:
     // fall back to "0", which every drawing defines.
     //
-    // This pins the behaviour rather than reproducing the failure: opencadcodec's
+    // This pins the behaviour rather than reproducing the failure: acadrust's
     // own reader maps a NULL layer pointer back to "0", so a round-trip through
     // it cannot distinguish the two. The guarantee therefore lives in the writer.
     let mut doc = source_document(DxfVersion::AC1027);

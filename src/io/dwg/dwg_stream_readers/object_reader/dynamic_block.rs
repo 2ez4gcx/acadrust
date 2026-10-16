@@ -56,7 +56,7 @@ fn read_connection(reader: &mut DwgMergedReader) -> BlockConnection {
 }
 
 fn read_property(reader: &mut DwgMergedReader) -> BlockParameterProperty {
-    let count = safe_count(reader.read_bit_long());
+    let count = safe_count(reader.read_bit_long(), reader);
     let mut connections = Vec::with_capacity(count as usize);
     for _ in 0..count {
         connections.push(read_connection(reader));
@@ -127,21 +127,21 @@ fn read_grip(reader: &mut DwgMergedReader) -> BlockGrip {
 fn read_action(reader: &mut DwgMergedReader) -> BlockAction {
     let element = read_element(reader);
     let display_location = reader.read_3bit_double();
-    let dependency_count = safe_count(reader.read_bit_long());
+    let dependency_count = safe_count(reader.read_bit_long(), reader);
     let mut dependencies = Vec::with_capacity(dependency_count as usize);
     for _ in 0..dependency_count {
         dependencies.push(Handle::from(reader.read_handle()));
     }
-    let parameter_count = safe_count(reader.read_bit_long());
-    let mut parameter_ids = Vec::with_capacity(parameter_count as usize);
+    let parameter_count = safe_count(reader.read_bit_long(), reader);
+    let mut action_ids = Vec::with_capacity(parameter_count as usize);
     for _ in 0..parameter_count {
-        parameter_ids.push(reader.read_bit_long());
+        action_ids.push(reader.read_bit_long());
     }
     BlockAction {
         element,
         display_location,
         dependencies,
-        parameter_ids,
+        action_ids,
     }
 }
 
@@ -160,7 +160,7 @@ fn read_value_set(reader: &mut DwgMergedReader) -> BlockParameterValueSet {
     let minimum = reader.read_bit_double();
     let maximum = reader.read_bit_double();
     let increment = reader.read_bit_double();
-    let count = safe_count(reader.read_bit_short() as i32);
+    let count = safe_count(reader.read_bit_short() as i32, reader);
     let mut values = Vec::with_capacity(count as usize);
     for _ in 0..count {
         values.push(reader.read_bit_double());
@@ -219,10 +219,6 @@ fn read_history_node_base(reader: &mut DwgMergedReader) -> SolidHistoryNodeBase 
     }
 }
 
-/// Embedded construction entity of a history node: type, then (unless the
-/// type is 0) its body length in bits and the body itself. A polyline the
-/// modeler keeps as a wire body carries, as in surface records, a presence
-/// bit (set when there is no body) and a modeler block instead.
 fn read_history_entity(
     reader: &mut DwgMergedReader,
     version: DwgVersion,
@@ -240,7 +236,7 @@ fn read_history_entity(
         };
         return Some(crate::entities::EmbeddedEntity::Body { type_code, acis_data });
     }
-    let bit_length = safe_count(reader.read_bit_long()) as usize;
+    let bit_length = safe_count(reader.read_bit_long(), reader) as usize;
     crate::io::dwg::embedded_entity::read_embedded_entity_bits(
         reader,
         type_code,
@@ -422,7 +418,7 @@ pub fn read_solid_history_data(
             let method = reader.read_bit_long();
             let base_distance = reader.read_bit_double();
             let other_distance = reader.read_bit_double();
-            let count = safe_count(reader.read_bit_long());
+            let count = safe_count(reader.read_bit_long(), reader);
             let mut edges = Vec::with_capacity(count as usize);
             for _ in 0..count {
                 edges.push(reader.read_bit_long());
@@ -442,23 +438,23 @@ pub fn read_solid_history_data(
             let operation_major = reader.read_bit_long();
             let operation_minor = reader.read_bit_long();
             let method = reader.read_bit_long();
-            let edge_count = safe_count(reader.read_bit_long());
+            let edge_count = safe_count(reader.read_bit_long(), reader);
             let mut edges = Vec::with_capacity(edge_count as usize);
             for _ in 0..edge_count {
                 edges.push(reader.read_bit_long());
             }
-            let radius_count = safe_count(reader.read_bit_long());
+            let radius_count = safe_count(reader.read_bit_long(), reader);
             let mut radii = Vec::with_capacity(radius_count as usize);
             for _ in 0..radius_count {
                 radii.push(reader.read_bit_double());
             }
             // Each setback list directly follows its own count.
-            let start_count = safe_count(reader.read_bit_long());
+            let start_count = safe_count(reader.read_bit_long(), reader);
             let mut start_setbacks = Vec::with_capacity(start_count as usize);
             for _ in 0..start_count {
                 start_setbacks.push(reader.read_bit_double());
             }
-            let end_count = safe_count(reader.read_bit_long());
+            let end_count = safe_count(reader.read_bit_long(), reader);
             let mut end_setbacks = Vec::with_capacity(end_count as usize);
             for _ in 0..end_count {
                 end_setbacks.push(reader.read_bit_double());
@@ -508,14 +504,14 @@ pub fn read_solid_history_data(
         "ACSH_LOFT_CLASS" => {
             // The DWG record has no operation version of its own; DXF repeats
             // the node version there.
-            let cross_count = safe_count(reader.read_bit_long());
+            let cross_count = safe_count(reader.read_bit_long(), reader);
             let mut cross_sections = Vec::with_capacity(cross_count as usize);
             for _ in 0..cross_count {
                 if let Some(entity) = read_history_entity(reader, version, dxf_version) {
                     cross_sections.push(entity);
                 }
             }
-            let guide_count = safe_count(reader.read_bit_long());
+            let guide_count = safe_count(reader.read_bit_long(), reader);
             let mut guides = Vec::with_capacity(guide_count as usize);
             for _ in 0..guide_count {
                 if let Some(entity) = read_history_entity(reader, version, dxf_version) {
@@ -827,13 +823,13 @@ pub fn read_dynamic_block_data(
             let action = read_action(reader);
             let row_count = reader.read_bit_long();
             let column_count = reader.read_bit_long();
-            let count = safe_count(row_count.saturating_mul(column_count));
+            let count = safe_count(row_count.saturating_mul(column_count), reader);
             let mut expressions = Vec::with_capacity(count as usize);
             for _ in 0..count {
                 expressions.push(reader.read_variable_text());
             }
-            let mut columns = Vec::with_capacity(safe_count(column_count) as usize);
-            for _ in 0..safe_count(column_count) {
+            let mut columns = Vec::with_capacity(safe_count(column_count, reader) as usize);
+            for _ in 0..safe_count(column_count, reader) {
                 columns.push(BlockLookupColumn {
                     node_id: reader.read_bit_long(),
                     value_type: reader.read_bit_long(),
@@ -856,27 +852,27 @@ pub fn read_dynamic_block_data(
         "BLOCKSTRETCHACTION" => {
             let action = read_action(reader);
             let connections = [read_connection(reader), read_connection(reader)];
-            let point_count = safe_count(reader.read_bit_long());
+            let point_count = safe_count(reader.read_bit_long(), reader);
             let mut points = Vec::with_capacity(point_count as usize);
             for _ in 0..point_count {
                 points.push(reader.read_2raw_double());
             }
-            let handle_count = safe_count(reader.read_bit_long());
+            let handle_count = safe_count(reader.read_bit_long(), reader);
             let mut handles = Vec::with_capacity(handle_count as usize);
             for _ in 0..handle_count {
                 let handle = Handle::from(reader.read_handle());
-                let count = safe_count(reader.read_bit_short() as i32);
+                let count = safe_count(reader.read_bit_short() as i32, reader);
                 let mut indexes = Vec::with_capacity(count as usize);
                 for _ in 0..count {
                     indexes.push(reader.read_bit_long());
                 }
                 handles.push(BlockStretchHandle { handle, indexes });
             }
-            let code_count = safe_count(reader.read_bit_long());
+            let code_count = safe_count(reader.read_bit_long(), reader);
             let mut codes = Vec::with_capacity(code_count as usize);
             for _ in 0..code_count {
                 let code = reader.read_bit_long();
-                let count = safe_count(reader.read_bit_short() as i32);
+                let count = safe_count(reader.read_bit_short() as i32, reader);
                 let mut indexes = Vec::with_capacity(count as usize);
                 for _ in 0..count {
                     indexes.push(reader.read_bit_long());
@@ -902,35 +898,35 @@ pub fn read_dynamic_block_data(
                 read_connection(reader),
                 read_connection(reader),
             ];
-            let point_count = safe_count(reader.read_bit_long());
+            let point_count = safe_count(reader.read_bit_long(), reader);
             let mut points = Vec::with_capacity(point_count as usize);
             for _ in 0..point_count {
                 points.push(reader.read_2raw_double());
             }
-            let handle_count = safe_count(reader.read_bit_long());
+            let handle_count = safe_count(reader.read_bit_long(), reader);
             let mut handles = Vec::with_capacity(handle_count as usize);
             for _ in 0..handle_count {
                 handles.push(Handle::from(reader.read_handle()));
             }
-            let binding_count = safe_count(reader.read_bit_long());
+            let binding_count = safe_count(reader.read_bit_long(), reader);
             let mut bindings = Vec::with_capacity(binding_count as usize);
             for _ in 0..binding_count {
                 let handle = Handle::from(reader.read_handle());
-                let count = safe_count(reader.read_bit_long());
+                let count = safe_count(reader.read_bit_long(), reader);
                 let indexes = (0..count).map(|_| reader.read_bit_long()).collect();
                 bindings.push(BlockStretchHandle { handle, indexes });
             }
-            let code_count = safe_count(reader.read_bit_long());
+            let code_count = safe_count(reader.read_bit_long(), reader);
             let mut codes = Vec::with_capacity(code_count as usize);
             for _ in 0..code_count {
                 let code = reader.read_bit_long();
-                let count = safe_count(reader.read_bit_long());
+                let count = safe_count(reader.read_bit_long(), reader);
                 let indexes = (0..count).map(|_| reader.read_bit_long()).collect();
                 codes.push(BlockStretchCode { code, indexes });
             }
             let distance_multiplier = reader.read_bit_double();
             let angle_offset = reader.read_bit_double();
-            let extra_count = safe_count(reader.read_bit_long());
+            let extra_count = safe_count(reader.read_bit_long(), reader);
             let extra = (0..extra_count).map(|_| reader.read_bit_long()).collect();
             DynamicBlockData::PolarStretchAction(BlockPolarStretchAction {
                 action,
@@ -951,7 +947,7 @@ pub fn read_dynamic_block_data(
         "EVALUATION_GRAPH" | "ACAD_EVALUATION_GRAPH" => {
             let first_node_id = reader.read_bit_long();
             let first_node_id_copy = reader.read_bit_long();
-            let node_count = safe_count(reader.read_bit_long());
+            let node_count = safe_count(reader.read_bit_long(), reader);
             let mut nodes = Vec::with_capacity(node_count as usize);
             for _ in 0..node_count {
                 let id = reader.read_bit_long();
@@ -971,7 +967,7 @@ pub fn read_dynamic_block_data(
                     active_cycles: None,
                 });
             }
-            let edge_count = safe_count(reader.read_bit_long());
+            let edge_count = safe_count(reader.read_bit_long(), reader);
             let mut edges = Vec::with_capacity(edge_count as usize);
             for _ in 0..edge_count {
                 let id = reader.read_bit_long();

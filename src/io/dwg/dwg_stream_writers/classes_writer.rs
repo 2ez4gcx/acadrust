@@ -52,8 +52,9 @@ pub fn write_classes_with_encoding(
     version: DxfVersion,
     classes: &[DxfClass],
     maintenance_version: u8,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: impl Into<crate::io::dxf::code_page::LegacyEncoding>,
 ) -> Vec<u8> {
+    let encoding = encoding.into();
     let dwg_version = DwgVersion::from_dxf_version(version).unwrap_or(DwgVersion::AC15);
 
     // R2007+: Use DwgMergedWriter with three-stream merge.

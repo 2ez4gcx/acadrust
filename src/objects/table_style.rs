@@ -680,22 +680,37 @@ impl TableStyle {
 
     /// Returns true if title row is visible.
     pub fn has_title_row(&self) -> bool {
-        !self.title_suppressed
+        !self.title_suppressed && !self.flags.contains(TableStyleFlags::TITLE_SUPPRESSED)
     }
 
     /// Returns true if header row is visible.
     pub fn has_header_row(&self) -> bool {
-        !self.header_suppressed
+        !self.header_suppressed && !self.flags.contains(TableStyleFlags::HEADER_SUPPRESSED)
     }
 
     /// Sets title row visibility.
     pub fn set_title_visible(&mut self, visible: bool) {
         self.title_suppressed = !visible;
+        self.flags.set(TableStyleFlags::TITLE_SUPPRESSED, !visible);
     }
 
     /// Sets header row visibility.
     pub fn set_header_visible(&mut self, visible: bool) {
         self.header_suppressed = !visible;
+        self.flags.set(TableStyleFlags::HEADER_SUPPRESSED, !visible);
+    }
+
+    pub(crate) fn effective_flags(&self) -> TableStyleFlags {
+        let mut flags = self.flags;
+        flags.set(TableStyleFlags::TITLE_SUPPRESSED, !self.has_title_row());
+        flags.set(TableStyleFlags::HEADER_SUPPRESSED, !self.has_header_row());
+        flags
+    }
+
+    pub(crate) fn sync_suppression_flags(&mut self) {
+        self.flags = self.effective_flags();
+        self.title_suppressed = self.flags.contains(TableStyleFlags::TITLE_SUPPRESSED);
+        self.header_suppressed = self.flags.contains(TableStyleFlags::HEADER_SUPPRESSED);
     }
 }
 
@@ -705,15 +720,10 @@ impl Default for TableStyle {
     }
 }
 
-/// Extension-dictionary key of the R2008+ named cell styles a pre-R2010 file
-/// keeps for a table style.
 const CELL_STYLE_MAP_KEY: &str = "ACAD_ROUNDTRIP_2008_TABLESTYLE_CELLSTYLEMAP";
-/// Extension-dictionary key of the round-trip record; for a table style it
-/// holds the row data types an R2004 record has no field for.
 const ROUNDTRIP_RECORD_KEY: &str = "ACAD_XREC_ROUNDTRIP";
 const PRE2007_MARKER: &str = "ACAD_ROUNDTRIP_PRE2007_TABLESTYLE";
 
-/// The data, title and header rows in pre-R2010 record order.
 fn legacy_rows_mut(style: &mut TableStyle) -> [&mut RowCellStyle; 3] {
     [
         &mut style.data_row_style,
@@ -722,9 +732,6 @@ fn legacy_rows_mut(style: &mut TableStyle) -> [&mut RowCellStyle; 3] {
     ]
 }
 
-/// Fold the R2008+ named cell styles (and, for R2004, the row data types)
-/// that pre-R2010 files keep in a table style's extension dictionary into
-/// the style, so a save to R2010+ writes them.
 pub(crate) fn restore_table_style_roundtrip(document: &mut crate::document::CadDocument) {
     use crate::objects::{DataObjectData, ObjectType, XRecordValue};
     let styles: Vec<_> = document
@@ -795,9 +802,6 @@ pub(crate) fn restore_table_style_roundtrip(document: &mut crate::document::CadD
     }
 }
 
-/// Before a save to a pre-R2010 version, keep each table style's R2008+
-/// named cell styles in its extension dictionary (and, for R2004, the row
-/// data types in the round-trip record), as pre-R2010 files do.
 pub(crate) fn store_table_style_roundtrip(document: &mut crate::document::CadDocument) {
     use crate::objects::{
         CellStyleMap, DataObject, DataObjectData, ObjectType, XRecordEntry, XRecordValue,

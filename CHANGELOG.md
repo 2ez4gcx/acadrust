@@ -1,5 +1,67 @@
 ## Changelog
 
+### Unreleased
+
+- **Genuine DXF R12 output** - `DxfWriter::with_version(DxfVersion::AC1009)`
+  writes a real R12 file: no handles, CLASSES or OBJECTS, R12 table records,
+  and R12 entities only. LWPOLYLINE becomes a 2D POLYLINE with its bulges,
+  SPLINE/ELLIPSE/HELIX become polylines, HATCH becomes an anonymous `*X` block
+  with clipped pattern lines or SOLID strips, MTEXT becomes TEXT lines, and
+  names are mapped to valid R12 symbols. Documents that merely carry `AC1009`
+  keep being written as R13 by default.
+- **Explode fidelity** - SPLINE now explodes along the evaluated NURBS curve
+  (rational and non-uniform knots) instead of the control polygon; MTEXT
+  explodes to one TEXT per line with formatting codes removed, aligned by its
+  attachment point.
+
+### 0.6.4
+
+- **AC1009 import parity** - Incorporates Ottosson's explicit legacy code-page
+  override and AutoCAD-compatible plot defaults for synthesized layouts.
+- **DXF header fidelity (issue #127)** - Writes and round-trips angle base,
+  angle direction, elevation, thickness, fillet, and chamfer settings.
+- **DWG linetype fidelity (issue #128)** - Plain dashed elements with native
+  zero scales no longer become complex shape elements.
+- **ACIS/DWG decoding (issue #129)** - Corrects generation-specific silhouette
+  viewport widths and inline surface parsing. The supplied six-file corpus now
+  reads strictly, retaining all reported 3DSOLID and SURFACE entities.
+- **Table conversion (issue #130)** - Preserves merged cells, table row
+  suppression, and table metadata through DWG/DXF conversions.
+- **Legacy encodings (issue #131)** - Adds exact OEM, Mac Roman, and Johab
+  decoding/encoding for legacy DXF and DWG text.
+- **DWG data preservation (issue #132)** - Preserves named colors, table-record
+  XDATA, nested INSERT attribute colors, and reports unsupported custom records
+  instead of silently dropping them.
+- **BricsCAD compatibility** - Fixes legacy binary DXF output promotion and
+  DIMJOGANG degree/range handling. BricsCAD V20 still drops modern DWG
+  TABLESTYLE suppression when reopening its own files.
+
+### 0.6.3
+
+- **DXF color interoperability** - Layers now emit the nearest ACI fallback
+  alongside their exact true color.
+- **DWG transparency interoperability** - Explicit transparency uses the
+  standard `kByAlpha` method byte while legacy method-3 values remain readable.
+
+### 0.6.2
+
+- **AC1009/R12 DWG support** - Added native pre-R13 DWG read/write support,
+  including fixed-layout headers, symbol tables, entity records, CRC checks,
+  XDATA, and native entity codecs. Complete R12 fidelity remains in progress;
+  see [AC1009 support status](src/docs/ac1009_support.md).
+
+### 0.6.1
+
+- **Fields and tables** - Added sheet-set, count, object-property, and table
+  formula support, including numeric cell rendering and refresh-safe table
+  formatting.
+- **DWG/DXF fidelity** - Improved associative data, ACIS/SAB, summary info,
+  table styles, legacy text, viewport metadata, spatial filters, and retained
+  TrueType font flags and object references.
+- **Round-trip reliability** - Preserved opaque records and extension data,
+  repaired empty associative values, table-cell overrides, and legacy border
+  visibility across conversions.
+
 ### 0.6.0
 
 - **DXF color and class parsing** - Preserved unsigned `AcCmColor` values and

@@ -8,7 +8,7 @@ use opencadcodec::{CadDocument, Color, DwgReadOptions, DwgReader, DwgWriter, Ent
 fn mpolygons_of(doc: &CadDocument) -> Vec<Hatch> {
     doc.model_space_entities()
         .filter_map(|entity| match entity {
-            EntityType::Hatch(hatch) if hatch.is_mpolygon => Some(hatch.clone()),
+            EntityType::Hatch(hatch) if hatch.is_mpolygon => Some(hatch.as_ref().clone()),
             _ => None,
         })
         .collect()
@@ -24,7 +24,6 @@ fn mpolygons() -> Vec<Hatch> {
     mpolygons_of(&read(include_bytes!("mpolygon-fixture.dwg").to_vec()))
 }
 
-/// Loop vertices as (x, y, bulge).
 fn vertices(path: &BoundaryPath) -> Vec<(f64, f64, f64)> {
     assert_eq!(path.edges.len(), 1, "an MPOLYGON loop is a single polyline");
     let BoundaryEdge::Polyline(polyline) = &path.edges[0] else {
@@ -34,7 +33,6 @@ fn vertices(path: &BoundaryPath) -> Vec<(f64, f64, f64)> {
     polyline.vertices.iter().map(|v| (v.x, v.y, v.z)).collect()
 }
 
-/// Shape 1: square (0,0)-(10,10), solid, entity colour 1, fill colour 5.
 fn square(mpolygons: &[Hatch]) -> &Hatch {
     mpolygons
         .iter()
@@ -111,7 +109,6 @@ fn square_with_hole_reads_two_loops() {
     );
 }
 
-/// Shape 3: (40,10), (50,10), (50,0) with bulge -1, (40,0).
 #[test]
 fn arc_shape_carries_a_non_zero_bulge() {
     let mpolygons = mpolygons();
@@ -159,7 +156,6 @@ fn true_color_fill_and_bylayer_entity() {
     assert_eq!(hatch.common.linetype, "DASHED");
 }
 
-/// Shape 6: AutoCAD keeps the self-intersecting bow-tie as a valid loop.
 #[test]
 fn bow_tie_stays_a_valid_loop() {
     let mpolygons = mpolygons();
@@ -179,7 +175,7 @@ fn bow_tie_stays_a_valid_loop() {
 fn write_and_read(mpolygons: &[Hatch]) -> Vec<Hatch> {
     let mut doc = CadDocument::new();
     for hatch in mpolygons {
-        doc.add_entity(EntityType::Hatch(hatch.clone())).unwrap();
+        doc.add_entity(EntityType::Hatch(Box::new(hatch.clone()))).unwrap();
     }
     mpolygons_of(&read(DwgWriter::write_to_vec(&doc).unwrap()))
 }

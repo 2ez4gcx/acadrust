@@ -22,10 +22,13 @@ Thumbs.db
 *.dxf
 *.dxb
 *.dwg
+!/tests/fixtures/r12/cad-created/*.dwg
+!/tests/fixtures/r12/cad-created/*.dxf
 *.dwl
 *.dwl2
 *.dmp
 /crash_report.txt
+
 
 
 # Documentation

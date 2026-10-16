@@ -1,4 +1,4 @@
-//! Error types for opencadcodec.
+//! Error types for acadrust.
 //!
 //! The crate uses [`DxfError`] as the single error enum and provides a
 //! [`Result<T>`] type alias (`Result<T, DxfError>`) for convenience.
@@ -6,7 +6,7 @@
 use std::io;
 use thiserror::Error;
 
-/// Main error type for opencadcodec operations
+/// Main error type for acadrust operations
 #[derive(Debug, Error)]
 pub enum DxfError {
     /// IO error occurred during file operations
@@ -53,6 +53,10 @@ pub enum DxfError {
     #[error("Invalid file format: {0}")]
     InvalidFormat(String),
 
+    /// Recovery did not produce usable drawing data.
+    #[error("Recovery failed: {0}")]
+    RecoveryFailed(String),
+
     /// Invalid sentinel in file
     #[error("Invalid sentinel: {0}")]
     InvalidSentinel(String),
@@ -83,7 +87,7 @@ pub enum DxfError {
     Custom(String),
 }
 
-/// Result type alias for opencadcodec operations
+/// Result type alias for acadrust operations
 pub type Result<T> = std::result::Result<T, DxfError>;
 
 impl From<String> for DxfError {

@@ -80,9 +80,13 @@ fn material_checker_texture(entries: &[XRecordEntry]) -> Option<MaterialTexture>
 }
 
 mod semantic_inventory;
+mod legacy_header;
+pub use legacy_header::LegacyHeaderState;
 pub use semantic_inventory::*;
 mod block_graph;
 pub use block_graph::BlockGraph;
+mod dynamic_properties;
+pub use dynamic_properties::DynamicBlockProperty;
 
 #[cfg(feature = "serde")]
 fn default_sketch_tolerance() -> f64 {
@@ -140,15 +144,10 @@ thread_local! {
 pub struct SolidHistoryGraph {
     pub root: Handle,
     pub nodes: Vec<Handle>,
-    /// The root's evaluation graph (AcDbEvalGraph), which links the nodes.
-    /// Histories written by older releases of this crate have none and link
-    /// their nodes through parent ids.
     #[cfg_attr(feature = "serde", serde(default))]
     pub evaluation_graph: Option<Handle>,
 }
 
-/// Evaluation node flags the reference application stores on every solid
-/// history node.
 const SOLID_HISTORY_NODE_FLAGS: i32 = 32;
 
 fn solid_history_node_id(base: &SolidHistoryNodeBase) -> i32 {
@@ -160,6 +159,9 @@ fn solid_history_node_id(base: &SolidHistoryNodeBase) -> i32 {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(default))]
 pub struct HeaderVariables {
+    /// Independent current view/drafting state from an R12 header.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub legacy: Option<LegacyHeaderState>,
     // ==================== Version-specific Flags ====================
     /// REQUIREDVERSIONS (R2013+) - Bit coded required versions
     pub required_versions: i64,
@@ -282,10 +284,7 @@ pub struct HeaderVariables {
     pub hide_text: i16,
     /// XCLIPFRAME - Xref clipping frame visibility
     pub xclip_frame: i16,
-    /// DWFFRAME - DWF underlay frame visibility (0 hidden, 1 shown and
-    /// plotted, 2 shown but not plotted)
     pub dwf_frame: i16,
-    /// DGNFRAME - DGN underlay frame visibility (same values as DWFFRAME)
     pub dgn_frame: i16,
     /// HALOGAP - Halo gap percentage
     pub halo_gap: i16,
@@ -703,16 +702,11 @@ pub struct HeaderVariables {
     pub continuous_linetype_handle: Handle,
 
     // ==================== Date/Time ====================
-    /// TDCREATE: creation time in local time (Julian day, fraction from
-    /// midnight). DWG files store only the universal time; their reader
-    /// copies it here because the file carries no time zone.
+    /// Document creation time (Julian date)
     pub create_date_julian: f64,
-    /// TDUPDATE: last save in local time (Julian day, fraction from midnight).
+    /// Document update time (Julian date)
     pub update_date_julian: f64,
-    /// TDUCREATE: creation time in universal time — the value DWG files store.
-    /// 0 = unknown; writers then fall back to the local value.
     pub universal_create_date_julian: f64,
-    /// TDUUPDATE: last save in universal time; 0 = unknown.
     pub universal_update_date_julian: f64,
     /// Total editing time in days
     pub total_editing_time: f64,
@@ -759,7 +753,6 @@ pub struct HeaderVariables {
 }
 
 impl HeaderVariables {
-    /// TDUCREATE, or TDCREATE when the universal value is unknown.
     pub fn universal_create_or_local(&self) -> f64 {
         if self.universal_create_date_julian != 0.0 {
             self.universal_create_date_julian
@@ -768,7 +761,6 @@ impl HeaderVariables {
         }
     }
 
-    /// TDUUPDATE, or TDUPDATE when the universal value is unknown.
     pub fn universal_update_or_local(&self) -> f64 {
         if self.universal_update_date_julian != 0.0 {
             self.universal_update_date_julian
@@ -781,6 +773,7 @@ impl HeaderVariables {
 impl Default for HeaderVariables {
     fn default() -> Self {
         Self {
+            legacy: None,
             // Version-specific flags
             required_versions: 0,
 
@@ -1301,11 +1294,9 @@ pub struct CadDocument {
     /// Keyed by the object/table-entry handle. Not serialized.
     pub(crate) eed_by_handle: HashMap<Handle, Vec<(u64, Vec<u8>)>>,
 
-    /// Extended data (XDATA) of non-entity objects as application records,
-    /// keyed by object handle: read from DXF, or decoded from the DWG EED in
-    /// `eed_by_handle`. The DWG writer encodes the records whose application
-    /// has no verbatim EED block; the DXF writer writes them after the object.
-    pub(crate) object_xdata: HashMap<Handle, crate::xdata::ExtendedData>,
+    /// Structured XDATA for objects and symbol-table records, keyed by handle.
+    /// Entity XDATA lives in `EntityCommon::extended_data`.
+    pub object_xdata: HashMap<Handle, crate::xdata::ExtendedData>,
 
     /// Non-entity object xdictionary handles — populated during DWG read, consumed during DWG write.
     pub(crate) xdic_by_handle: HashMap<Handle, Handle>,
@@ -1343,12 +1334,17 @@ pub struct CadDocument {
     /// Shared so document snapshots do not duplicate large modeler data.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) raw_acds_data: Option<Arc<Vec<u8>>>,
-    /// Original extrusion history and dimension-association records, keyed by
-    /// handle (type code, bytes). Their semantic snapshots guard passthrough.
-    /// `ACADRUST_RAW_ALL` additionally captures every record for debug bisection.
+    /// Original AC1009 fixed-layout header, retaining legacy fields without
+    /// counterparts in `HeaderVariables` for native R12 saves.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) r12_header_raw: Option<Vec<u8>>,
+    /// Debug aid: every record of the source DWG, verbatim, keyed by handle
+    /// (type code, bytes). Only filled when `ACADRUST_RAW_ALL` is set in the
+    /// environment; the writer then re-emits these instead of re-serialising
+    /// so that a writer defect can be bisected by object type
+    /// (`ACADRUST_RAW_EXCLUDE`).
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) raw_records: HashMap<u64, (i16, Arc<crate::entities::RawRecord>)>,
-    /// Semantic snapshots guarding same-version passthrough of retained objects.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) original_objects: HashMap<Handle, ObjectType>,
     /// Child record -> compound entity handle, captured with `raw_records`.
@@ -1538,6 +1534,7 @@ impl CadDocument {
             preview: None,
             acis_sab_handles: Vec::new(),
             raw_acds_data: None,
+            r12_header_raw: None,
             raw_records: HashMap::new(),
             original_objects: HashMap::new(),
             raw_record_owners: HashMap::new(),
@@ -2252,6 +2249,9 @@ impl CadDocument {
         for handle in self.objects.keys() {
             include_handle!(*handle);
         }
+        for object in self.objects.values() {
+            include_handle!(object.intrinsic_handle());
+        }
 
         self.next_handle = next_handle;
         self.header.handle_seed = self.header.handle_seed.max(next_handle);
@@ -2326,7 +2326,6 @@ impl CadDocument {
         })
     }
 
-    /// The evaluation graph a history root owns, if any.
     fn solid_history_evaluation_graph(&self, root: Handle) -> Option<Handle> {
         let ObjectType::DynamicBlock(root_object) = self.objects.get(&root)? else {
             return None;
@@ -2354,7 +2353,6 @@ impl CadDocument {
         }
     }
 
-    /// Node handle whose evaluation id is the root's active id.
     fn solid_history_active_node(&self, graph: &SolidHistoryGraph) -> Option<Handle> {
         let active = match self.objects.get(&graph.root)? {
             ObjectType::DynamicBlock(value) => match &value.data {
@@ -2372,8 +2370,6 @@ impl CadDocument {
         matches.next().is_none().then_some(node)
     }
 
-    /// Node handles from the root to the active node, following each node's
-    /// first incoming edge (its primary operand) in the evaluation graph.
     fn solid_history_graph_chain(&self, graph: &SolidHistoryGraph) -> Option<Vec<Handle>> {
         let ObjectType::DynamicBlock(object) = self.objects.get(&graph.evaluation_graph?)? else {
             return None;
@@ -2407,9 +2403,6 @@ impl CadDocument {
         Some(chain)
     }
 
-    /// Give a history written without an evaluation graph (older releases of
-    /// this crate) one, built from its parent-linked chain, so new steps can
-    /// be linked the way the reference application links them.
     pub(crate) fn ensure_solid_history_evaluation_graph(
         &mut self,
         entity: Handle,
@@ -2481,9 +2474,6 @@ impl CadDocument {
         self.solid_history_graph(entity)
     }
 
-    /// Entities whose solid history has no evaluation graph. The reference
-    /// application rejects a drawing holding a multi-step history in that
-    /// form, so writers save it with one.
     pub(crate) fn legacy_solid_history_entities(&self) -> Vec<Handle> {
         self.entities()
             .map(|entity| entity.common().handle)
@@ -2571,9 +2561,7 @@ impl CadDocument {
 
     /// Return the active solid-history chain in root-to-active order.
     ///
-    /// The evaluation graph determines the chain: from the active node back
-    /// through each node's first operand. Histories without a graph (older
-    /// releases of this crate) are linked through parent evaluation ids.
+    /// Parent evaluation ids, rather than step ordering, determine the chain.
     /// Missing, cyclic, or ambiguous links make the graph unusable.
     pub fn solid_history_operations(&self, entity: Handle) -> Option<Vec<SolidHistoryOperation>> {
         let graph = self.solid_history_graph(entity)?;
@@ -2982,10 +2970,9 @@ impl CadDocument {
 
     /// Append a new operation to an entity's existing solid-history graph.
     ///
-    /// The existing root and nodes remain intact. The appended operation gets
-    /// the next evaluation id, takes the active node as its operand through a
-    /// new evaluation-graph edge and becomes the graph's active operation.
-    /// Like every history node it stores the root parent id.
+    /// The existing root and nodes remain intact. The appended operation is
+    /// assigned a new step/evaluation id, linked to the active node, and made
+    /// the graph's active operation.
     pub fn append_solid_history(
         &mut self,
         entity: Handle,
@@ -3775,7 +3762,7 @@ impl CadDocument {
         self.record_entity_before(overall_vp_handle, None);
         let idx = self.entities.len();
         self.entities
-            .push(Arc::new(EntityType::Viewport(overall_vp)));
+            .push(Arc::new(EntityType::Viewport(Box::new(overall_vp))));
         self.entity_index.insert(overall_vp_handle, idx);
 
         // Register in ACAD_LAYOUT dictionary
@@ -3792,13 +3779,6 @@ impl CadDocument {
         Ok(layout_handle)
     }
 
-    /// Give the model block a `Model` layout when the source had none.
-    ///
-    /// R13/R14 files predate LAYOUT objects, so a reader otherwise returns a
-    /// `*Model_Space` record with no layout, or one naming a handle that
-    /// resolves to nothing (#65). Only the model layout is synthesized: paper
-    /// settings the source does not carry are not invented, and dangling
-    /// record → layout handles are cleared.
     pub fn ensure_model_layout(&mut self) {
         // Layouts name their record; a record left without the back link
         // (R13/R14 block headers have none) takes it from its layout.
@@ -3811,6 +3791,12 @@ impl CadDocument {
             })
             .collect();
         for record in self.block_records.iter_mut() {
+            // Preserve an explicitly saved self-reference. AutoCAD leaves this
+            // unresolved when the drawing is loaded as an xref; callers can use
+            // the Layout's reverse link when opening it as the root drawing.
+            if record.layout == record.handle {
+                continue;
+            }
             if !matches!(self.objects.get(&record.layout), Some(ObjectType::Layout(_))) {
                 record.layout = owners.get(&record.handle).copied().unwrap_or(Handle::NULL);
             }
@@ -4197,6 +4183,34 @@ impl CadDocument {
     /// Project typed properties whose authoritative storage is a named
     /// XRecord onto their public object models.
     pub fn resolve_xrecord_backed_properties(&mut self) {
+        // Older DWG versions down-save multiline attributes as TEXT plus an
+        // ACAD_MLATT record. The outer tag may have an artificial _001 suffix;
+        // group 2 before the embedded object is the actual attribute tag.
+        let multiline_tags: HashMap<Handle, String> = self.objects.values().filter_map(|object| {
+            let ObjectType::Dictionary(dictionary) = object else { return None; };
+            let record = dictionary.get("ACAD_MLATT")?;
+            let Some(ObjectType::XRecord(record)) = self.objects.get(&record) else { return None; };
+            if !record.entries_complete { return None; }
+            record.entries.iter().take_while(|e| e.code != 1).find_map(|e| {
+                match (e.code, &e.value) {
+                    (2, crate::objects::XRecordValue::String(tag)) => Some((dictionary.owner, tag.clone())),
+                    _ => None,
+                }
+            })
+        }).collect();
+        if !multiline_tags.is_empty() {
+            for entity in self.entities_mut_keep_raw() {
+                match entity {
+                    EntityType::AttributeDefinition(a) => {
+                        if let Some(tag) = multiline_tags.get(&a.common.handle) { a.tag = tag.clone(); }
+                    }
+                    EntityType::Insert(i) => for a in &mut i.attributes {
+                        if let Some(tag) = multiline_tags.get(&a.common.handle) { a.tag = tag.clone(); }
+                    },
+                    _ => {},
+                }
+            }
+        }
         let advanced_values: HashMap<Handle, Vec<XRecordEntry>> = self
             .objects
             .values()
@@ -4472,9 +4486,6 @@ impl CadDocument {
             .map(|record| record.handle)
     }
 
-    /// Copy the native source-definition tag of an evaluated anonymous block.
-    /// Nonempty extension dictionaries need a full object-graph clone and are
-    /// deliberately rejected here rather than shared between block records.
     pub fn copy_evaluated_block_metadata(&mut self, source: Handle, target: Handle) -> Result<()> {
         for handle in [source, target] {
             if !self.block_records.iter().any(|b| b.handle == handle && b.name.starts_with("*U")) {
@@ -4625,6 +4636,7 @@ impl CadDocument {
             if let Some(name) = linetype {
                 common.linetype = name;
             }
+            common.raw_record = None;
         }
 
         // A layer's own linetype reference is a name too.
@@ -5821,8 +5833,7 @@ impl CadDocument {
             return;
         }
 
-        for entity in self.entities_mut_keep_raw() {   // derived colour names only; record bytes untouched
-            let common = entity.common_mut();
+        let resolve = |common: &mut EntityCommon| {
             let resolved = common
                 .color_book_handle
                 .and_then(|handle| colors.iter().find(|entry| entry.0 == handle))
@@ -5841,6 +5852,14 @@ impl CadDocument {
                 common.color = *color;
                 common.color_name =
                     crate::io::dxf::join_color_book_name(Some(book_name), Some(color_name));
+            }
+        };
+        for entity in self.entities_mut_keep_raw() {
+            resolve(entity.common_mut());
+            if let EntityType::Insert(insert) = entity {
+                for attribute in &mut insert.attributes {
+                    resolve(&mut attribute.common);
+                }
             }
         }
     }

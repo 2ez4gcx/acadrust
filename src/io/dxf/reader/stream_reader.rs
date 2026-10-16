@@ -196,7 +196,7 @@ pub trait DxfStreamReader {
     ///
     /// Called after reading $DWGCODEPAGE from the header.
     /// Implementations that don't support encoding changes can ignore this.
-    fn set_encoding(&mut self, _encoding: &'static encoding_rs::Encoding) {
+    fn set_encoding(&mut self, _encoding: crate::io::dxf::code_page::LegacyEncoding) {
         // Default: no-op
     }
 
@@ -204,21 +204,13 @@ pub trait DxfStreamReader {
         DxfStreamContext::default()
     }
 
-    /// Start (or stop) recording the extended-data pairs read from the
-    /// stream: each 1001 group and the 1000..=1071 groups after it, plus the
-    /// first handle (5) group. Starting clears what was recorded before.
     fn record_xdata(&mut self, _on: bool) {}
 
-    /// The recorded handle group value and extended-data pairs.
     fn take_recorded_xdata(&mut self) -> (Option<String>, Vec<DxfCodePair>) {
         (None, Vec::new())
     }
 }
 
-/// Stream wrapper that records extended data while the objects of the
-/// OBJECTS section are read, so it reaches the document whatever the object
-/// reader does with the trailing groups. Pushed-back pairs are kept on a
-/// stack, so several pairs can be replayed.
 pub(crate) struct XDataRecorder {
     inner: Box<dyn DxfStreamReader>,
     pending: Vec<DxfCodePair>,
@@ -256,7 +248,7 @@ impl DxfStreamReader for XDataRecorder {
                 }
                 if self.in_xdata {
                     self.recorded.push(pair.clone());
-                } else if pair.code == 5 && self.handle.is_none() {
+                } else if matches!(pair.code, 5 | 105) && self.handle.is_none() {
                     self.handle = Some(pair.value_string.trim().to_string());
                 }
             }
@@ -280,7 +272,7 @@ impl DxfStreamReader for XDataRecorder {
         self.inner.reset()
     }
 
-    fn set_encoding(&mut self, encoding: &'static encoding_rs::Encoding) {
+    fn set_encoding(&mut self, encoding: crate::io::dxf::code_page::LegacyEncoding) {
         self.inner.set_encoding(encoding);
     }
 

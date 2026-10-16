@@ -7,7 +7,6 @@ use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vecto
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ViewportStatusFlags {
-    /// Non-rectangular clipping activation, independent of boundary presence.
     #[cfg_attr(feature = "serde", serde(default))]
     pub non_rectangular_clipping: bool,
     /// Explicit viewport-off flag (0x20000), independent of the legacy on bit.
@@ -57,9 +56,8 @@ impl ViewportStatusFlags {
     }
 
     /// Create from the DWG/DXF viewport status bit-coded flags (group 90).
-    /// The low bits run perspective(0x1) … iso_pair_right(0x2000), followed by
-    /// viewport-locked(0x4000), viewport-on/visible(0x8000), and non-rectangular
-    /// clipping(0x10000).
+    /// The low bits run perspective(0x1) … iso_pair_right(0x2000); the two high
+    /// bits are viewport-locked(0x4000) and viewport-on/visible(0x8000).
     pub fn from_bits(bits: i32) -> Self {
         Self {
             non_rectangular_clipping: (bits & 0x10000) != 0,
@@ -266,8 +264,13 @@ pub struct Viewport {
     pub status: ViewportStatusFlags,
     /// Viewport ID (unique within the drawing)
     pub id: i16,
-    /// On, but off screen or past the active-viewport limit (DXF status
-    /// `68` of -1). Neither DWG nor the status bits carry it.
+    /// DXF group 68 status/stacking value when it was present in the source.
+    ///
+    /// `None` means the viewport was created in memory or came from a format
+    /// that does not expose the DXF value. In that case the DXF writer derives
+    /// the legacy value from `status.is_on`, `off_screen`, and `id`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub dxf_status: Option<i16>,
     pub off_screen: bool,
     /// DXF status `68` when positive: the viewport's stacking rank, 1 for
     /// the active one. Independent of [`id`](Self::id); 0 = the rank equals
@@ -295,9 +298,9 @@ pub struct Viewport {
     pub back_clip_z: f64,
     /// View height (in model space units)
     pub view_height: f64,
-    /// Snap angle in radians (DXF group 50 stores degrees).
+    /// Snap angle
     pub snap_angle: f64,
-    /// View twist angle in radians (DXF group 51 stores degrees).
+    /// View twist angle
     pub twist_angle: f64,
     /// Circle zoom percent (1-20000)
     pub circle_sides: i16,
@@ -369,6 +372,7 @@ impl Viewport {
             height: 210.0, // A4 height in mm
             status: ViewportStatusFlags::default_on(),
             id: 0,
+            dxf_status: None,
             off_screen: false,
             stacking: 0,
             view_center: Vector3::ZERO,

@@ -267,6 +267,11 @@ pub struct DwgPageCrcInfo {
 /// * Missing pages in a section are skipped instead of aborting.
 /// * Skipped records and sections are reported through the
 ///   [`CadDocument::notifications`](crate::document::CadDocument::notifications) collection.
+///
+/// MLeader annotation contexts, associative geometry dependencies, and edge
+/// action parameters with unsupported payload layouts are preserved as raw DWG
+/// objects with diagnostics even in strict mode, if their framing and common
+/// object metadata are valid. Same-version DWG saves retain those records.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DwgReadOptions {
@@ -321,7 +326,7 @@ fn find_acds_magic(buf: &[u8], from: usize) -> Option<usize> {
 /// This is what AutoCAD 2013+ / BricsCAD emit.
 const ASM_END_MARKER: &[u8] = b"\x0E\x03End\x0E\x02of\x0E\x03ASM\x0D\x04data";
 /// End-of-body terminator for a classic ACIS SAB blob, written as one tagged
-/// identifier string. This is what opencadcodec's own `SabWriter` emits, so the
+/// identifier string. This is what acadrust's own `SabWriter` emits, so the
 /// reader must recognise it to round-trip natively-built solids (primitives and
 /// the exact planar/NURBS export), not just ASM bodies read from other apps.
 const ACIS_END_MARKER: &[u8] = b"End-of-ACIS-data";
@@ -399,7 +404,7 @@ fn extract_acds_record_blobs(buf: &[u8], modeler_handles: &HashSet<u64>) -> Vec<
             p += 20;
         }
         // A single entry can also be the interleaved layout emitted by older
-        // opencadcodec versions. Use the order-based fallback for those files.
+        // acadrust versions. Use the order-based fallback for those files.
         if recs.len() < 2 {
             continue;
         }
@@ -687,7 +692,7 @@ fn section_name_from_field(name_buf: &[u8; 64]) -> String {
 /// integrity checksums including the AC1021 Header CRC-64.
 /// Read one `T16` string (2-byte character-count prefix). R2007+ stores the
 /// characters as UTF-16LE; earlier versions as one byte per character.
-fn read_t16(cur: &mut &[u8], utf16: bool, encoding: &'static encoding_rs::Encoding) -> String {
+fn read_t16(cur: &mut &[u8], utf16: bool, encoding: crate::io::dxf::code_page::LegacyEncoding) -> String {
     if cur.len() < 2 {
         *cur = &[];
         return String::new();
@@ -713,8 +718,6 @@ fn read_t16(cur: &mut &[u8], utf16: bool, encoding: &'static encoding_rs::Encodi
     }
 }
 
-/// Decode the EED of FIELD objects into their `xdata` (a hyperlink field's
-/// `PE_URL` record) so it survives a save to DXF or to another DWG version.
 fn decode_field_xdata(document: &mut crate::document::CadDocument) {
     let wide = document.version >= crate::types::DxfVersion::AC1021;
     let fields: Vec<_> = document
@@ -747,9 +750,6 @@ fn decode_field_xdata(document: &mut crate::document::CadDocument) {
     }
 }
 
-/// Before R2007 a block record's insertion units live in its ACAD
-/// `DesignCenter Data` EED. Move them into `BlockRecord::units`; the writer
-/// regenerates the EED for older versions and stores the field for newer.
 fn decode_block_units_xdata(document: &mut crate::document::CadDocument) {
     if document.version >= crate::types::DxfVersion::AC1021 {
         return;
@@ -781,12 +781,10 @@ fn decode_block_units_xdata(document: &mut crate::document::CadDocument) {
 }
 
 /// Parse the decompressed `AcDb:SummaryInfo` section (R2004+): eight fixed
-/// strings, three 8-byte timers, then the custom-property pairs. Pre-R2007
-/// strings are decoded with the drawing code page `encoding`.
 fn parse_summary_info(
     buf: &[u8],
     utf16: bool,
-    encoding: &'static encoding_rs::Encoding,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
 ) -> crate::document::SummaryInfo {
     let mut cur: &[u8] = buf;
     let mut si = crate::document::SummaryInfo {
@@ -832,6 +830,14 @@ pub struct DwgReader<R: Read + Seek> {
     /// callers can map DWG parsing into a larger file-open pipeline without
     /// coupling this crate to a UI or an async runtime.
     progress: Option<std::sync::Arc<dyn Fn(u16) + Send + Sync>>,
+    legacy_font_resolver: Option<std::sync::Arc<crate::io::dwg::r12::ImportFontResolver>>,
+    r12_code_page: Option<String>,
+    /// Section-level diagnostics collected by `get_section_buffer`.
+    ///
+    /// Section extraction is also a public API, so it cannot take the
+    /// read_with_stats diagnostic accumulator as an argument. Keep these
+    /// diagnostics on the reader and drain them when assembling ReadStats.
+    pending_diagnostics: Vec<ReadDiagnostic>,
 }
 
 impl DwgReader<File> {
@@ -853,6 +859,9 @@ impl DwgReader<File> {
             notifications: NotificationCollection::new(),
             source_path: Some(path.to_string_lossy().into_owned()),
             progress: None,
+            legacy_font_resolver: None,
+            r12_code_page: None,
+            pending_diagnostics: Vec::new(),
         })
     }
 }
@@ -873,11 +882,52 @@ impl DwgReader<Cursor<memmap2::Mmap>> {
             notifications: NotificationCollection::new(),
             source_path: Some(path.to_string_lossy().into_owned()),
             progress: None,
+            legacy_font_resolver: None,
+            r12_code_page: None,
+            pending_diagnostics: Vec::new(),
         })
     }
 }
 
 impl<R: Read + Seek> DwgReader<R> {
+    /// Override the code page used to decode AC1009 strings.
+    ///
+    /// By default, the file's declared code page is honored. Some legacy
+    /// importers use an application encoding instead. This explicit override
+    /// applies to header strings, tables, and entities, while preserving the
+    /// declared `document.header.code_page`. Later DWG versions are unaffected.
+    /// No system locale or application configuration is queried by the reader.
+    pub fn with_r12_code_page(mut self, code_page: impl Into<String>) -> Result<Self, DxfError> {
+        let code_page = code_page.into();
+        if crate::io::dxf::code_page::try_encoding_from_code_page(&code_page).is_none() {
+            return Err(DxfError::InvalidFormat(format!(
+                "Unsupported AC1009 code page override: {code_page}"
+            )));
+        }
+        self.r12_code_page = Some(code_page);
+        Ok(self)
+    }
+
+    /// Resolve legacy font files to canonical identities during R12 import.
+    ///
+    /// Missing R12 object handles are synthesized in import order. Loading a
+    /// text font consumes a transient identity once per resolved font; aliases
+    /// and unavailable fonts substituted with the same fallback share that
+    /// identity. Supply the writer's font resolution when matching identities
+    /// across a native reader and another application's writer.
+    ///
+    /// The callback receives the stored font filename and returns a stable key
+    /// for the resolved font, including any fallback. No font files are read by
+    /// acadrust. Without this callback, stored font names identify distinct fonts.
+    /// Existing entity handles are preserved in either mode.
+    pub fn with_legacy_font_resolver<F>(mut self, resolver: F) -> Self
+    where
+        F: Fn(&str) -> String + Send + Sync + 'static,
+    {
+        self.legacy_font_resolver = Some(std::sync::Arc::new(resolver));
+        self
+    }
+
     /// Create a reader from any seekable stream.
     pub fn from_stream(stream: R) -> Self {
         Self {
@@ -886,6 +936,9 @@ impl<R: Read + Seek> DwgReader<R> {
             notifications: NotificationCollection::new(),
             source_path: None,
             progress: None,
+            legacy_font_resolver: None,
+            r12_code_page: None,
+            pending_diagnostics: Vec::new(),
         }
     }
 
@@ -897,6 +950,9 @@ impl<R: Read + Seek> DwgReader<R> {
             notifications: NotificationCollection::new(),
             source_path: None,
             progress: None,
+            legacy_font_resolver: None,
+            r12_code_page: None,
+            pending_diagnostics: Vec::new(),
         }
     }
 
@@ -929,6 +985,29 @@ impl<R: Read + Seek> DwgReader<R> {
     /// document is returned instead of propagating the error.
     pub fn read(&mut self) -> std::result::Result<crate::document::CadDocument, DxfError> {
         self.read_with_stats().map(|outcome| outcome.document)
+    }
+
+    fn report_section_diagnostic(
+        &mut self,
+        code: &str,
+        section: &str,
+        source_offset: Option<u64>,
+        message: impl Into<String>,
+    ) {
+        let mut diagnostic = ReadDiagnostic::new(code, ReadStage::Section, message);
+        diagnostic.section = Some(section.to_owned());
+        diagnostic.source_offset = source_offset;
+        diagnostic.source_offset_basis = Some("file-byte".to_owned());
+        push_read_diagnostic(&mut self.pending_diagnostics, diagnostic);
+    }
+
+    /// Recover as much usable drawing data as possible and apply conservative
+    /// document repairs. Recovery always enables failsafe parsing.
+    pub fn recover(
+        &mut self,
+    ) -> std::result::Result<crate::io::recover::RecoverOutcome, DxfError> {
+        self.options.failsafe = true;
+        crate::io::recover::RecoverOutcome::from_read_outcome(self.read_with_stats()?)
     }
 
     /// Like [`read`], but each pass-2 entity is offered to `visit` before it
@@ -971,6 +1050,83 @@ impl<R: Read + Seek> DwgReader<R> {
         let total_started = web_time::Instant::now();
         let mut diagnostics = Vec::new();
         self.report_progress(0);
+
+        // AC1009/R12 predates the section-map/object-stream model used by the
+        // normal DWG reader. Dispatch it to the byte-aligned pre-R13 codec
+        // before attempting the R13+ file-header parser.
+        self.stream.seek(SeekFrom::Start(0))?;
+        let mut magic = [0u8; 6];
+        self.stream.read_exact(&mut magic)?;
+        self.stream.seek(SeekFrom::Start(0))?;
+        if magic == *b"AC1009" || magic == *b"AD1009" {
+            let mut bytes = Vec::new();
+            self.stream.read_to_end(&mut bytes)?;
+            let mut document = match crate::io::dwg::r12::read_document(
+                &bytes,
+                self.legacy_font_resolver.as_deref(),
+                self.r12_code_page.as_deref(),
+            ) {
+                Ok(document) => document,
+                Err(error) if failsafe => {
+                    report_read_error(
+                        &mut self.notifications,
+                        &mut diagnostics,
+                        "legacy-read-failed",
+                        ReadStage::RecordStream,
+                        None,
+                        format!("Failsafe: legacy AC1009 read failed: {}", error),
+                    );
+                    let mut document = crate::document::CadDocument::default();
+                    document
+                        .notifications
+                        .extend(std::mem::take(&mut self.notifications));
+                    let stats = crate::io::read::ReadStats::from_document(
+                        &document,
+                        SourceFormat::Dwg,
+                        1,
+                        0,
+                        0,
+                        1,
+                        true,
+                        true,
+                        false,
+                        diagnostics,
+                    );
+                    return Ok(crate::io::read::ReadOutcome::new(document, stats));
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(visit) = visit {
+                let handles: Vec<_> = document
+                    .entities()
+                    .map(|entity| entity.common().handle)
+                    .collect();
+                for handle in handles {
+                    let Some(entity) = document.get_entity(handle).cloned() else {
+                        continue;
+                    };
+                    let replacement = visit(&document, entity);
+                    document.remove_entity(handle);
+                    if let Some(entity) = replacement {
+                        document.add_entity(entity)?;
+                    }
+                }
+            }
+            self.report_progress(1000);
+            let stats = crate::io::read::ReadStats::from_document(
+                &document,
+                SourceFormat::Dwg,
+                1,
+                document.entities().count(),
+                document.entities().count(),
+                0,
+                true,
+                false,
+                true,
+                diagnostics,
+            );
+            return Ok(crate::io::read::ReadOutcome::new(document, stats));
+        }
 
         // 1. Read the DWG file header and section map
         let stage_started = web_time::Instant::now();
@@ -1063,6 +1219,7 @@ impl<R: Read + Seek> DwgReader<R> {
                     crate::io::dxf::code_page::encoding_from_dwg_code_page(info.code_page),
                 ) {
                     Ok(header_vars) => document.header = header_vars,
+                    Err(e) if !failsafe => return Err(e),
                     Err(e) => report_read_error(
                         &mut self.notifications,
                         &mut diagnostics,
@@ -1178,8 +1335,27 @@ impl<R: Read + Seek> DwgReader<R> {
                         };
                         decoded_source_records = build_outcome.decoded_records;
                         skipped_source_records = build_outcome.skipped_records;
+                        if !failsafe && skipped_source_records != 0 {
+                            return Err(DxfError::Parse(build_outcome.diagnostics.iter()
+                                .find(|diagnostic| diagnostic.code != "auxiliary-object-preserved")
+                                .map(|diagnostic| diagnostic.message.clone())
+                                .unwrap_or_else(|| "Invalid DWG object records".to_string())));
+                        }
                         diagnostics.extend(build_outcome.diagnostics);
                         self.notifications.extend(build_outcome.notifications);
+                        if let Some(message) = build_outcome.fatal {
+                            if !failsafe {
+                                return Err(DxfError::Parse(message));
+                            }
+                            report_read_error(
+                                &mut self.notifications,
+                                &mut diagnostics,
+                                "record-decode-fatal",
+                                ReadStage::RecordStream,
+                                Some("AcDb:AcDbObjects"),
+                                message,
+                            );
+                        }
                     },
                     Err(e) => report_read_error(
                         &mut self.notifications,
@@ -1402,6 +1578,7 @@ impl<R: Read + Seek> DwgReader<R> {
             );
         }
         self.report_progress(1000);
+        diagnostics.extend(std::mem::take(&mut self.pending_diagnostics));
         let source_sections =
             usize::from(handles_section_read).saturating_add(usize::from(objects_section_read));
         let stats = crate::io::read::ReadStats::from_document(
@@ -1471,6 +1648,25 @@ impl<R: Read + Seek> DwgReader<R> {
         };
 
         match version {
+            DwgVersion::AC9 => {
+                self.stream.seek(SeekFrom::Start(0))?;
+                let mut bytes = Vec::new();
+                self.stream.read_to_end(&mut bytes)?;
+                let r12 = crate::io::dwg::r12::header::read_header(&bytes)?;
+                info.acad_maintenance_version = r12.maintenance_version;
+                info.section_locators = r12
+                    .tables
+                    .iter()
+                    .enumerate()
+                    .map(|(index, table)| {
+                        (
+                            crate::io::dwg::r12::header::TABLE_NAMES[index].to_owned(),
+                            (table.address as i64, (table.record_size as u32 * table.count as u32) as i64),
+                        )
+                    })
+                    .collect();
+                info.objects_base_offset = r12.layout.entities_start as i64;
+            }
             DwgVersion::AC21 => {
                 self.read_file_metadata(&mut info)?;
                 self.read_file_header_ac21(&mut info)?;
@@ -1635,7 +1831,7 @@ impl<R: Read + Seek> DwgReader<R> {
         // the end of the Classes section and the start of the Handles section,
         // regardless of where Template/AuxHeader are physically placed: many
         // real-world R2000 files store Template/AuxHeader *after* Handles (and
-        // opencadcodec's own R13/R14 writer places ObjFreeSpace/Template after
+        // acadrust's own R13/R14 writer places ObjFreeSpace/Template after
         // Handles too), so inferring the region from the AuxHeader end yields
         // a negative size and an empty document (issue #55).
         //
@@ -2308,15 +2504,71 @@ impl<R: Read + Seek> DwgReader<R> {
         // directly from the file at the recorded offset.
         if !info.section_locators.is_empty() {
             if let Some(&(offset, size)) = info.section_locators.get(section_name) {
-                if size <= 0 {
+                if offset < 0 || size <= 0 {
                     return Err(DxfError::Parse(format!(
-                        "Section '{}' has zero size",
+                        "Section '{}' has invalid locator offset/size ({offset}, {size})",
                         section_name
                     )));
                 }
+                let requested_size = usize::try_from(size).map_err(|_| {
+                    DxfError::Parse(format!(
+                        "Section '{}' size {} does not fit in memory",
+                        section_name, size
+                    ))
+                })?;
+                if requested_size > 100_000_000 {
+                    return Err(DxfError::Parse(format!(
+                        "Section '{}' size {} exceeds the safety limit",
+                        section_name, requested_size
+                    )));
+                }
                 self.stream.seek(SeekFrom::Start(offset as u64))?;
-                let mut buf = vec![0u8; size as usize];
-                self.stream.read_exact(&mut buf)?;
+                let mut buf = vec![0u8; requested_size];
+                if failsafe {
+                    let mut filled = 0usize;
+                    let mut read_error = None;
+                    while filled < requested_size {
+                        match self.stream.read(&mut buf[filled..]) {
+                            Ok(0) => break,
+                            Ok(count) => filled += count,
+                            Err(error) => {
+                                read_error = Some(error);
+                                break;
+                            }
+                        }
+                    }
+                    if filled != requested_size || read_error.is_some() {
+                        let detail = read_error
+                            .map(|error| error.to_string())
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "unexpected end of file after {} of {} bytes",
+                                    filled, requested_size
+                                )
+                            });
+                        buf.truncate(filled);
+                        self.notifications.notify(
+                            NotificationType::Warning,
+                            format!(
+                                "Failsafe: truncated AC15 section '{}' at byte {}: {}",
+                                section_name,
+                                offset.saturating_add(filled as i64),
+                                detail
+                            ),
+                        );
+                        self.report_section_diagnostic(
+                            "section-read-truncated",
+                            section_name,
+                            Some(offset.saturating_add(filled as i64) as u64),
+                            format!(
+                                "AC15 section read stopped after {} of {} bytes: {}",
+                                filled, requested_size, detail
+                            ),
+                        );
+                    }
+                } else {
+                    self.stream.read_exact(&mut buf)?;
+                }
                 if perf {
                     eprintln!(
                         "[perf] dwg-section name={} format=ac15 time={:.1}ms bytes={}",
@@ -2539,6 +2791,7 @@ impl<R: Read + Seek> DwgReader<R> {
         section_name: &str,
         info: &DwgFileHeaderInfo,
     ) -> Result<Vec<u8>, DxfError> {
+        let failsafe = self.options.failsafe;
         let section = info
             .section_descriptors
             .iter()
@@ -2548,58 +2801,118 @@ impl<R: Read + Seek> DwgReader<R> {
             })?;
 
         // compressed_size field actually holds the total uncompressed section data size
-        let total_size = section.compressed_size as usize;
+        let total_size = usize::try_from(section.compressed_size).map_err(|_| {
+            DxfError::Parse(format!(
+                "AC18 section '{}' size {} does not fit in memory",
+                section_name, section.compressed_size
+            ))
+        })?;
+        if total_size > 100_000_000 {
+            return Err(DxfError::Parse(format!(
+                "AC18 section '{}' size {} exceeds the safety limit",
+                section_name, total_size
+            )));
+        }
         let is_compressed = section.encoding == 2;
-        let max_page_size = section.decompressed_size as usize;
+        let max_page_size = usize::try_from(section.decompressed_size).map_err(|_| {
+            DxfError::Parse(format!(
+                "AC18 page size {} does not fit in memory",
+                section.decompressed_size
+            ))
+        })?;
+        if max_page_size > 100_000_000 {
+            return Err(DxfError::Parse(format!(
+                "AC18 page size {} exceeds the safety limit",
+                max_page_size
+            )));
+        }
 
         let mut result = vec![0u8; total_size];
         let batch_pages = worker_count().saturating_mul(2);
+        let mut skipped_pages = 0usize;
 
         for page_batch in section.pages.chunks(batch_pages) {
             let mut prepared = Vec::with_capacity(page_batch.len());
             for page in page_batch {
                 let page_number = page.page_number as i32;
+                let page_result = (|| -> Result<(usize, Vec<u8>), DxfError> {
+                    let &(page_file_offset, _page_total_size) =
+                        info.page_records.get(&page_number).ok_or_else(|| {
+                            DxfError::Parse(format!(
+                                "AC18 page {} not found in page records for section '{}'",
+                                page_number, section_name
+                            ))
+                        })?;
+                    if page_file_offset < 0 {
+                        return Err(DxfError::Parse(format!(
+                            "AC18 page {} has a negative file offset {}",
+                            page_number, page_file_offset
+                        )));
+                    }
 
-                let &(page_file_offset, _page_total_size) =
-                    info.page_records.get(&page_number).ok_or_else(|| {
-                        DxfError::Parse(format!(
-                            "AC18 page {} not found in page records for section '{}'",
-                            page_number, section_name
-                        ))
-                    })?;
+                    self.stream.seek(SeekFrom::Start(page_file_offset as u64))?;
 
-                self.stream.seek(SeekFrom::Start(page_file_offset as u64))?;
+                    // Read 32-byte data section header (XOR-masked)
+                    let mut header = [0u8; 32];
+                    self.stream.read_exact(&mut header)?;
 
-                // Read 32-byte data section header (XOR-masked)
-                let mut header = [0u8; 32];
-                self.stream.read_exact(&mut header)?;
+                    // XOR unmask using the page's file position
+                    apply_mask(&mut header, page_file_offset as u64);
 
-                // XOR unmask using the page's file position
-                apply_mask(&mut header, page_file_offset as u64);
+                    // Parse header fields
+                    let mut hcursor = Cursor::new(&header[..]);
+                    let _section_type = hcursor.read_i32::<LittleEndian>()?;
+                    let _section_id = hcursor.read_i32::<LittleEndian>()?;
+                    let data_compressed_size = hcursor.read_i32::<LittleEndian>()?;
+                    let _page_size = hcursor.read_i32::<LittleEndian>()?;
+                    let data_offset = hcursor.read_i64::<LittleEndian>()?;
+                    if data_compressed_size <= 0 || data_compressed_size > 10_000_000 {
+                        return Err(DxfError::Parse(format!(
+                            "invalid compressed size {}",
+                            data_compressed_size
+                        )));
+                    }
+                    if data_offset < 0 {
+                        return Err(DxfError::Parse(format!(
+                            "negative destination offset {}",
+                            data_offset
+                        )));
+                    }
 
-                // Parse header fields
-                let mut hcursor = Cursor::new(&header[..]);
-                let _section_type = hcursor.read_i32::<LittleEndian>()?;
-                let _section_id = hcursor.read_i32::<LittleEndian>()?;
-                let data_compressed_size = hcursor.read_i32::<LittleEndian>()?;
-                let _page_size = hcursor.read_i32::<LittleEndian>()?;
-                let data_offset = hcursor.read_i64::<LittleEndian>()?;
+                    // Read compressed data
+                    let mut compressed = vec![0u8; data_compressed_size as usize];
+                    self.stream.read_exact(&mut compressed)?;
 
-                // Read compressed data
-                if data_compressed_size <= 0 || data_compressed_size > 10_000_000 {
-                    self.notifications.notify(
-                        NotificationType::Warning,
-                        format!(
-                            "AC18: Invalid compressed size {} for page {} in section '{}'",
-                            data_compressed_size, page_number, section_name
-                        ),
-                    );
-                    continue;
+                    Ok((data_offset as usize, compressed))
+                })();
+
+                match page_result {
+                    Ok(page) => prepared.push(page),
+                    Err(error) if failsafe => {
+                        skipped_pages += 1;
+                        let page_offset = info
+                            .page_records
+                            .get(&page_number)
+                            .and_then(|(offset, _)| (*offset >= 0).then_some(*offset as u64));
+                        self.notifications.notify(
+                            NotificationType::Warning,
+                            format!(
+                                "Failsafe: skipped corrupt AC18 page {} in section '{}': {}",
+                                page_number, section_name, error
+                            ),
+                        );
+                        self.report_section_diagnostic(
+                            "section-page-skipped",
+                            section_name,
+                            page_offset,
+                            format!(
+                                "AC18 page {} skipped while reading section '{}': {}",
+                                page_number, section_name, error
+                            ),
+                        );
+                    }
+                    Err(error) => return Err(error),
                 }
-                let mut compressed = vec![0u8; data_compressed_size as usize];
-                self.stream.read_exact(&mut compressed)?;
-
-                prepared.push((data_offset as usize, compressed));
             }
 
             let decoded = map_ordered(prepared, |(dst_start, compressed)| {
@@ -2618,6 +2931,18 @@ impl<R: Read + Seek> DwgReader<R> {
                         .copy_from_slice(&decompressed[..copy_len]);
                 }
             }
+        }
+
+        if skipped_pages > 0 {
+            self.notifications.notify(
+                NotificationType::Warning,
+                format!(
+                    "Failsafe: {} of {} pages skipped in AC18 section '{}'",
+                    skipped_pages,
+                    section.pages.len(),
+                    section_name
+                ),
+            );
         }
 
         Ok(result)
@@ -3146,5 +3471,118 @@ pub(crate) fn recover_mtext_bg_roundtrip(document: &mut crate::document::CadDocu
             m.background_color = color;
             m.background_transparency = transp;
         }
+    }
+}
+
+#[cfg(test)]
+mod section_recovery_tests {
+    use super::*;
+
+    fn ac15_info(offset: i64, size: i64) -> DwgFileHeaderInfo {
+        DwgFileHeaderInfo {
+            version_string: "AC1015".to_owned(),
+            version: DwgVersion::AC15,
+            acad_maintenance_version: 0,
+            preview_address: 0,
+            dwg_version: 0,
+            app_release_version: 0,
+            code_page: 0,
+            security_type: 0,
+            summary_info_addr: 0,
+            vba_project_addr: 0,
+            ac21_metadata: None,
+            ac21_header_crc: None,
+            ac21_unknown_key: None,
+            ac21_compressed_data_crc: None,
+            page_records: HashMap::new(),
+            section_descriptors: Vec::new(),
+            section_locators: HashMap::from([("AcDb:Header".to_owned(), (offset, size))]),
+            objects_base_offset: 0,
+            is_ac18_format: false,
+        }
+    }
+
+    fn ac18_info(page_number: i64) -> DwgFileHeaderInfo {
+        DwgFileHeaderInfo {
+            version_string: "AC1018".to_owned(),
+            version: DwgVersion::AC18,
+            acad_maintenance_version: 0,
+            preview_address: 0,
+            dwg_version: 0,
+            app_release_version: 0,
+            code_page: 0,
+            security_type: 0,
+            summary_info_addr: 0,
+            vba_project_addr: 0,
+            ac21_metadata: None,
+            ac21_header_crc: None,
+            ac21_unknown_key: None,
+            ac21_compressed_data_crc: None,
+            page_records: HashMap::new(),
+            section_descriptors: vec![DwgSectionInfo {
+                name: "AcDb:Header".to_owned(),
+                compressed_size: 8,
+                decompressed_size: 8,
+                encrypted: 0,
+                hash_code: 0,
+                encoding: 0,
+                page_count: 1,
+                pages: vec![DwgPageCrcInfo {
+                    page_number,
+                    offset: 0,
+                    size: 0,
+                    decompressed_size: 8,
+                    compressed_size: 0,
+                    checksum: 0,
+                    crc: 0,
+                }],
+            }],
+            section_locators: HashMap::new(),
+            objects_base_offset: 0,
+            is_ac18_format: true,
+        }
+    }
+
+    #[test]
+    fn ac15_failsafe_keeps_readable_prefix_after_truncated_section() {
+        let stream = Cursor::new(vec![0, 1, 2, 3, 4]);
+        let mut reader = DwgReader::from_stream_with_options(stream, DwgReadOptions::failsafe());
+        let bytes = reader
+            .get_section_buffer("AcDb:Header", &ac15_info(2, 10))
+            .unwrap();
+        assert_eq!(bytes, vec![2, 3, 4]);
+        assert_eq!(reader.pending_diagnostics.len(), 1);
+        assert_eq!(reader.pending_diagnostics[0].code, "section-read-truncated");
+    }
+
+    #[test]
+    fn ac15_strict_mode_still_rejects_truncated_section() {
+        let stream = Cursor::new(vec![0, 1, 2, 3, 4]);
+        let mut reader = DwgReader::from_stream(stream);
+        assert!(reader
+            .get_section_buffer("AcDb:Header", &ac15_info(2, 10))
+            .is_err());
+    }
+
+    #[test]
+    fn ac18_failsafe_skips_missing_page_and_preserves_section_offsets() {
+        let mut reader = DwgReader::from_stream_with_options(
+            Cursor::new(Vec::new()),
+            DwgReadOptions::failsafe(),
+        );
+        let bytes = reader
+            .get_section_buffer("AcDb:Header", &ac18_info(7))
+            .unwrap();
+        assert_eq!(bytes, vec![0; 8]);
+        assert_eq!(reader.pending_diagnostics.len(), 1);
+        assert_eq!(reader.pending_diagnostics[0].code, "section-page-skipped");
+    }
+
+    #[test]
+    fn ac18_strict_mode_still_rejects_missing_page() {
+        let mut reader = DwgReader::from_stream(Cursor::new(Vec::new()));
+        assert!(reader
+            .get_section_buffer("AcDb:Header", &ac18_info(7))
+            .is_err());
     }
 }

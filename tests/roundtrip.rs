@@ -112,10 +112,10 @@ fn build_rich_document(version: DxfVersion) -> (CadDocument, usize) {
     .unwrap();
     count += 1;
 
-    doc.add_entity(EntityType::MText(MText::with_value(
+    doc.add_entity(EntityType::MText(Box::new(MText::with_value(
         "Multi\\Pline\\PText",
         Vector3::new(0.0, 0.0, 0.0),
-    )))
+    ))))
     .unwrap();
     count += 1;
 
@@ -166,9 +166,9 @@ fn build_rich_document(version: DxfVersion) -> (CadDocument, usize) {
     .unwrap();
     count += 1;
 
-    doc.add_entity(EntityType::Dimension(Dimension::Linear(
+    doc.add_entity(EntityType::Dimension(Box::new(Dimension::Linear(
         DimensionLinear::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(100.0, 0.0, 0.0)),
-    )))
+    ))))
     .unwrap();
     count += 1;
 
@@ -188,7 +188,7 @@ fn build_rich_document(version: DxfVersion) -> (CadDocument, usize) {
     count += 1;
 
     // ── Viewport ───────────────────────────────────────────────────
-    doc.add_entity(EntityType::Viewport(Viewport::new()))
+    doc.add_entity(EntityType::Viewport(Box::new(Viewport::new())))
         .unwrap();
     count += 1;
 
@@ -214,7 +214,7 @@ fn build_rich_document(version: DxfVersion) -> (CadDocument, usize) {
             true,
         )));
         hatch.add_path(path);
-        doc.add_entity(EntityType::Hatch(hatch)).unwrap();
+        doc.add_entity(EntityType::Hatch(Box::new(hatch))).unwrap();
         count += 1;
     }
 
@@ -1295,10 +1295,10 @@ dxf_entity_roundtrip!(
 );
 dxf_entity_roundtrip!(
     dxf_rt_mtext,
-    EntityType::MText(MText::with_value(
+    EntityType::MText(Box::new(MText::with_value(
         "Multi\\Pline test",
         Vector3::new(0.0, 0.0, 0.0)
-    ))
+    )))
 );
 dxf_entity_roundtrip!(
     dxf_rt_lwpolyline,
@@ -1329,10 +1329,10 @@ dxf_entity_roundtrip!(
 );
 dxf_entity_roundtrip!(
     dxf_rt_dimension,
-    EntityType::Dimension(Dimension::Linear(DimensionLinear::new(
+    EntityType::Dimension(Box::new(Dimension::Linear(DimensionLinear::new(
         Vector3::new(0.0, 0.0, 0.0),
         Vector3::new(100.0, 0.0, 0.0)
-    )))
+    ))))
 );
 dxf_entity_roundtrip!(
     dxf_rt_tolerance,
@@ -1346,7 +1346,7 @@ fn dxf_rt_viewport() {
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
     let mut viewport = Viewport::new();
     viewport.id = 2;
-    doc.add_entity_to_layout(EntityType::Viewport(viewport), "Layout1")
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(viewport)), "Layout1")
         .unwrap();
     let restored = dxf_roundtrip(doc.clone());
     assert_eq!(restored.entity_count(), doc.entity_count());
@@ -1367,12 +1367,12 @@ fn dxf_viewport_stacking_rank_is_not_its_id() {
     ranked.id = 2;
     ranked.stacking = 1;
     let ranked = doc
-        .add_entity_to_layout(EntityType::Viewport(ranked), "Layout1")
+        .add_entity_to_layout(EntityType::Viewport(Box::new(ranked)), "Layout1")
         .unwrap();
     let mut unranked = Viewport::new();
     unranked.id = 3;
     let unranked = doc
-        .add_entity_to_layout(EntityType::Viewport(unranked), "Layout1")
+        .add_entity_to_layout(EntityType::Viewport(Box::new(unranked)), "Layout1")
         .unwrap();
     let restored = dxf_roundtrip(doc);
     let read = |handle| match restored.get_entity(handle) {
@@ -1393,10 +1393,10 @@ fn dwg_overall_viewport_is_not_the_last_active_one() {
     sheet.width = 420.0;
     sheet.height = 297.0;
     let sheet = doc
-        .add_entity_to_layout(EntityType::Viewport(sheet), "Layout1")
+        .add_entity_to_layout(EntityType::Viewport(Box::new(sheet)), "Layout1")
         .unwrap();
     let model = doc
-        .add_entity_to_layout(EntityType::Viewport(Viewport::new()), "Layout1")
+        .add_entity_to_layout(EntityType::Viewport(Box::new(Viewport::new())), "Layout1")
         .unwrap();
     for object in doc.objects.values_mut() {
         if let opencadcodec::objects::ObjectType::Layout(layout) = object {
@@ -1693,10 +1693,10 @@ dwg_entity_roundtrip!(
 );
 dwg_entity_roundtrip!(
     dwg_rt_mtext,
-    EntityType::MText(MText::with_value(
+    EntityType::MText(Box::new(MText::with_value(
         "Multi\\Pline test",
         Vector3::new(0.0, 0.0, 0.0)
-    ))
+    )))
 );
 dwg_entity_roundtrip!(
     dwg_rt_lwpolyline,
@@ -1727,10 +1727,10 @@ dwg_entity_roundtrip!(
 );
 dwg_entity_roundtrip!(
     dwg_rt_dimension,
-    EntityType::Dimension(Dimension::Linear(DimensionLinear::new(
+    EntityType::Dimension(Box::new(Dimension::Linear(DimensionLinear::new(
         Vector3::new(0.0, 0.0, 0.0),
         Vector3::new(100.0, 0.0, 0.0)
-    )))
+    ))))
 );
 dwg_entity_roundtrip!(
     dwg_rt_tolerance,
@@ -1739,7 +1739,7 @@ dwg_entity_roundtrip!(
         "{\\Fgdt;p}%%v0.5"
     ))
 );
-dwg_entity_roundtrip!(dwg_rt_viewport, EntityType::Viewport(Viewport::new()));
+dwg_entity_roundtrip!(dwg_rt_viewport, EntityType::Viewport(Box::new(Viewport::new())));
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  CROSS-FORMAT ROUNDTRIP TESTS
@@ -2207,7 +2207,7 @@ fn dwg_version_matrix_mtext() {
     for &(version, label) in DWG_VERSIONS {
         let doc = build_minimal_document(
             version,
-            EntityType::MText(MText::with_value("Multi", Vector3::new(0.0, 0.0, 0.0))),
+            EntityType::MText(Box::new(MText::with_value("Multi", Vector3::new(0.0, 0.0, 0.0)))),
         );
         let rt = dwg_roundtrip(&doc);
         assert_eq!(
@@ -2230,10 +2230,10 @@ fn dwg_version_matrix_mtext() {
 /// Extracts the entity directly rather than asserting on `entity_count()`,
 /// which also counts the model/paper-space block markers.
 fn dwg_roundtrip_mtext(version: DxfVersion, mtext: MText) -> MText {
-    let doc = build_minimal_document(version, EntityType::MText(mtext));
+    let doc = build_minimal_document(version, EntityType::MText(Box::new(mtext)));
     let rt = dwg_roundtrip(&doc);
     let found = rt.entities().find_map(|e| match e {
-        EntityType::MText(m) => Some(m.clone()),
+        EntityType::MText(m) => Some(m.as_ref().clone()),
         _ => None,
     });
     found.expect("MTEXT missing after DWG roundtrip")
@@ -2484,7 +2484,7 @@ fn build_hatch_doc(edges: Vec<BoundaryEdge>, flags: BoundaryPathFlags) -> CadDoc
         path.edges.push(e);
     }
     hatch.add_path(path);
-    doc.add_entity(EntityType::Hatch(hatch)).unwrap();
+    doc.add_entity(EntityType::Hatch(Box::new(hatch))).unwrap();
     doc
 }
 
@@ -2812,6 +2812,7 @@ fn dxf_roundtrip_complex_linetype_shape() {
         scale: 2.0,
         rotation: 30.0,
         absolute_rotation: false,
+        source_flags: 8,
         offset: [1.0, 0.5],
     });
     let mut space = LineTypeElement::space(2.0);
@@ -2832,6 +2833,7 @@ fn dxf_roundtrip_complex_linetype_shape() {
     assert!((c0.scale - 2.0).abs() < 1e-6);
     assert!((c0.rotation - 30.0).abs() < 1e-6);
     assert!(!c0.is_absolute_rotation());
+    assert_eq!(c0.source_flags, 12);
 }
 
 #[test]
@@ -2849,6 +2851,7 @@ fn dxf_roundtrip_complex_linetype_text() {
         scale: 1.5,
         rotation: 45.0,
         absolute_rotation: true,
+        source_flags: 1,
         offset: [0.0, 0.25],
     });
     lt.elements.push(dash);
@@ -2882,6 +2885,7 @@ fn dwg_roundtrip_complex_linetype_shape() {
         scale: 1.0,
         rotation: 0.0,
         absolute_rotation: false,
+        source_flags: 0,
         offset: [0.0, 0.0],
     });
     lt.elements.push(dash);

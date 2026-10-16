@@ -276,6 +276,17 @@ pub struct RawRecord {
     pub version: crate::types::DxfVersion,
 }
 
+/// Native AC1009 fields which do not have a corresponding DXF entity field.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct R12EntityMetadata {
+    /// Unsigned native viewport reference, including an explicitly stored zero.
+    pub viewport: Option<u16>,
+    /// Viewport references of ordered VERTEX/ATTRIB children followed by SEQEND.
+    /// The final entry belongs to SEQEND and remains last when children are added.
+    pub child_viewports: Vec<Option<u16>>,
+}
+
 /// Common entity data shared by all entities
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -351,6 +362,9 @@ pub struct EntityCommon {
     /// Entity mode (0=owned, 1=paper, 2=model) — raw DWG value for round-trip
     #[cfg_attr(feature = "serde", serde(skip))]
     pub entity_mode: Option<u8>,
+    /// Native AC1009 viewport references retained across edits and DWG writes.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub r12_metadata: Option<R12EntityMetadata>,
     /// R2013+ `has_ds_data` bit: the entity's modeler geometry (3DSOLID/REGION/
     /// BODY/SURFACE) is stored as a SAB blob in the `AcDb:AcDsPrototype_1b`
     /// data-store section rather than inline. Set by the DWG reader; the writer
@@ -382,6 +396,7 @@ impl EntityCommon {
         self.plotstyle_flags = source.plotstyle_flags;
         self.plotstyle_handle = source.plotstyle_handle;
         self.entity_mode = source.entity_mode;
+        self.r12_metadata = source.r12_metadata.clone();
         self.has_ds_data = source.has_ds_data;
     }
 
@@ -415,6 +430,7 @@ impl EntityCommon {
             plotstyle_flags: 0,
             plotstyle_handle: None,
             entity_mode: None,
+            r12_metadata: None,
             has_ds_data: false,
         }
     }
@@ -464,15 +480,15 @@ pub enum EntityType {
     /// Text entity
     Text(Text),
     /// Multi-line text entity
-    MText(MText),
+    MText(Box<MText>),
     /// Spline entity
     Spline(Spline),
     /// Helix entity (spline-derived 3D spiral)
     Helix(Box<Helix>),
     /// Dimension entity
-    Dimension(Dimension),
+    Dimension(Box<Dimension>),
     /// Hatch entity
-    Hatch(Hatch),
+    Hatch(Box<Hatch>),
     /// Solid entity
     Solid(Solid),
     /// 3D Face entity
@@ -488,7 +504,7 @@ pub enum EntityType {
     /// XLine entity (construction line, infinite)
     XLine(XLine),
     /// Viewport entity (paper space viewport)
-    Viewport(Viewport),
+    Viewport(Box<Viewport>),
     /// Attribute definition entity
     AttributeDefinition(AttributeDefinition),
     /// Attribute entity (block attribute instance)
@@ -526,11 +542,11 @@ pub enum EntityType {
     /// End-of-sequence marker
     Seqend(Seqend),
     /// OLE2 embedded object
-    Ole2Frame(Ole2Frame),
+    Ole2Frame(Box<Ole2Frame>),
     /// Polygon mesh (3D surface mesh)
     PolygonMesh(PolygonMeshEntity),
     /// Light entity (point / spot / distant light source)
-    Light(Light),
+    Light(Box<Light>),
     SectionSymbol(SectionSymbol),
     ViewBorder(ViewBorder),
     /// Structured class-based and legacy entities.
@@ -572,11 +588,11 @@ impl EntityType {
             EntityType::Polyline3D(e) => e,
             EntityType::LwPolyline(e) => e,
             EntityType::Text(e) => e,
-            EntityType::MText(e) => e,
+            EntityType::MText(e) => e.as_ref(),
             EntityType::Spline(e) => e,
             EntityType::Helix(e) => e.as_ref(),
-            EntityType::Dimension(e) => e,
-            EntityType::Hatch(e) => e,
+            EntityType::Dimension(e) => e.as_ref(),
+            EntityType::Hatch(e) => e.as_ref(),
             EntityType::Solid(e) => e,
             EntityType::Face3D(e) => e,
             EntityType::Insert(e) => e,
@@ -584,7 +600,7 @@ impl EntityType {
             EntityType::BlockEnd(e) => e,
             EntityType::Ray(e) => e,
             EntityType::XLine(e) => e,
-            EntityType::Viewport(e) => e,
+            EntityType::Viewport(e) => e.as_ref(),
             EntityType::AttributeDefinition(e) => e,
             EntityType::AttributeEntity(e) => e,
             EntityType::Leader(e) => e,
@@ -603,9 +619,9 @@ impl EntityType {
             EntityType::Shape(e) => e,
             EntityType::Underlay(e) => e,
             EntityType::Seqend(e) => e,
-            EntityType::Ole2Frame(e) => e,
+            EntityType::Ole2Frame(e) => e.as_ref(),
             EntityType::PolygonMesh(e) => e,
-            EntityType::Light(e) => e,
+            EntityType::Light(e) => e.as_ref(),
             EntityType::SectionSymbol(e) => e,
             EntityType::ViewBorder(e) => e,
             EntityType::Extended(e) => e.as_ref(),
@@ -625,12 +641,12 @@ impl EntityType {
             EntityType::Polyline2D(e) => e,
             EntityType::Polyline3D(e) => e,
             EntityType::LwPolyline(e) => e,
-            EntityType::MText(e) => e,
+            EntityType::MText(e) => e.as_mut(),
             EntityType::Text(e) => e,
             EntityType::Spline(e) => e,
             EntityType::Helix(e) => e.as_mut(),
-            EntityType::Dimension(e) => e,
-            EntityType::Hatch(e) => e,
+            EntityType::Dimension(e) => e.as_mut(),
+            EntityType::Hatch(e) => e.as_mut(),
             EntityType::Solid(e) => e,
             EntityType::Face3D(e) => e,
             EntityType::Insert(e) => e,
@@ -638,7 +654,7 @@ impl EntityType {
             EntityType::BlockEnd(e) => e,
             EntityType::Ray(e) => e,
             EntityType::XLine(e) => e,
-            EntityType::Viewport(e) => e,
+            EntityType::Viewport(e) => e.as_mut(),
             EntityType::AttributeDefinition(e) => e,
             EntityType::AttributeEntity(e) => e,
             EntityType::Leader(e) => e,
@@ -657,9 +673,9 @@ impl EntityType {
             EntityType::Shape(e) => e,
             EntityType::Underlay(e) => e,
             EntityType::Seqend(e) => e,
-            EntityType::Ole2Frame(e) => e,
+            EntityType::Ole2Frame(e) => e.as_mut(),
             EntityType::PolygonMesh(e) => e,
-            EntityType::Light(e) => e,
+            EntityType::Light(e) => e.as_mut(),
             EntityType::SectionSymbol(e) => e,
             EntityType::ViewBorder(e) => e,
             EntityType::Extended(e) => e.as_mut(),
@@ -806,10 +822,6 @@ mod storage_data_tests {
         assert_eq!(edited.raw_dxf_codes, Some(vec![(100, "payload".into())]));
     }
 
-    /// Every entity pays the enum's width. The rare wide kinds are boxed so
-    /// a `Line` is not stored at a `Surface`'s size (#69); one new wide
-    /// field must not quietly undo that. (856 since every entity's common
-    /// data gained its DWG layer handle.)
     #[test]
     fn entity_type_stays_narrow() {
         let size = std::mem::size_of::<EntityType>();
