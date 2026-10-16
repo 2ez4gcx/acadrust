@@ -61,9 +61,10 @@ fn resolves_checker_asset_records_into_material_maps() {
     else {
         panic!("expected material");
     };
+    let native_source = Material::new().diffuse_map.source;
     for map in [&material.diffuse_map, &material.opacity_map] {
-        assert_eq!(map.source, 2);
-        assert!(map.file_name.is_empty());
+        // The native map fields are left as read; only the texture is added.
+        assert_eq!(map.source, native_source);
         let texture = map.texture.as_ref().expect("checker texture");
         assert_eq!(texture.color1.rgb, Some(0x102030));
         assert_eq!(texture.color2.rgb, Some(0xD0E0F0));

@@ -1341,7 +1341,53 @@ dxf_entity_roundtrip!(
         "{\\Fgdt;p}%%v0.5"
     ))
 );
-dxf_entity_roundtrip!(dxf_rt_viewport, EntityType::Viewport(Box::new(Viewport::new())));
+#[test]
+fn dxf_rt_viewport() {
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let mut viewport = Viewport::new();
+    viewport.id = 2;
+    doc.add_entity_to_layout(EntityType::Viewport(Box::new(viewport)), "Layout1")
+        .unwrap();
+    let restored = dxf_roundtrip(doc.clone());
+    assert_eq!(restored.entity_count(), doc.entity_count());
+    let report = compare_documents(&doc, &restored);
+    assert!(
+        report.is_empty(),
+        "DXF viewport roundtrip failed:\n{}",
+        report.summary()
+    );
+}
+
+/// A layout saved with a model viewport entered links that viewport as its
+/// last active one; the overall viewport must still read back as ID 1.
+#[test]
+fn dwg_overall_viewport_is_not_the_last_active_one() {
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let mut sheet = Viewport::new();
+    sheet.width = 420.0;
+    sheet.height = 297.0;
+    let sheet = doc
+        .add_entity_to_layout(EntityType::Viewport(Box::new(sheet)), "Layout1")
+        .unwrap();
+    let model = doc
+        .add_entity_to_layout(EntityType::Viewport(Box::new(Viewport::new())), "Layout1")
+        .unwrap();
+    for object in doc.objects.values_mut() {
+        if let acadrust::objects::ObjectType::Layout(layout) = object {
+            if layout.name == "Layout1" {
+                layout.viewports = vec![sheet, model];
+                layout.viewport = model;
+            }
+        }
+    }
+    let restored = dwg_roundtrip(&doc);
+    let id = |handle| match restored.get_entity(handle) {
+        Some(EntityType::Viewport(viewport)) => viewport.id,
+        other => panic!("viewport expected, got {other:?}"),
+    };
+    assert_eq!(id(sheet), 1);
+    assert_eq!(id(model), 2);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  DWG ROUNDTRIP TESTS
@@ -2982,4 +3028,44 @@ fn dwg_mline_cap_suppression_bits_roundtrip() {
             "{version:?}: closed MLINE lost its suppressed start cap"
         );
     }
+}
+
+/// An edge action parameter on an unbounded line (type 19) keeps its point
+/// and direction: associative rectangular arrays store their row axis this
+/// way, and dropping it loses the array's orientation on save.
+#[test]
+fn dwg_roundtrip_edge_action_param_line() {
+    use acadrust::objects::{
+        AssocCurveValue, AssocEdgeActionParam, AssocSubcurveKind, AssociativeData,
+        AssociativeObject, ObjectType,
+    };
+    let mut doc = CadDocument::new();
+    let handle = doc.allocate_handle();
+    let mut object =
+        AssociativeObject::new("ACDBASSOCEDGEACTIONPARAM", "AcDbAssocEdgeActionParam");
+    object.handle = handle;
+    object.owner = doc.header.named_objects_dict_handle;
+    let curve = vec![
+        AssocCurveValue::Point(Vector3::new(1.0, 2.0, 0.0)),
+        AssocCurveValue::Point(Vector3::new(0.6, 0.8, 0.0)),
+    ];
+    object.data = AssociativeData::EdgeActionParam(AssocEdgeActionParam {
+        has_action: true,
+        action_type: 19,
+        subcurve_kind: AssocSubcurveKind::Line,
+        curve: curve.clone(),
+        ..Default::default()
+    });
+    doc.objects.insert(handle, ObjectType::Associative(object));
+
+    let read = dwg_roundtrip(&doc);
+    let Some(ObjectType::Associative(AssociativeObject {
+        data: AssociativeData::EdgeActionParam(edge),
+        ..
+    })) = read.objects.get(&handle)
+    else {
+        panic!("edge action parameter lost");
+    };
+    assert_eq!(edge.action_type, 19);
+    assert_eq!(edge.curve, curve);
 }

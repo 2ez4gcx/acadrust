@@ -353,6 +353,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
         self.write_header_variable("$DWGCODEPAGE", |w| w.write_string(3, &hdr.code_page))?;
 
+        // === Drawing properties (DWGPROPS) === R2004+ files carry them here,
+        // right after $DWGCODEPAGE.
+        if self.dxf_version >= DxfVersion::AC1018 {
+            self.write_summary_info(document)?;
+        }
+
         let handle_seed = self.handle_seed;
         self.write_header_variable("$HANDSEED", |w| w.write_handle(5, Handle::new(handle_seed)))?;
 
@@ -485,6 +491,17 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_header_variable("$ANGDIR", |w| w.write_i16(70, hdr.angle_direction))?;
         self.write_header_variable("$MEASUREMENT", |w| w.write_i16(70, hdr.measurement))?;
         self.write_header_variable("$INSUNITS", |w| w.write_i16(70, hdr.insertion_units))?;
+        // The drawing property "Hyperlink base" (R2000+); omitted when empty.
+        if self.dxf_version >= DxfVersion::AC1015 {
+            let base = if document.summary_info.hyperlink_base.is_empty() {
+                hdr.hyperlink_base.as_str()
+            } else {
+                document.summary_info.hyperlink_base.as_str()
+            };
+            if !base.is_empty() {
+                self.write_header_variable("$HYPERLINKBASE", |w| w.write_string(1, base))?;
+            }
+        }
 
         // === Point display ===
         self.write_header_variable("$PDMODE", |w| w.write_i16(70, hdr.point_display_mode))?;
@@ -629,6 +646,19 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_header_variable("$DIMLWD", |w| w.write_i16(70, hdr.dim_line_weight))?;
         self.write_header_variable("$DIMLWE", |w| w.write_i16(70, hdr.dim_ext_line_weight))?;
         self.write_header_variable("$DIMTFAC", |w| w.write_double(40, hdr.dim_tolerance_scale))?;
+        if self.dxf_version >= DxfVersion::AC1021 {
+            self.write_header_variable("$DIMFXL", |w| {
+                w.write_double(40, hdr.dim_fixed_ext_line_length)
+            })?;
+            // DIMJOGANG valid range is 5°..90°
+            self.write_header_variable("$DIMJOGANG", |w| {
+                w.write_double(40, hdr.dim_jog_angle.clamp(0.0872665, std::f64::consts::FRAC_PI_2))
+            })?;
+            self.write_header_variable("$DIMTFILL", |w| w.write_i16(70, hdr.dim_text_fill))?;
+            self.write_header_variable("$DIMTFILLCLR", |w| {
+                w.write_i16(70, hdr.dim_text_fill_color.approximate_index())
+            })?;
+        }
 
         // === Misc ===
         self.write_header_variable("$SPLFRAME", |w| {
@@ -653,6 +683,34 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             })?;
             self.write_header_variable("$SHOWHIST", |w| {
                 w.write_byte(280, hdr.show_solid_history.clamp(0, 2) as u8)
+            })?;
+            self.write_header_variable("$3DDWFPREC", |w| {
+                w.write_double(40, hdr.dwf_3d_precision.clamp(1.0, 6.0))
+            })?;
+            // PSOLWIDTH / PSOLHEIGHT must be positive
+            let polysolid_width = if hdr.polysolid_width > 0.0 {
+                hdr.polysolid_width
+            } else {
+                0.25
+            };
+            let polysolid_height = if hdr.polysolid_height > 0.0 {
+                hdr.polysolid_height
+            } else {
+                4.0
+            };
+            self.write_header_variable("$PSOLWIDTH", |w| w.write_double(40, polysolid_width))?;
+            self.write_header_variable("$PSOLHEIGHT", |w| w.write_double(40, polysolid_height))?;
+            self.write_header_variable("$LIGHTGLYPHDISPLAY", |w| {
+                w.write_byte(280, hdr.light_glyph_display.min(1))
+            })?;
+            self.write_header_variable("$TILEMODELIGHTSYNCH", |w| {
+                w.write_byte(280, hdr.tile_model_light_synch.min(1))
+            })?;
+            self.write_header_variable("$REALWORLDSCALE", |w| {
+                w.write_bool(290, hdr.real_world_scale)
+            })?;
+            self.write_header_variable("$INTERFERECOLOR", |w| {
+                w.write_i16(62, hdr.interference_color.approximate_index())
             })?;
         }
         self.write_header_variable("$SPLINETYPE", |w| w.write_i16(70, hdr.spline_type))?;
@@ -737,6 +795,50 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         })?;
 
         self.writer.write_section_end()?;
+        Ok(())
+    }
+
+    /// Write the drawing properties (`SummaryInfo`, the DWGPROPS dialog) as
+    /// R2004+ header variables: `$TITLE`, `$SUBJECT`, `$AUTHOR`, `$KEYWORDS`,
+    /// `$COMMENTS`, `$LASTSAVEDBY` and `$REVISIONNUMBER` in that order, empty
+    /// ones omitted, then a `$CUSTOMPROPERTYTAG` / `$CUSTOMPROPERTY` pair per
+    /// custom property with a name. Custom properties are only accepted after
+    /// `$LASTSAVEDBY`, so that variable is written whenever there are any.
+    fn write_summary_info(&mut self, document: &CadDocument) -> Result<()> {
+        let info = &document.summary_info;
+        for (name, value) in [
+            ("$TITLE", &info.title),
+            ("$SUBJECT", &info.subject),
+            ("$AUTHOR", &info.author),
+            ("$KEYWORDS", &info.keywords),
+            ("$COMMENTS", &info.comments),
+        ] {
+            if !value.is_empty() {
+                self.write_header_variable(name, |w| w.write_string(1, value))?;
+            }
+        }
+        let custom: Vec<&(String, String)> = info
+            .custom_properties
+            .iter()
+            .filter(|(name, _)| !name.is_empty())
+            .collect();
+        let last_saved_by = if info.last_saved_by.is_empty() {
+            document.header.last_saved_by.as_str()
+        } else {
+            info.last_saved_by.as_str()
+        };
+        if !last_saved_by.is_empty() || !custom.is_empty() {
+            self.write_header_variable("$LASTSAVEDBY", |w| w.write_string(1, last_saved_by))?;
+        }
+        if !info.revision_number.is_empty() {
+            self.write_header_variable("$REVISIONNUMBER", |w| {
+                w.write_string(1, &info.revision_number)
+            })?;
+        }
+        for (name, value) in custom {
+            self.write_header_variable("$CUSTOMPROPERTYTAG", |w| w.write_string(1, name))?;
+            self.write_header_variable("$CUSTOMPROPERTY", |w| w.write_string(1, value))?;
+        }
         Ok(())
     }
 
@@ -1978,7 +2080,20 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // - Active paper space (*Paper_Space) entities go to ENTITIES section (not here)
         // - Non-active paper spaces (*Paper_Space0, *Paper_Space1, ...) write entities here
         // - Other blocks (inserts etc.) also write entities here
-        if !block_record.is_model_space() && !block_record.name().eq_ignore_ascii_case("*Paper_Space") {
+        // - Xref blocks (see below) write no owned entities at all
+        //
+        // An xref block record references an external drawing: its contents
+        // live in that file, not here. Some hosts merge the resolved xref
+        // geometry into the block record for display; serializing those as
+        // owned entities would bind/explode the xref into the host file on
+        // the next open. Skip the entity loop entirely, leaving only the
+        // BLOCK/ENDBLK markers — matching the DWG writer (see
+        // `DwgObjectWriter::write_block_entities`).
+        let is_xref = block_record.flags.is_xref || block_record.flags.is_xref_overlay;
+        if !is_xref
+            && !block_record.is_model_space()
+            && !block_record.name().eq_ignore_ascii_case("*Paper_Space")
+        {
             // Set paper space flag so entities inside non-active paper
             // space blocks get code 67=1 (same as active paper space).
             let prev_ps = self.writing_paper_space;
@@ -4143,23 +4258,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_normal(spline.normal)?;
 
         // Flags
-        let mut flags: i16 = spline.dxf_flags & !31;
-        if spline.dwg_flags1 & 1 != 0 { flags |= 32; }
-        if spline.flags.closed {
-            flags |= 1;
-        }
-        if spline.flags.periodic {
-            flags |= 2;
-        }
-        if spline.flags.rational {
-            flags |= 4;
-        }
-        if spline.flags.planar {
-            flags |= 8;
-        }
-        if spline.flags.linear {
-            flags |= 16;
-        }
+        let flags = crate::io::dxf::spline_flags::write(spline);
         self.writer.write_i16(70, flags)?;
 
         self.writer.write_i16(71, spline.degree as i16)?;
@@ -4948,7 +5047,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 .unwrap_or(0)
         };
         let status = viewport.dxf_status.unwrap_or_else(|| {
-            match (viewport.status.is_on, viewport.off_screen) {
+            match (viewport.is_on(), viewport.off_screen) {
                 (false, _) => 0,
                 (true, true) => -1,
                 (true, false) => id,
@@ -4958,7 +5057,13 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(69, id)?;
 
         // Status
-        self.writer.write_i32(90, viewport.status.to_bits())?;
+        let grid_bits = if self.dxf_version >= DxfVersion::AC1021 {
+            i32::from(viewport.grid_flags.to_bits()) << 18
+        } else {
+            0
+        };
+        self.writer
+            .write_i32(90, viewport.status.to_bits() | grid_bits)?;
 
         // View center
         self.writer.write_double(12, viewport.view_center.x)?;
@@ -5048,6 +5153,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Grid major
         if viewport.grid_major != 0 {
             self.writer.write_i16(61, viewport.grid_major)?;
+        }
+
+        // R2004+: per-viewport ShadePlot mode, independent of render mode.
+        if self.dxf_version >= DxfVersion::AC1018 {
+            self.writer.write_i16(170, viewport.shade_plot_mode)?;
         }
 
         Ok(())
@@ -8791,16 +8901,17 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         if let Some(d) = obj.back_clip {
             self.writer.write_double(41, d)?;
         }
-        self.write_matrix_column_major(&obj.inverse_block_transform)?;
-        self.write_matrix_column_major(&obj.clip_bound_transform)?;
+        self.write_matrix_4x3(&obj.inverse_block_transform)?;
+        self.write_matrix_4x3(&obj.clip_bound_transform)?;
         Ok(())
     }
 
-    /// Write a 4×3 transform as 12 code-40 doubles in DXF column-major order
-    /// (4 columns of 3 rows; the bottom matrix row is implied).
-    fn write_matrix_column_major(&mut self, m: &crate::types::Matrix4) -> Result<()> {
-        for col in 0..4 {
-            for row in 0..3 {
+    /// Write a `SPATIAL_FILTER` transform as 12 code-40 doubles the way
+    /// AutoCAD does: one matrix row per group of four, translation last
+    /// (the bottom row is implied). See `matrix_from_dxf_4x3` in the reader.
+    fn write_matrix_4x3(&mut self, m: &crate::types::Matrix4) -> Result<()> {
+        for row in 0..3 {
+            for col in 0..4 {
                 self.writer.write_double(40, m.m[row][col])?;
             }
         }
@@ -8878,23 +8989,18 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_string(0, "BLOCKVISIBILITYPARAMETER")?;
         self.writer.write_handle(5, obj.handle)?;
         self.writer.write_handle(330, obj.owner)?;
-        self.writer.write_subclass("AcDbEvalExpr")?;
-        self.writer.write_i32(90, obj.eval_node_id)?;
-        self.writer.write_i32(98, obj.eval_major)?;
-        self.writer.write_i32(99, obj.eval_minor)?;
-        self.writer.write_i16(70, obj.eval_value_code)?;
-        match &obj.eval_value {
-            BlockEvalValue::Real(v) => self.writer.write_double(40, *v)?,
-            BlockEvalValue::Point(v) => {
-                self.writer.write_double(10, v[0])?;
-                self.writer.write_double(20, v[1])?;
-            }
-            BlockEvalValue::Text(v) => self.writer.write_string(1, v)?,
-            BlockEvalValue::Long(v) => self.writer.write_i32(90, *v)?,
-            BlockEvalValue::Handle(v) => self.writer.write_handle(91, *v)?,
-            BlockEvalValue::Short(v) => self.writer.write_i16(70, *v)?,
-            BlockEvalValue::None => {}
-        }
+        // Same AcDbEvalExpr layout as every other parameter: a -9999 "no
+        // value" sentinel emits nothing after 99 (a "70 -9999" pair makes
+        // AutoCAD reject the object), otherwise an empty expression string,
+        // the value type, then the value.
+        self.write_dynamic_eval_dxf(&crate::objects::BlockEvalExpression {
+            parent_id: crate::objects::BlockEvalExpression::NO_PARENT,
+            major: obj.eval_major,
+            minor: obj.eval_minor,
+            value_code: obj.eval_value_code,
+            value: obj.eval_value.clone(),
+            node_id: obj.eval_node_id,
+        })?;
         self.writer.write_subclass("AcDbBlockElement")?;
         self.writer.write_string(300, &obj.element_name)?;
         self.writer.write_i32(98, obj.element_major)?;

@@ -176,6 +176,7 @@ pub mod io;
 pub mod layer_state;
 pub mod notification;
 pub mod objects;
+pub mod plot_style;
 pub mod sheet_set;
 pub mod tables;
 pub mod types;
@@ -207,9 +208,10 @@ pub use tables::{
 
 // Re-export document
 pub use document::{
-    CadDocument, Preview, PreviewFormat, SemanticEntityV1, SemanticInventoryV1, SemanticNodeV1,
-    SemanticObjectV1, SemanticPartV1, SemanticReferenceV1, SemanticRelationshipKindV1,
-    SemanticTableRecordV1, SolidHistoryGraph, SEMANTIC_INVENTORY_VERSION,
+    BlockGraph, CadDocument, Preview, PreviewFormat, SemanticEntityV1, SemanticInventoryV1,
+    SemanticNodeV1, SemanticObjectV1, SemanticPartV1, SemanticReferenceV1,
+    SemanticRelationshipKindV1, SemanticTableRecordV1, SolidHistoryGraph,
+    SEMANTIC_INVENTORY_VERSION,
 };
 pub use layer_state::{LayerState, LayerStateLayer, LayerStateMask};
 

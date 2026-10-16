@@ -133,7 +133,6 @@ fn standalone_variable_handle_value_does_not_require_parameter_handles() {
         has_cached_value: true,
         cached_value: "cached".to_string(),
         flag: true,
-        reserved: 7,
         ..Default::default()
     };
     document.objects.insert(

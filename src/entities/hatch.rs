@@ -357,7 +357,7 @@ impl HatchPattern {
 }
 
 /// Gradient color with value
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GradientColorEntry {
     /// Gradient value (position 0.0 - 1.0)

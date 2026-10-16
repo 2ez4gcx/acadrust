@@ -1759,19 +1759,29 @@ impl<'a> SatPCurve<'a> {
                 tokens = document.subtype_tokens(reference)?;
             }
         }
-        let parametric = tokens
-            .iter()
-            .any(|token| token.as_ident() == Some("par_int_cur"));
-        let blocks: Vec<usize> = tokens
-            .iter()
-            .enumerate()
-            .filter_map(|(index, token)| {
-                matches!(token.as_ident(), Some("nubs" | "nurbs")).then_some(index)
-            })
-            .collect();
+        // An intersection curve saves its 3D spline and then its two
+        // pcurves, each a spline block or `nullbs`, all at the level of the
+        // curve's own definition: slot 0 is the 3D curve, the selector names
+        // the pcurve. Blocks nested inside an inline surface are skipped.
+        let mut depth = 0usize;
+        let mut level = None;
+        let mut slots = Vec::new();
+        for (index, token) in tokens.iter().enumerate() {
+            match token.as_ident() {
+                Some("{") => depth += 1,
+                Some("}") => depth = depth.saturating_sub(1),
+                Some("nubs" | "nurbs" | "nullbs") if *level.get_or_insert(depth) == depth => {
+                    slots.push(index)
+                }
+                _ => {}
+            }
+        }
         let support = selector.unsigned_abs().max(1) as usize;
-        let block = support.checked_sub(usize::from(parametric))?;
-        let spline = Self::bspline_at(tokens, *blocks.get(block)?)?;
+        let start = *slots.get(support)?;
+        if tokens[start].as_ident() == Some("nullbs") {
+            return None;
+        }
+        let spline = Self::bspline_at(tokens, start)?;
         let reversed = (selector < 0) ^ (target.token_sense(1) == Sense::Reversed);
         Some((spline, reversed))
     }
@@ -3074,14 +3084,22 @@ impl SatDocument {
     /// errors in the ACIS kernel when encountered in SAB binary data.
     ///
     /// This method removes all non-core entities and remaps pointer
-    /// references in the remaining records.
+    /// references in the remaining records. Face and edge colour attributes
+    /// stay: the modeler's own binary data carries them, and they are what
+    /// gives a face a colour of its own.
     pub fn strip_for_sab(&mut self) {
         // Determine which records to keep.
         // Core ACIS base types (last segment after hyphen split):
         let keep: Vec<bool> = self
             .records
             .iter()
-            .map(|r| Self::is_core_geometry_type(&r.entity_type))
+            .map(|r| {
+                Self::is_core_geometry_type(&r.entity_type)
+                    || matches!(
+                        r.entity_type.as_str(),
+                        "color-adesk-attrib" | "truecolor-adesk-attrib"
+                    )
+            })
             .collect();
 
         let kept_count = keep.iter().filter(|&&k| k).count();
@@ -3119,7 +3137,7 @@ impl SatDocument {
             let mut rec = record;
             rec.index = index_map[old_idx];
 
-            // Remap attribute pointer — always null since all attribs are stripped
+            // Remap the attribute pointer: null unless a kept attribute heads it.
             rec.attribute = SatPointer::new(remap(rec.attribute.0));
 
             // Remap all pointer tokens
@@ -3199,6 +3217,84 @@ impl SatDocument {
             }
             _ => None,
         }
+    }
+
+    /// One document per `body` record, each holding that body's records —
+    /// everything its pointers reach without crossing into another body —
+    /// renumbered in their original order, plus any `asmheader` record.
+    ///
+    /// A file with several bodies restores as several objects, one each; a
+    /// document with at most one body comes back unchanged.
+    pub fn split_bodies(&self) -> Vec<SatDocument> {
+        let position = |pointer: SatPointer| -> Option<usize> {
+            let at = pointer.index()?;
+            if self.records.get(at).is_some_and(|record| record.index == at as i32) {
+                return Some(at);
+            }
+            self.records.iter().position(|record| record.index == pointer.0)
+        };
+        let bodies: Vec<usize> = (0..self.records.len())
+            .filter(|&at| self.records[at].entity_type == "body")
+            .collect();
+        if bodies.len() <= 1 {
+            return vec![self.clone()];
+        }
+        bodies
+            .iter()
+            .map(|&body| {
+                let mut keep = vec![false; self.records.len()];
+                for (at, record) in self.records.iter().enumerate() {
+                    keep[at] = record.entity_type == "asmheader";
+                }
+                let mut pending = vec![body];
+                keep[body] = true;
+                while let Some(at) = pending.pop() {
+                    for pointer in self.records[at].pointers() {
+                        let Some(next) = position(pointer) else {
+                            continue;
+                        };
+                        if !keep[next] && self.records[next].entity_type != "body" {
+                            keep[next] = true;
+                            pending.push(next);
+                        }
+                    }
+                }
+                let mut index_map = vec![-1i32; self.records.len()];
+                let mut count = 0;
+                for at in 0..self.records.len() {
+                    if keep[at] {
+                        index_map[at] = count;
+                        count += 1;
+                    }
+                }
+                // A pointer to a record left behind, or to none at all,
+                // becomes null rather than keeping a stale number.
+                let remap = |pointer: &mut SatPointer| {
+                    pointer.0 = position(*pointer).map_or(-1, |at| index_map[at]);
+                };
+                let mut document = SatDocument::with_header(self.header.clone());
+                for (at, record) in self.records.iter().enumerate() {
+                    if !keep[at] {
+                        continue;
+                    }
+                    let mut record = record.clone();
+                    record.index = index_map[at];
+                    record.raw_text = None;
+                    remap(&mut record.attribute);
+                    for token in &mut record.tokens {
+                        if let SatToken::Pointer(pointer) = token {
+                            remap(pointer);
+                        }
+                    }
+                    document.records.push(record);
+                }
+                document.header.num_records = document.records.len();
+                document.header.num_bodies = 1;
+                // History records belong to no body and are left behind.
+                document.header.has_history = false;
+                document
+            })
+            .collect()
     }
 
     fn bodies_first(&mut self) {

@@ -103,6 +103,9 @@ impl DwgWriter {
                 if owned.dwg_source_version != Some(owned.version) {
                     prepare_legacy_classes(&mut owned);
                 }
+                if owned.version < DxfVersion::AC1018 {
+                    add_missing_object_classes(&mut owned);
+                }
             }
             if owned.version < DxfVersion::AC1027 {
                 prepare_legacy_document(&mut owned);
@@ -785,6 +788,30 @@ fn prepare_legacy_classes(document: &mut CadDocument) {
     }
 }
 
+/// Declare the class of every object added to a pre-R2004 drawing whose
+/// source file never used that class. Before R2004 such records take their
+/// type code only from the class table; without an entry they fall back to a
+/// later version's fixed code, which strict readers reject.
+fn add_missing_object_classes(document: &mut CadDocument) {
+    let defaults = crate::classes::default_classes();
+    let missing: Vec<_> = document
+        .objects
+        .values()
+        .map(crate::io::dwg::dwg_stream_writers::object_writer::objects::object_class_names)
+        .filter(|names| !names.iter().any(|name| document.classes.contains(name)))
+        .filter_map(|names| {
+            defaults
+                .iter()
+                .find(|class| names.iter().any(|name| class.dxf_name.eq_ignore_ascii_case(name)))
+                .cloned()
+        })
+        .collect();
+    for mut class in missing {
+        class.class_number = 0;
+        document.classes.add_or_update(class);
+    }
+}
+
 /// Remove style dictionaries only before the versions introducing their
 /// objects: TABLESTYLE in R2004 and MLEADERSTYLE in R2007.
 fn prepare_legacy_document(document: &mut CadDocument) {
@@ -799,7 +826,7 @@ fn prepare_legacy_document(document: &mut CadDocument) {
                         .iter()
                         .any(|record| record.viewport == viewport.common.handle) =>
                 {
-                    Some((viewport.common.handle, viewport.status.is_on))
+                    Some((viewport.common.handle, viewport.is_on()))
                 }
                 _ => None,
             })

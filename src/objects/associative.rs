@@ -200,7 +200,9 @@ impl AssociativeData {
                     })
             }
             Self::Variable(value) => {
-                action_references(&value.action, target) || eval_references(&value.value, target)
+                action_references(&value.action, target)
+                    || eval_references(&value.value, target)
+                    || value.dependencies.iter().any(|item| item.dependency == target)
             }
             Self::CompoundActionParam(value)
             | Self::PointRefActionParam(value)
@@ -374,6 +376,9 @@ impl AssociativeData {
             Self::Variable(value) => {
                 visit_action(&mut value.action, visit);
                 visit_eval(&mut value.value, visit);
+                for item in &mut value.dependencies {
+                    visit(&mut item.dependency);
+                }
             }
             Self::CompoundActionParam(value)
             | Self::PointRefActionParam(value)
@@ -1143,7 +1148,20 @@ pub struct Assoc2dConstraintGroup {
     pub work_plane: [Vector3; 3],
     pub dependency: Handle,
     pub actions: Vec<Handle>,
+    /// Id the group gives its next new node; above every id in use, deleted
+    /// ones included. Writers raise it past the largest id in `nodes`.
+    pub next_node_id: i32,
     pub nodes: Vec<AssocConstraintNode>,
+}
+
+impl Assoc2dConstraintGroup {
+    /// `next_node_id`, raised past every node id the group holds.
+    pub fn effective_next_node_id(&self) -> i32 {
+        self.nodes
+            .iter()
+            .map(|node| node.node_id.saturating_add(1))
+            .fold(self.next_node_id, i32::max)
+    }
 }
 
 impl Default for Assoc2dConstraintGroup {
@@ -1155,6 +1173,7 @@ impl Default for Assoc2dConstraintGroup {
             work_plane: [Vector3::ZERO; 3],
             dependency: Handle::NULL,
             actions: Vec::new(),
+            next_node_id: 0,
             nodes: Vec::new(),
         }
     }
@@ -1173,7 +1192,19 @@ pub struct AssocVariable {
     pub has_cached_value: bool,
     pub cached_value: String,
     pub flag: bool,
-    pub reserved: i32,
+    /// The value dependencies the variable owns, one per variable its
+    /// expression reads (an unnamed variable holding `k1*45` owns one on
+    /// `k1`).
+    pub dependencies: Vec<AssocVariableDependency>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct AssocVariableDependency {
+    /// The owned AcDbAssocValueDependency.
+    pub dependency: Handle,
+    /// The integer written after each dependency (0 in every file seen).
+    pub flags: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

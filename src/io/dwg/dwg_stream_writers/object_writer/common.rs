@@ -1018,10 +1018,20 @@ impl<'a> DwgObjectWriter<'a> {
         // Verbatim blobs captured on read. Dropped on a cross-version save whose
         // string encoding family differs (they'd garble); freshly-encoded
         // records below are always emitted in the target version's encoding.
-        let raw_blocks: &[(u64, Vec<u8>)] = if eed_compatible {
-            &xdata.raw_dwg_eed
+        // A block names its application by APPID handle. One carried over
+        // from another drawing names a handle that is no APPID here, and the
+        // reference program rejects the whole file (eInvalidInput); it is
+        // dropped instead.
+        let registered = |app: u64| self.document.app_ids.iter().any(|a| a.handle.value() == app);
+        let raw_blocks: Vec<(u64, Vec<u8>)> = if eed_compatible {
+            xdata
+                .raw_dwg_eed
+                .iter()
+                .filter(|(app, _)| registered(*app))
+                .cloned()
+                .collect()
         } else {
-            &[]
+            Vec::new()
         };
 
         // Encode structured records (e.g. plugin XDATA via write_record) into
@@ -1104,14 +1114,13 @@ impl<'a> DwgObjectWriter<'a> {
                 if upper == "*MODEL_SPACE" {
                     return 2; // model space (BB 10)
                 }
-                if upper == "*PAPER_SPACE"
-                    || (upper.starts_with("*PAPER_SPACE")
-                        && upper.len() > 12
-                        && upper[12..].bytes().all(|b| b.is_ascii_digit()))
-                {
+                // Paper-space mode names the active layout's *Paper_Space;
+                // the other layouts' *Paper_SpaceN records, like named
+                // blocks, store their owner.
+                if upper == "*PAPER_SPACE" {
                     return 1; // paper space (BB 01)
                 }
-                return 0; // named block → owned
+                return 0; // owner handle follows
             }
         }
         0

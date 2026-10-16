@@ -864,7 +864,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     .iter()
                     .filter(|node| !node.class_name.is_empty())
                     .collect();
-                self.writer.write_i32(90, registered.len() as i32)?;
+                self.writer.write_i32(90, value.effective_next_node_id())?;
                 if let Some(root) = root {
                     self.writer.write_i32(90, root.node_id)?;
                     self.writer.write_i32(90, root.connections.len() as i32)?;
@@ -901,7 +901,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     self.writer.write_string(1, &value.cached_value)?;
                 }
                 self.writer.write_bool(290, value.flag)?;
-                self.writer.write_i32(90, value.reserved)?;
+                self.writer.write_i32(90, value.dependencies.len() as i32)?;
+                for dependency in &value.dependencies {
+                    self.writer.write_handle(360, dependency.dependency)?;
+                    self.writer.write_i32(90, dependency.flags)?;
+                }
             }
             AssociativeData::ActionParam(value) => self.write_assoc_action_param(value)?,
             AssociativeData::CompoundActionParam(value)

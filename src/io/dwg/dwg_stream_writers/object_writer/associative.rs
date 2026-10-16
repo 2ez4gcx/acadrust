@@ -844,7 +844,7 @@ impl<'a> DwgObjectWriter<'a> {
                         .skip(1)
                         .filter(|node| !node.class_name.is_empty())
                         .collect();
-                    self.writer.write_bit_long(registered.len() as i32);
+                    self.writer.write_bit_long(value.effective_next_node_id());
                     self.writer.write_bit_long(first.node_id);
                     self.writer.write_bit_long(first.connections.len() as i32);
                     for connection in &first.connections {
@@ -896,7 +896,11 @@ impl<'a> DwgObjectWriter<'a> {
                     self.writer.write_variable_text(&value.cached_value);
                 }
                 self.writer.write_bit(value.flag);
-                self.writer.write_bit_long(value.reserved);
+                self.writer.write_bit_long(value.dependencies.len() as i32);
+                for dependency in &value.dependencies {
+                    self.write_assoc_handle(DwgReferenceType::HardOwnership, dependency.dependency);
+                    self.writer.write_bit_long(dependency.flags);
+                }
             }
             AssociativeData::ActionParam(value) => self.write_assoc_action_param(value),
             AssociativeData::CompoundActionParam(value)

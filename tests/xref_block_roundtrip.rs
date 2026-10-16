@@ -14,13 +14,86 @@ use std::io::Cursor;
 use acadrust::entities::*;
 use acadrust::tables::BlockRecord;
 use acadrust::types::DxfVersion;
-use acadrust::{CadDocument, DwgReader, DwgWriter};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 fn dwg_roundtrip(doc: &CadDocument) -> CadDocument {
     let bytes = DwgWriter::write_to_vec(doc).expect("DWG write failed");
     DwgReader::from_stream(Cursor::new(bytes))
         .read()
         .expect("DWG read failed")
+}
+
+/// A host document with an xref block record whose resolved geometry has been
+/// merged in for display, plus a genuine model-space canary entity.
+fn document_with_merged_xref(version: DxfVersion) -> CadDocument {
+    let mut doc = CadDocument::with_version(version);
+
+    // A genuine model-space entity that must survive untouched — a canary
+    // for handle-stream desync corruption around the xref block.
+    doc.add_entity(EntityType::Circle(Circle::from_coords(5.0, 5.0, 0.0, 3.0)))
+        .unwrap();
+
+    // An xref block record with the flag + path, exactly as XATTACH creates
+    // it before resolution.
+    let mut br = BlockRecord::new("XREF_UNIT");
+    br.handle = doc.allocate_handle();
+    br.block_entity_handle = doc.allocate_handle();
+    br.block_end_handle = doc.allocate_handle();
+    br.flags.is_xref = true;
+    br.xref_path = "./OCS_xref_file.dwg".to_string();
+    let br_handle = br.handle;
+    doc.block_records.add(br).unwrap();
+
+    // Simulate the host merging the resolved xref geometry into the block
+    // record for display: several entities owned by the xref block.
+    for i in 0..5 {
+        let mut e = EntityType::Line(Line::from_coords(0.0, i as f64, 0.0, 10.0, i as f64, 0.0));
+        e.common_mut().owner_handle = br_handle;
+        doc.add_entity(e).unwrap();
+    }
+    doc
+}
+
+fn assert_xref_not_bound(rt: &CadDocument, version: DxfVersion) {
+    // The xref block must survive as a reference.
+    let xref = rt
+        .block_records
+        .iter()
+        .find(|b| b.name == "XREF_UNIT")
+        .unwrap_or_else(|| panic!("{version:?}: xref block record lost on roundtrip"));
+    assert!(
+        xref.flags.is_xref,
+        "{version:?}: is_xref flag lost — the xref was bound/exploded"
+    );
+    assert_eq!(
+        xref.xref_path, "./OCS_xref_file.dwg",
+        "{version:?}: xref path not preserved"
+    );
+    assert!(
+        xref.entity_handles.is_empty(),
+        "{version:?}: xref block still owns {} entities — resolved geometry was baked into the file",
+        xref.entity_handles.len()
+    );
+
+    // None of the merged lines may have been serialized anywhere.
+    let leaked = rt
+        .entities()
+        .filter(|e| matches!(e, EntityType::Line(_)))
+        .count();
+    assert_eq!(
+        leaked, 0,
+        "{version:?}: {leaked} resolved xref line(s) leaked into the saved file"
+    );
+
+    // The genuine model-space circle must survive intact (no desync).
+    let circles = rt
+        .entities()
+        .filter(|e| matches!(e, EntityType::Circle(_)))
+        .count();
+    assert_eq!(
+        circles, 1,
+        "{version:?}: model-space circle lost — the handle stream desynced"
+    );
 }
 
 #[test]
@@ -31,32 +104,7 @@ fn xref_block_does_not_bind_owned_entities() {
         DxfVersion::AC1027,
         DxfVersion::AC1032,
     ] {
-        let mut doc = CadDocument::with_version(version);
-
-        // A genuine model-space entity that must survive untouched — a canary
-        // for handle-stream desync corruption around the xref block.
-        doc.add_entity(EntityType::Circle(Circle::from_coords(5.0, 5.0, 0.0, 3.0)))
-            .unwrap();
-
-        // An xref block record with the flag + path, exactly as XATTACH creates
-        // it before resolution.
-        let mut br = BlockRecord::new("XREF_UNIT");
-        br.handle = doc.allocate_handle();
-        br.block_entity_handle = doc.allocate_handle();
-        br.block_end_handle = doc.allocate_handle();
-        br.flags.is_xref = true;
-        br.xref_path = "./OCS_xref_file.dwg".to_string();
-        let br_handle = br.handle;
-        doc.block_records.add(br).unwrap();
-
-        // Simulate the host merging the resolved xref geometry into the block
-        // record for display: several entities owned by the xref block.
-        for i in 0..5 {
-            let mut e =
-                EntityType::Line(Line::from_coords(0.0, i as f64, 0.0, 10.0, i as f64, 0.0));
-            e.common_mut().owner_handle = br_handle;
-            doc.add_entity(e).unwrap();
-        }
+        let doc = document_with_merged_xref(version);
 
         // Precondition: the merge actually populated the block's owned list.
         let owned_before = doc
@@ -72,45 +120,32 @@ fn xref_block_does_not_bind_owned_entities() {
         );
 
         let rt = dwg_roundtrip(&doc);
+        assert_xref_not_bound(&rt, version);
+    }
+}
 
-        // The xref block must survive as a reference.
-        let xref = rt
-            .block_records
-            .iter()
-            .find(|b| b.name == "XREF_UNIT")
-            .unwrap_or_else(|| panic!("{version:?}: xref block record lost on roundtrip"));
-        assert!(
-            xref.flags.is_xref,
-            "{version:?}: is_xref flag lost — the xref was bound/exploded"
-        );
-        assert_eq!(
-            xref.xref_path, "./OCS_xref_file.dwg",
-            "{version:?}: xref path not preserved"
-        );
-        assert!(
-            xref.entity_handles.is_empty(),
-            "{version:?}: xref block still owns {} entities — resolved geometry was baked into the file",
-            xref.entity_handles.len()
-        );
+/// The DXF writer must apply the same skip as the DWG writer (issue #268):
+/// xref-owned entities live in the external file and must never be baked
+/// into the host's BLOCKS section.
+#[test]
+fn xref_block_does_not_bind_owned_entities_dxf() {
+    for version in [
+        DxfVersion::AC1015,
+        DxfVersion::AC1018,
+        DxfVersion::AC1024,
+        DxfVersion::AC1027,
+        DxfVersion::AC1032,
+    ] {
+        let doc = document_with_merged_xref(version);
 
-        // None of the merged lines may have been serialized anywhere.
-        let leaked = rt
-            .entities()
-            .filter(|e| matches!(e, EntityType::Line(_)))
-            .count();
-        assert_eq!(
-            leaked, 0,
-            "{version:?}: {leaked} resolved xref line(s) leaked into the saved file"
-        );
+        let bytes = DxfWriter::new(&doc)
+            .write_to_vec()
+            .expect("DXF write failed");
+        let rt = DxfReader::from_reader(Cursor::new(bytes))
+            .expect("DXF reader construction failed")
+            .read()
+            .expect("DXF read failed");
 
-        // The genuine model-space circle must survive intact (no desync).
-        let circles = rt
-            .entities()
-            .filter(|e| matches!(e, EntityType::Circle(_)))
-            .count();
-        assert_eq!(
-            circles, 1,
-            "{version:?}: model-space circle lost — the handle stream desynced"
-        );
+        assert_xref_not_bound(&rt, version);
     }
 }

@@ -438,14 +438,22 @@ pub(crate) fn transform_dimension(e: &mut Dimension, transform: &Transform) {
 
     let old_normal = e.base().normal;
     let new_normal = transform_normal(transform, old_normal);
-    let text_rotation =
-        transform_dimension_angle(old_normal, new_normal, e.base().text_rotation, transform);
-    let horizontal_direction = transform_dimension_angle(
-        old_normal,
-        new_normal,
-        e.base().horizontal_direction,
-        transform,
-    );
+    // A mirror moves a dimension but never mirrors its text: the text keeps
+    // the direction it reads in (0 still meaning along the dimension line),
+    // as mirrored text does with MIRRTEXT off.
+    let keep_text = is_reflecting(transform);
+    // A text rotation of 0 is "along the dimension line", not an angle: the
+    // text turns with the line, so it stays 0.
+    let text_rotation = if keep_text || e.base().text_rotation == 0.0 {
+        e.base().text_rotation
+    } else {
+        transform_dimension_angle(old_normal, new_normal, e.base().text_rotation, transform)
+    };
+    let horizontal_direction = if keep_text {
+        e.base().horizontal_direction
+    } else {
+        transform_dimension_angle(old_normal, new_normal, e.base().horizontal_direction, transform)
+    };
     let insertion_rotation = transform_dimension_angle(
         old_normal,
         new_normal,
@@ -453,9 +461,15 @@ pub(crate) fn transform_dimension(e: &mut Dimension, transform: &Transform) {
         transform,
     );
     let linear_angles = match e {
+        // An oblique angle of 0 means extension lines square to the
+        // dimension line, which they stay whatever turns the dimension.
         Dimension::Linear(d) => Some((
             transform_dimension_angle(old_normal, new_normal, d.rotation, transform),
-            transform_dimension_angle(old_normal, new_normal, d.ext_line_rotation, transform),
+            if d.ext_line_rotation == 0.0 {
+                0.0
+            } else {
+                transform_dimension_angle(old_normal, new_normal, d.ext_line_rotation, transform)
+            },
         )),
         _ => None,
     };
@@ -1417,6 +1431,25 @@ mod tests {
         assert_vector_near(linear.base.normal, Vector3::UNIT_X);
         assert!((linear.measurement() - 10.0).abs() < 1e-9);
         assert!((linear.base.actual_measurement - 10.0).abs() < 1e-9);
+    }
+
+    // 0 is "along the dimension line" / "square extension lines", not an
+    // angle: a turned dimension keeps it (OpenCADStudio#1761).
+    #[test]
+    fn test_rotating_a_dimension_keeps_its_default_angles() {
+        let mut linear = DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0));
+        linear.definition_point = Vector3::new(0.0, 5.0, 0.0);
+        let mut dimension = Dimension::Linear(linear);
+        transform_dimension(
+            &mut dimension,
+            &Transform::from_rotation(Vector3::UNIT_Z, std::f64::consts::FRAC_PI_2),
+        );
+        let Dimension::Linear(linear) = dimension else {
+            unreachable!()
+        };
+        assert!((linear.rotation - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+        assert_eq!(linear.ext_line_rotation, 0.0);
+        assert_eq!(linear.base.text_rotation, 0.0);
     }
 
     #[test]

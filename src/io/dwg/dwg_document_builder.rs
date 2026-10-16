@@ -158,6 +158,23 @@ enum PendingVertex {
     PfaceFace(entities::PfaceFaceData, EntityCommon),
 }
 
+impl PendingVertex {
+    fn handle(&self) -> Handle {
+        match self {
+            PendingVertex::V2D(data) => data.handle,
+            PendingVertex::V3D(data, _) => data.handle,
+            PendingVertex::PfaceFace(data, _) => data.handle,
+        }
+    }
+}
+
+/// The child handles an R2004+ polyline lists, in drawing order. Records
+/// arrive in handle order, so a vertex inserted later would otherwise land
+/// at the end of the outline.
+fn read_owned_vertex_handles(reader: &mut DwgMergedReader, owned_count: i32) -> Vec<u64> {
+    (0..owned_count.clamp(0, 1 << 24)).map(|_| reader.read_handle()).collect()
+}
+
 /// Pending polyline entities awaiting vertex assembly.
 #[derive(Default)]
 struct PendingPolylines {
@@ -165,6 +182,8 @@ struct PendingPolylines {
     vertices: HashMap<u64, Vec<PendingVertex>>,
     /// SEQEND handle keyed by owner (parent polyline) handle.
     seqends: HashMap<u64, crate::types::Handle>,
+    /// Owned vertex handles, in list order, keyed by owner (parent polyline) handle.
+    vertex_order: HashMap<u64, Vec<u64>>,
     /// Polyline entities awaiting vertex assembly, keyed by their handle.
     polylines: Vec<(u64, EntityType)>,
 }
@@ -505,17 +524,27 @@ impl DwgDocumentBuilder {
     /// 2. Read entities and objects → resolve handle references
     ///
     /// Returns collected notifications (skipped records, warnings).
+    /// Give every BLOCK marker the name, base point and owner of the record
+    /// it opens.
+    ///
+    /// The marker and the `BlockRecord` are two views of one definition, and
+    /// a consumer that reads both must not see them disagree. Pre-R2010
+    /// anonymous copies of a dynamic block keep the source block's name on
+    /// the marker; the record's name is the one inserts resolve to.
     fn hydrate_block_markers(document: &mut CadDocument) {
-        let records: Vec<(Handle, String, crate::types::Vector3)> = document
+        let records: Vec<(Handle, Handle, String, crate::types::Vector3)> = document
             .block_records
             .iter()
             .filter(|record| !record.block_entity_handle.is_null())
-            .map(|record| (record.block_entity_handle, record.name.clone(), record.base_point))
+            .map(|record| {
+                (record.block_entity_handle, record.handle, record.name.clone(), record.base_point)
+            })
             .collect();
-        for (handle, name, base_point) in records {
+        for (handle, record, name, base_point) in records {
             if let Some(EntityType::Block(marker)) = document.get_entity_mut(handle) {
                 marker.name = name;
                 marker.base_point = base_point;
+                marker.common.owner_handle = record;
             }
         }
     }
@@ -535,15 +564,50 @@ impl DwgDocumentBuilder {
         .ok()
     }
 
+    /// Number each layout's viewports as the DXF writer does: 1 is the overall
+    /// paper-space viewport, the authored ones follow in entity order, and an
+    /// ID already in use is skipped. DWG keeps no viewport IDs; a consumer
+    /// telling the overall viewport from the authored ones needs them (#67).
+    ///
+    /// The overall viewport heads the layout's viewport list; the layout's
+    /// own link only stands in without that list (pre-R2004), as it names the
+    /// LAST ACTIVE viewport — a model viewport when the drawing was saved with
+    /// one entered. It need not come first in entity order.
     fn number_paper_space_viewports(document: &mut CadDocument) {
-        let blocks: Vec<Vec<Handle>> = document
+        let blocks: Vec<(Handle, Vec<Handle>)> = document
             .block_records
             .iter()
             .filter(|block| block.is_paper_space())
-            .map(|block| block.entity_handles.clone())
+            .map(|block| (block.handle, block.entity_handles.clone()))
             .collect();
-        for handles in blocks {
-            let used_ids: HashSet<i16> = handles
+        for (paper_handle, handles) in blocks {
+            let viewports: Vec<Handle> = handles
+                .iter()
+                .copied()
+                .filter(|handle| {
+                    matches!(document.get_entity(*handle), Some(EntityType::Viewport(_)))
+                })
+                .collect();
+            let layout = document.objects.values().find_map(|object| match object {
+                crate::objects::ObjectType::Layout(layout)
+                    if layout.block_record == paper_handle =>
+                {
+                    Some(layout)
+                }
+                _ => None,
+            });
+            let overall = layout
+                .and_then(|layout| {
+                    layout
+                        .viewports
+                        .first()
+                        .copied()
+                        .into_iter()
+                        .chain(std::iter::once(layout.viewport))
+                        .find(|handle| viewports.contains(handle))
+                })
+                .or_else(|| viewports.first().copied());
+            let used_ids: HashSet<i16> = viewports
                 .iter()
                 .filter_map(|handle| match document.get_entity(*handle) {
                     Some(EntityType::Viewport(viewport)) if viewport.id > 0 => Some(viewport.id),
@@ -551,7 +615,11 @@ impl DwgDocumentBuilder {
                 })
                 .collect();
             let mut available_ids = (1..=i16::MAX).filter(|id| !used_ids.contains(id));
-            for handle in handles {
+            let order: Vec<Handle> = overall
+                .into_iter()
+                .chain(viewports.iter().copied().filter(|handle| Some(*handle) != overall))
+                .collect();
+            for handle in order {
                 if let Some(EntityType::Viewport(viewport)) = document.get_entity_mut(handle) {
                     if viewport.id == 0 {
                         viewport.id = available_ids.next().unwrap_or(0);
@@ -1736,11 +1804,7 @@ impl DwgDocumentBuilder {
         }
 
         // ── Pass 2: Read entities and non-table objects ────────────────
-        let mut pending = PendingPolylines {
-            vertices: HashMap::new(),
-            seqends: HashMap::new(),
-            polylines: Vec::new(),
-        };
+        let mut pending = PendingPolylines::default();
         // Pending attribute entities keyed by owner (INSERT) handle.
         let mut pending_attributes: HashMap<u64, Vec<AttributeEntity>> = HashMap::new();
         let mut entity_next_handles = HashMap::new();
@@ -1827,9 +1891,15 @@ impl DwgDocumentBuilder {
                             continue;
                         }
                     };
+                    // Dynamic-block and associative records keep their source
+                    // bytes: the writer copies them verbatim while the modeled
+                    // object still equals its read-time snapshot, since the
+                    // models do not cover every bit strict readers expect.
                     if capture_raw
                         || class_names.dxf.get(&raw_type_code).is_some_and(|name| {
                             matches!(name.as_str(), "ACSH_EXTRUSION_CLASS" | "DIMASSOC")
+                                || crate::objects::is_associative_object_name(name)
+                                || crate::objects::is_dynamic_block_object_name(name)
                         })
                     {
                         chunk.raw_records.push((
@@ -1947,12 +2017,7 @@ impl DwgDocumentBuilder {
                 if capture_raw {
                     for (&owner, vertices) in &chunk.pending.vertices {
                         for vertex in vertices {
-                            let handle = match vertex {
-                                PendingVertex::V2D(data) => data.handle,
-                                PendingVertex::V3D(data, _) => data.handle,
-                                PendingVertex::PfaceFace(data, _) => data.handle,
-                            };
-                            document.raw_record_owners.insert(handle.value(), owner);
+                            document.raw_record_owners.insert(vertex.handle().value(), owner);
                         }
                     }
                     for (&owner, handle) in &chunk.pending.seqends {
@@ -2036,6 +2101,7 @@ impl DwgDocumentBuilder {
                         .append(&mut vertices);
                 }
                 pending.seqends.extend(chunk.pending.seqends.drain());
+                pending.vertex_order.extend(chunk.pending.vertex_order.drain());
                 pending.polylines.append(&mut chunk.pending.polylines);
                 for (owner, mut attributes) in chunk.pending_attributes.drain() {
                     pending_attributes
@@ -2079,7 +2145,14 @@ impl DwgDocumentBuilder {
 
         // ── Post-pass: Assemble polyline vertices and add to document ──
         for (poly_handle, mut entity) in pending.polylines {
-            if let Some(verts) = pending.vertices.remove(&poly_handle) {
+            if let Some(mut verts) = pending.vertices.remove(&poly_handle) {
+                if let Some(order) = pending.vertex_order.get(&poly_handle) {
+                    let rank: HashMap<u64, usize> =
+                        order.iter().enumerate().map(|(i, h)| (*h, i)).collect();
+                    verts.sort_by_key(|v| {
+                        rank.get(&v.handle().value()).copied().unwrap_or(usize::MAX)
+                    });
+                }
                 match &mut entity {
                     EntityType::Polyline2D(ref mut e) => {
                         e.vertices = verts
@@ -3022,6 +3095,7 @@ impl DwgDocumentBuilder {
             let mut source_ucss = HashSet::new();
             let mut source_vports = HashSet::new();
             let mut source_app_ids = HashSet::new();
+            let mut source_app_id_names = std::collections::HashMap::new();
             for entry in &parsed_entries {
                 match entry {
                     ParsedEntry::View(handle, _) => {
@@ -3033,8 +3107,9 @@ impl DwgDocumentBuilder {
                     ParsedEntry::VPort(handle, _) => {
                         source_vports.insert(*handle);
                     }
-                    ParsedEntry::AppId(handle, _) => {
+                    ParsedEntry::AppId(handle, data) => {
                         source_app_ids.insert(*handle);
+                        source_app_id_names.insert(*handle, data.name.to_uppercase());
                     }
                     _ => {}
                 }
@@ -3179,18 +3254,25 @@ impl DwgDocumentBuilder {
                 }
             }
 
-            let app_id_collisions: Vec<Handle> = document
+            // A retained default (e.g. AcadAnnotative, absent from older files)
+            // can sit on the handle of a different source application id (e.g.
+            // ACAD). Same table, so `collides` exempts it; compare names and move
+            // only the default.
+            let app_id_collisions: Vec<String> = document
                 .app_ids
                 .iter()
-                .filter(|entry| collides(entry.handle, &source_app_ids))
-                .map(|entry| entry.handle)
+                .filter(|entry| {
+                    collides(entry.handle, &source_app_ids)
+                        || source_app_id_names
+                            .get(&entry.handle.value())
+                            .is_some_and(|name| *name != entry.name.to_uppercase())
+                })
+                .map(|entry| entry.name.clone())
                 .collect();
-            for old in app_id_collisions {
+            for name in app_id_collisions {
                 let new = document.allocate_handle();
-                for entry in document.app_ids.iter_mut() {
-                    if entry.handle == old {
-                        entry.handle = new;
-                    }
+                if let Some(entry) = document.app_ids.get_mut(&name) {
+                    entry.handle = new;
                 }
             }
         }
@@ -4164,6 +4246,10 @@ impl DwgDocumentBuilder {
                         e.grid_major = data.grid_major;
                     }
                     e.status = ViewportStatusFlags::from_bits(data.status_flags);
+                    // VIEWPORT grid behavior uses status bits 18..21.
+                    e.grid_flags = crate::entities::GridFlags::from_bits(
+                        ((data.status_flags >> 18) & 0xf) as i16,
+                    );
                     e.style_sheet = data.style_sheet;
                     e.render_mode = ViewportRenderMode::from_value(data.render_mode as i16);
                     e.ucs_at_origin = data.ucs_at_origin;
@@ -4247,6 +4333,8 @@ impl DwgDocumentBuilder {
                     e.start_width = data.start_width;
                     e.end_width = data.end_width;
                     let h = e.common.handle.value();
+                    let order = read_owned_vertex_handles(&mut reader, data.owned_count);
+                    pending.vertex_order.insert(h, order);
                     pending.polylines.push((h, EntityType::Polyline2D(e)));
                 }
                 OBJ_POLYLINE_3D => {
@@ -4262,6 +4350,8 @@ impl DwgDocumentBuilder {
                         );
                     e.flags.spline_fit = data.smooth_type != 0;
                     let h = e.common.handle.value();
+                    let order = read_owned_vertex_handles(&mut reader, data.owned_count);
+                    pending.vertex_order.insert(h, order);
                     pending.polylines.push((h, EntityType::Polyline3D(e)));
                 }
 
@@ -4473,11 +4563,13 @@ impl DwgDocumentBuilder {
                 }
 
                 OBJ_POLYLINE_PFACE => {
-                    let (_num_verts, _num_faces, _owned_count) =
+                    let (_num_verts, _num_faces, owned_count) =
                         entities::read_polyface_mesh(&mut reader, self.obj_reader.version());
                     let mut e = PolyfaceMesh::new();
                     e.common = entity_common;
                     let h = e.common.handle.value();
+                    let order = read_owned_vertex_handles(&mut reader, owned_count);
+                    pending.vertex_order.insert(h, order);
                     pending.polylines.push((h, EntityType::PolyfaceMesh(e)));
                 }
 
@@ -4904,7 +4996,7 @@ impl DwgDocumentBuilder {
 
                 // ── Polygon mesh (POLYLINE with mesh flag) ──────────
                 OBJ_POLYLINE_MESH => {
-                    let (flags, smooth_type, m_count, n_count, m_smooth, n_smooth, _owned_count) =
+                    let (flags, smooth_type, m_count, n_count, m_smooth, n_smooth, owned_count) =
                         entities::read_polygon_mesh(&mut reader, self.obj_reader.version());
                     let mut e = PolygonMeshEntity::new();
                     e.common = entity_common;
@@ -4916,6 +5008,8 @@ impl DwgDocumentBuilder {
                     e.smooth_type = SurfaceSmoothType::from_i16(smooth_type);
                     // Vertices will be assembled from VERTEX_MESH records
                     let poly_handle = entity_data.common.handle;
+                    let order = read_owned_vertex_handles(&mut reader, owned_count);
+                    pending.vertex_order.insert(poly_handle, order);
                     pending
                         .polylines
                         .push((poly_handle, EntityType::PolygonMesh(e)));
@@ -6280,8 +6374,8 @@ impl DwgDocumentBuilder {
                     obj.front_clip = data.front_clip;
                     obj.back_clip = data.back_clip;
                     obj.inverse_block_transform =
-                        matrix_from_column_major(&data.inverse_block_transform);
-                    obj.clip_bound_transform = matrix_from_column_major(&data.clip_bound_transform);
+                        matrix_from_dxf_4x3(&data.inverse_block_transform);
+                    obj.clip_bound_transform = matrix_from_dxf_4x3(&data.clip_bound_transform);
                     document.objects.insert(
                         Handle::from(handle),
                         crate::objects::ObjectType::SpatialFilter(obj),
@@ -7656,15 +7750,15 @@ mod tests {
         ));
     }
 
+    /// DWG spatial-filter transforms share DXF's 12-value layout.
     #[test]
-    fn spatial_filter_matrix_is_column_major() {
+    fn spatial_filter_matrix_reads_autocad_order() {
         let v = [
-            1.0, 0.0, 0.0, //
-            0.0, 1.0, 0.0, //
-            0.0, 0.0, 1.0, //
-            -500.0, 0.0, 0.0,
+            1.0, 0.0, 0.0, -500.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            0.0, 0.0, 1.0, 0.0,
         ];
-        let m = matrix_from_column_major(&v);
+        let m = matrix_from_dxf_4x3(&v);
         assert_eq!(
             m.m,
             [
@@ -8049,12 +8143,14 @@ mod dedupe_block_names_tests {
     }
 }
 
-fn matrix_from_column_major(v: &[f64; 12]) -> crate::types::Matrix4 {
+/// DWG stores the spatial-filter transforms in the same 12-value layout as
+/// DXF code 40: one matrix row per group of four, translation last.
+fn matrix_from_dxf_4x3(v: &[f64; 12]) -> crate::types::Matrix4 {
     crate::types::Matrix4 {
         m: [
-            [v[0], v[3], v[6], v[9]],
-            [v[1], v[4], v[7], v[10]],
-            [v[2], v[5], v[8], v[11]],
+            [v[0], v[1], v[2], v[3]],
+            [v[4], v[5], v[6], v[7]],
+            [v[8], v[9], v[10], v[11]],
             [0.0, 0.0, 0.0, 1.0],
         ],
     }

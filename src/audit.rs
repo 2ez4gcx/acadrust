@@ -360,6 +360,18 @@ impl CadDocument {
             report.scanned_entities += 1;
             add_handle(&mut handles, &mut report, handle, location.clone());
             audit_entity(entity, location, &mut report);
+            // Attributes and the SEQEND live inside their insert, but other
+            // records (extension dictionaries, reactors) still name them.
+            if let EntityType::Insert(insert) = entity.as_ref() {
+                let nested = insert
+                    .attributes
+                    .iter()
+                    .map(|attribute| attribute.common.handle)
+                    .chain(insert.seqend_handle);
+                for handle in nested.filter(|handle| !handle.is_null()) {
+                    add_handle(&mut handles, &mut report, handle, AuditLocation::Entity { handle });
+                }
+            }
         }
         for (key, object) in &self.objects {
             report.scanned_records += 1;
@@ -389,9 +401,25 @@ impl CadDocument {
             }
         }
 
+        // Table control objects live in the header, not in a table or the
+        // object map; the dictionaries they own point back at them.
+        let header = &self.header;
+        let controls = [
+            header.block_control_handle,
+            header.layer_control_handle,
+            header.style_control_handle,
+            header.linetype_control_handle,
+            header.view_control_handle,
+            header.ucs_control_handle,
+            header.vport_control_handle,
+            header.appid_control_handle,
+            header.dimstyle_control_handle,
+            header.vpent_hdr_control_handle,
+        ];
         let known: HashSet<Handle> = handles
             .keys()
             .copied()
+            .chain(controls)
             .filter(|handle| !handle.is_null())
             .collect();
         for key in self.objects.keys().copied() {

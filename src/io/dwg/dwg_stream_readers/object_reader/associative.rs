@@ -24,7 +24,9 @@ fn read_edge_curve(
                 out.push(real(reader));
             }
         }
-        23 => {
+        // An unbounded line (a point and its direction) and a line segment
+        // (its two ends).
+        19 | 23 => {
             out.push(point(reader));
             out.push(point(reader));
         }
@@ -472,6 +474,11 @@ fn read_array_action_body(
     let item_class = reader.read_variable_text();
     let mut items = Vec::with_capacity(count as usize);
     for _ in 0..count {
+        // Some writers declare more items than the record holds; reading on
+        // would turn the following streams into items.
+        if reader.main_remaining_bits() <= 0 {
+            break;
+        }
         items.push(read_array_item(reader));
     }
     for item in &mut transform {
@@ -735,12 +742,16 @@ fn is_plain_geometrical_constraint(class_name: &str) -> bool {
     )
 }
 
-fn read_geometrical_constraint(reader: &mut DwgMergedReader) -> (i32, bool, bool) {
-    (reader.read_bit_long(), reader.read_bit(), reader.read_bit())
+/// Owner id, implied, active. A version-0 group stores no active flag.
+fn read_geometrical_constraint(reader: &mut DwgMergedReader, legacy: bool) -> (i32, bool, bool) {
+    (reader.read_bit_long(), reader.read_bit(), legacy || reader.read_bit())
 }
 
-fn read_explicit_constraint(reader: &mut DwgMergedReader) -> (i32, bool, bool, Handle, Handle) {
-    let (owner_id, is_implied, is_active) = read_geometrical_constraint(reader);
+fn read_explicit_constraint(
+    reader: &mut DwgMergedReader,
+    legacy: bool,
+) -> (i32, bool, bool, Handle, Handle) {
+    let (owner_id, is_implied, is_active) = read_geometrical_constraint(reader, legacy);
     (
         owner_id,
         is_implied,
@@ -750,13 +761,16 @@ fn read_explicit_constraint(reader: &mut DwgMergedReader) -> (i32, bool, bool, H
     )
 }
 
+/// Node data of `class_name`. `legacy` is the version-0 layout, which has no
+/// active flag on constraints and no reserved double on circles and arcs.
 fn read_constraint_node_data(
     reader: &mut DwgMergedReader,
     class_name: &str,
+    legacy: bool,
 ) -> AssocConstraintNodeData {
     match class_name.to_ascii_uppercase().as_str() {
         "ACG2SMOOTHCONSTRAINT" => {
-            let (owner_id, is_implied, is_active) = read_geometrical_constraint(reader);
+            let (owner_id, is_implied, is_active) = read_geometrical_constraint(reader, legacy);
             let count = safe_count(reader.read_bit_long(), reader);
             let mut owned_constraint_ids = Vec::with_capacity(count as usize);
             for _ in 0..count {
@@ -782,7 +796,7 @@ fn read_constraint_node_data(
             radius: reader.read_bit_double(),
             start_parameter: reader.read_bit_double(),
             end_parameter: reader.read_bit_double(),
-            reserved: reader.read_bit_double(),
+            reserved: if legacy { 0.0 } else { reader.read_bit_double() },
         },
         "ACCONSTRAINEDARC" => AssocConstraintNodeData::Arc {
             geometry_dependency: handle(reader),
@@ -793,7 +807,7 @@ fn read_constraint_node_data(
             radius: reader.read_bit_double(),
             start_parameter: reader.read_bit_double(),
             end_parameter: reader.read_bit_double(),
-            reserved: reader.read_bit_double(),
+            reserved: if legacy { 0.0 } else { reader.read_bit_double() },
             start_point: reader.read_3bit_double(),
             end_point: reader.read_3bit_double(),
         },
@@ -857,7 +871,7 @@ fn read_constraint_node_data(
         },
         "ACANGLECONSTRAINT" | "AC3POINTANGLECONSTRAINT" => {
             let (owner_id, is_implied, is_active, value_dependency, dimension_dependency) =
-                read_explicit_constraint(reader);
+                read_explicit_constraint(reader, legacy);
             AssocConstraintNodeData::Angle {
                 owner_id,
                 is_implied,
@@ -868,7 +882,7 @@ fn read_constraint_node_data(
             }
         }
         "ACPARALLELCONSTRAINT" | "ACHORIZONTALCONSTRAINT" | "ACVERTICALCONSTRAINT" => {
-            let (owner_id, is_implied, is_active) = read_geometrical_constraint(reader);
+            let (owner_id, is_implied, is_active) = read_geometrical_constraint(reader, legacy);
             AssocConstraintNodeData::Parallel {
                 owner_id,
                 is_implied,
@@ -879,7 +893,7 @@ fn read_constraint_node_data(
         }
         "ACDISTANCECONSTRAINT" => {
             let (owner_id, is_implied, is_active, value_dependency, dimension_dependency) =
-                read_explicit_constraint(reader);
+                read_explicit_constraint(reader, legacy);
             let direction_type = reader.read_byte();
             AssocConstraintNodeData::Distance {
                 owner_id,
@@ -893,7 +907,7 @@ fn read_constraint_node_data(
         }
         "ACRADIUSDIAMETERCONSTRAINT" => {
             let (owner_id, is_implied, is_active, value_dependency, dimension_dependency) =
-                read_explicit_constraint(reader);
+                read_explicit_constraint(reader, legacy);
             AssocConstraintNodeData::RadiusDiameter {
                 owner_id,
                 is_implied,
@@ -972,7 +986,7 @@ fn read_constraint_node_data(
             }
         }
         _ if is_plain_geometrical_constraint(class_name) => {
-            let (owner_id, is_implied, is_active) = read_geometrical_constraint(reader);
+            let (owner_id, is_implied, is_active) = read_geometrical_constraint(reader, legacy);
             AssocConstraintNodeData::Geometrical {
                 owner_id,
                 is_implied,
@@ -1183,9 +1197,55 @@ pub fn read_associative_data(
             let dependency = handle(reader);
             let count = reader.read_bit_long();
             let actions = read_handles(reader, count);
-            let node_count = safe_count(reader.read_bit_long(), reader);
-            let mut nodes = Vec::with_capacity(node_count.saturating_add(1) as usize);
-            if node_count > 0 {
+            let next_node_id = reader.read_bit_long();
+            let node_count = safe_count(next_node_id, reader);
+            let mut nodes = Vec::new();
+            // Version 0 (the 2010 release) lists its nodes inline after a
+            // count: class name, id, connections and data each, with no root,
+            // class table, registry or status byte. They load into the
+            // current layout and are written back as version 2.
+            let legacy = group_version == 0;
+            // R2010 version-2 groups also have an inline count/class/node
+            // sequence, with status bytes and active flags. Older releases
+            // of this codec emitted the later registry layout with root ID
+            // zero even for R2010; retain that read compatibility.
+            let inline_nodes = legacy
+                || (!version.r2013_plus(dxf_version) && {
+                    let position = reader.position_in_bits();
+                    let count = reader.read_bit_long();
+                    reader.set_position_in_bits(position);
+                    count > 0
+                });
+            if inline_nodes {
+                let count = safe_count(reader.read_bit_long(), reader);
+                nodes.reserve(count as usize + 1);
+                nodes.push(AssocConstraintNode::default());
+                for _ in 0..count {
+                    let class_name = reader.read_variable_text();
+                    let mut node = if legacy {
+                        let node_id = reader.read_bit_long();
+                        let count = safe_count(reader.read_bit_long(), reader);
+                        let connections = (0..count).map(|_| reader.read_bit_long()).collect();
+                        AssocConstraintNode {
+                            node_id,
+                            connections,
+                            ..Default::default()
+                        }
+                    } else {
+                        read_constraint_node_common(reader, version, dxf_version)
+                    };
+                    let data = read_constraint_node_data(reader, &class_name, legacy);
+                    let unknown = matches!(data, AssocConstraintNodeData::None);
+                    node.class_name = class_name;
+                    node.data = data;
+                    nodes.push(node);
+                    // An unknown class's data length is unknown; what
+                    // follows it cannot be found.
+                    if unknown {
+                        break;
+                    }
+                }
+            } else if node_count > 0 {
                 let root_id = reader.read_bit_long();
                 let connection_count = safe_count(reader.read_bit_long(), reader);
                 let mut connections = Vec::with_capacity(connection_count as usize);
@@ -1223,7 +1283,7 @@ pub fn read_associative_data(
                     if node.node_id == 0 {
                         node.node_id = registered_node_id;
                     }
-                    node.data = read_constraint_node_data(reader, &class_name);
+                    node.data = read_constraint_node_data(reader, &class_name, false);
                     node.class_name = class_name;
                     node.registry_flag = registry_flag;
                     nodes.push(node);
@@ -1231,11 +1291,12 @@ pub fn read_associative_data(
             }
             AssociativeData::ConstraintGroup(Assoc2dConstraintGroup {
                 action,
-                version: group_version,
+                version: if legacy { 2 } else { group_version },
                 flag,
                 work_plane,
                 dependency,
                 actions,
+                next_node_id,
                 nodes,
             })
         }
@@ -1254,11 +1315,19 @@ pub fn read_associative_data(
                 String::new()
             };
             let flag = reader.read_bit();
-            let reserved = if reader.main_remaining_bits() >= 2 {
-                reader.read_bit_long()
+            let count = if reader.main_remaining_bits() >= 2 {
+                safe_count(reader.read_bit_long(), reader)
             } else {
                 0
             };
+            let mut dependencies = Vec::with_capacity(count as usize);
+            for _ in 0..count {
+                let dependency = handle(reader);
+                dependencies.push(AssocVariableDependency {
+                    dependency,
+                    flags: reader.read_bit_long(),
+                });
+            }
             AssociativeData::Variable(AssocVariable {
                 action,
                 class_version,
@@ -1270,7 +1339,7 @@ pub fn read_associative_data(
                 has_cached_value,
                 cached_value,
                 flag,
-                reserved,
+                dependencies,
             })
         }
         "ASSOCACTIONPARAM" => {

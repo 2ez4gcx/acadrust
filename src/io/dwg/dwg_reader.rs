@@ -2503,18 +2503,22 @@ impl<R: Read + Seek> DwgReader<R> {
                         section_name, size
                     ))
                 })?;
-                if requested_size > 100_000_000 {
+                // The section is stored uncompressed in the file, so only
+                // what the file holds past the offset can be read.
+                let file_len = self.stream.seek(SeekFrom::End(0))?;
+                let available = file_len.saturating_sub(offset as u64);
+                if !failsafe && requested_size as u64 > available {
                     return Err(DxfError::Parse(format!(
-                        "Section '{}' size {} exceeds the safety limit",
+                        "Section '{}' size {} runs past the end of the file",
                         section_name, requested_size
                     )));
                 }
                 self.stream.seek(SeekFrom::Start(offset as u64))?;
-                let mut buf = vec![0u8; requested_size];
+                let mut buf = vec![0u8; requested_size.min(available as usize)];
                 if failsafe {
                     let mut filled = 0usize;
                     let mut read_error = None;
-                    while filled < requested_size {
+                    while filled < buf.len() {
                         match self.stream.read(&mut buf[filled..]) {
                             Ok(0) => break,
                             Ok(count) => filled += count,
@@ -2794,12 +2798,6 @@ impl<R: Read + Seek> DwgReader<R> {
                 section_name, section.compressed_size
             ))
         })?;
-        if total_size > 100_000_000 {
-            return Err(DxfError::Parse(format!(
-                "AC18 section '{}' size {} exceeds the safety limit",
-                section_name, total_size
-            )));
-        }
         let is_compressed = section.encoding == 2;
         let max_page_size = usize::try_from(section.decompressed_size).map_err(|_| {
             DxfError::Parse(format!(
@@ -2811,6 +2809,15 @@ impl<R: Read + Seek> DwgReader<R> {
             return Err(DxfError::Parse(format!(
                 "AC18 page size {} exceeds the safety limit",
                 max_page_size
+            )));
+        }
+        // The section is its pages: a declared size they cannot hold is a
+        // corrupt header, while a large drawing legitimately spans many pages.
+        let page_count = section.pages.len().max(section.page_count.max(0) as usize);
+        if total_size > page_count.saturating_mul(max_page_size) {
+            return Err(DxfError::Parse(format!(
+                "AC18 section '{}' size {} exceeds its {} page(s) of {} bytes",
+                section_name, total_size, page_count, max_page_size
             )));
         }
 

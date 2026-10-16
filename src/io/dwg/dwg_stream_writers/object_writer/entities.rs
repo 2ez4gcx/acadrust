@@ -68,7 +68,13 @@ impl<'a> DwgObjectWriter<'a> {
                 && !self.raw_excluded_handles.contains(&handle.value())
                 && !compound
                 && !(acis && self.version.r2013_plus(self.dxf_version))
-                && !self.owner_overrides.contains_key(&handle);
+                && !self.owner_overrides.contains_key(&handle)
+                // EED naming an application this drawing has no APPID for
+                // (carried in from another drawing) is dropped on the normal
+                // path; the verbatim record would keep it.
+                && entity.common().extended_data.raw_dwg_eed.iter().all(|(app, _)| {
+                    self.document.app_ids.iter().any(|a| a.handle.value() == *app)
+                });
             if ok {
                 self.register_raw_object(handle, &raw.data, raw.handle_bits);
                 return;
@@ -2218,7 +2224,12 @@ impl<'a> DwgObjectWriter<'a> {
         // Frozen layer count BL
         self.writer.write_bit_long(e.frozen_layers.len() as i32);
         // Status flags BL 90
-        self.writer.write_bit_long(e.status.to_bits());
+        let grid_bits = if self.version.r2007_plus() {
+            i32::from(e.grid_flags.to_bits()) << 18
+        } else {
+            0
+        };
+        self.writer.write_bit_long(e.status.to_bits() | grid_bits);
         // Style Sheet TV 1
         self.writer.write_variable_text(&e.style_sheet);
         // Render Mode RC 281
@@ -5217,9 +5228,9 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit(value.align_start);
         self.writer.write_bit(value.bank);
         self.writer.write_bit(value.base_point_set);
+        self.writer.write_3bit_double(value.reference_vector);
         self.writer.write_bit(value.sweep_entity_transform_computed);
         self.writer.write_bit(value.path_entity_transform_computed);
-        self.writer.write_3bit_double(value.reference_vector);
         self.write_surface_matrix(&value.sweep_entity_transform);
         self.write_surface_matrix(&value.path_entity_transform);
     }

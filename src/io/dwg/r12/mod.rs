@@ -514,14 +514,13 @@ fn complete_table_records(document: &CadDocument, records: &mut DxfRecords) {
     // DXF intentionally blanks shape-file STYLE names; native DWG does not.
     for (index, row) in records.tables[2].iter_mut().enumerate() {
         let handle = u64::from_str_radix(row.string(5), 16).unwrap_or(0);
-        let style = if handle == 0 {
-            document.text_styles.iter().nth(index)
-        } else {
-            document
-                .text_styles
-                .iter()
-                .find(|style| style.handle.value() == handle)
-        };
+        // A style added without a handle gets one only on the DXF writer's
+        // output copy, so its row is found by position instead.
+        let style = document
+            .text_styles
+            .iter()
+            .find(|style| handle != 0 && style.handle.value() == handle)
+            .or_else(|| document.text_styles.iter().nth(index));
         if let Some(style) = style {
             row.pairs.retain(|(code, _)| *code != 2);
             row.pairs.push((2, style.name.clone()));

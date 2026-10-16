@@ -213,21 +213,18 @@ impl Insert {
 
         for row in 0..self.row_count {
             for col in 0..self.column_count {
-                let offset_x = col as f64 * self.column_spacing;
-                let offset_y = row as f64 * self.row_spacing;
-
-                // Apply rotation to the offset
-                let cos_r = self.rotation.cos();
-                let sin_r = self.rotation.sin();
-                let rotated_x = offset_x * cos_r - offset_y * sin_r;
-                let rotated_y = offset_x * sin_r + offset_y * cos_r;
-
-                let point = self.insert_point + Vector3::new(rotated_x, rotated_y, 0.0);
-                points.push(point);
+                points.push(self.array_point(row, col));
             }
         }
 
         points
+    }
+
+    fn array_point(&self, row: u16, column: u16) -> Vector3 {
+        let x = column as f64 * self.column_spacing;
+        let y = row as f64 * self.row_spacing;
+        let (sin, cos) = self.rotation.sin_cos();
+        self.insert_point + Vector3::new(x * cos - y * sin, x * sin + y * cos, 0.0)
     }
 
     /// Check if the insert has uniform scale
@@ -336,8 +333,10 @@ impl Insert {
     /// are positioned in world space.
     ///
     /// `block_entities` should be the `entities` vec from the corresponding
-    /// [`BlockRecord`](crate::tables::BlockRecord).  Block/BlockEnd markers
-    /// and attribute definitions are skipped.
+    /// [`BlockRecord`](crate::tables::BlockRecord), relative to the block's
+    /// base point. Block/BlockEnd markers are skipped. Attribute definitions
+    /// are restored as transformed definitions; instance attribute values
+    /// are not included.
     ///
     /// **Property inheritance** (AutoCAD convention):
     /// - Entities on layer `"0"` → inherit the Insert's layer.
@@ -383,13 +382,7 @@ impl Insert {
         let mut transforms = Vec::with_capacity(self.array_capacity_hint());
         for row in 0..self.row_count {
             for col in 0..self.column_count {
-                let offset_x = col as f64 * self.column_spacing;
-                let offset_y = row as f64 * self.row_spacing;
-                let cell_pt = Vector3::new(
-                    self.insert_point.x + offset_x,
-                    self.insert_point.y + offset_y,
-                    self.insert_point.z,
-                );
+                let cell_pt = self.array_point(row, col);
                 let translation = Matrix4::translation(cell_pt.x, cell_pt.y, cell_pt.z);
                 transforms.push(Transform::from_matrix(ocs * translation * rotation * scale));
             }
@@ -402,9 +395,7 @@ impl Insert {
     fn explode_single(&self, entity: &EntityType, transform: &Transform) -> Option<EntityType> {
         match entity {
             // Skip structural / meta entities
-            EntityType::Block(_) | EntityType::BlockEnd(_) | EntityType::AttributeDefinition(_) => {
-                None
-            }
+            EntityType::Block(_) | EntityType::BlockEnd(_) => None,
 
             // Arc handling — uniform XY keeps Arc, non-uniform → Ellipse
             EntityType::Arc(arc) => {
@@ -547,28 +538,37 @@ impl Insert {
 
     /// Convenience wrapper that looks up the block in a
     /// [`CadDocument`](crate::document::CadDocument) by `block_name` and
-    /// calls [`explode`](Self::explode).
+    /// calls [`explode`](Self::explode) with contents relative to its base point.
     ///
-    /// Returns an empty `Vec` when the block record is not found.
+    /// Returns an empty `Vec` when the block record is not found or refuses explosion.
     pub fn explode_from_document(
         &self,
         document: &crate::document::CadDocument,
     ) -> Vec<EntityType> {
         match document.block_records.get(&self.block_name) {
-            Some(br) => {
+            Some(br) if br.explodable => {
+                let base = document
+                    .get_entity(br.block_entity_handle)
+                    .and_then(|entity| match entity {
+                        EntityType::Block(block) => Some(block.base_point),
+                        _ => None,
+                    })
+                    .unwrap_or(br.base_point);
+                let to_base = Transform::from_translation(base * -1.0);
                 let entities: Vec<EntityType> = br
                     .entity_handles
                     .iter()
                     .filter_map(|h| {
-                        document
-                            .entity_index
-                            .get(h)
-                            .map(|&idx| document.entities[idx].as_ref().clone())
+                        document.entity_index.get(h).map(|&idx| {
+                            let mut entity = document.entities[idx].as_ref().clone();
+                            entity.as_entity_mut().apply_transform(&to_base);
+                            entity
+                        })
                     })
                     .collect();
                 self.explode(&entities)
             }
-            None => Vec::new(),
+            _ => Vec::new(),
         }
     }
 }
@@ -680,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn explode_skips_block_markers_and_attdefs() {
+    fn explode_skips_block_markers_and_restores_attdefs() {
         let block_entities = vec![
             EntityType::Block(Block::new("TestBlock", Vector3::ZERO)),
             EntityType::Line(Line::from_points(
@@ -695,12 +695,126 @@ mod tests {
             EntityType::BlockEnd(BlockEnd::new()),
         ];
 
-        let insert = Insert::new("TestBlock", Vector3::ZERO);
+        let mut insert = Insert::new("TestBlock", Vector3::ZERO);
+        insert
+            .attributes
+            .push(crate::entities::AttributeEntity::new(
+                "TAG".into(),
+                "instance value".into(),
+            ));
         let result = insert.explode(&block_entities);
 
-        // Only the Line should survive
-        assert_eq!(result.len(), 1);
+        assert_eq!(result.len(), 2);
         assert!(matches!(result[0], EntityType::Line(_)));
+        let EntityType::AttributeDefinition(definition) = &result[1] else {
+            panic!("expected the attribute definition");
+        };
+        assert_eq!(definition.default_value, "default");
+        assert_eq!(insert.attributes[0].get_value(), "instance value");
+    }
+
+    #[test]
+    fn explode_minsert_transforms_attdefs_at_every_cell() {
+        let mut definition =
+            AttributeDefinition::new("TAG".into(), "Prompt".into(), "Default".into());
+        definition.insertion_point = Vector3::new(2.0, 3.0, 0.0);
+        definition.alignment_point = Vector3::new(4.0, 3.0, 0.0);
+        definition.height = 1.5;
+        definition.common.color = Color::ByBlock;
+        definition.common.line_weight = LineWeight::ByBlock;
+        definition.flags.constant = true;
+        let input = vec![EntityType::AttributeDefinition(definition.clone())];
+        let mut insert = Insert::new("B", Vector3::new(100.0, 100.0, 0.0))
+            .with_uniform_scale(2.0)
+            .with_rotation(FRAC_PI_2)
+            .with_array(2, 2, 10.0, 20.0);
+        insert.common.layer = "Labels".into();
+        insert.common.color = Color::from_index(3);
+        insert.common.line_weight = LineWeight::from_value(50);
+
+        let pieces = insert.explode(&input);
+        assert_eq!(pieces.len(), 4);
+        let expected = [(94.0, 104.0), (94.0, 114.0), (74.0, 104.0), (74.0, 114.0)];
+        for (piece, (x, y)) in pieces.iter().zip(expected) {
+            let EntityType::AttributeDefinition(actual) = piece else {
+                panic!("expected an attribute definition in every array cell");
+            };
+            assert!(approx_vec(actual.insertion_point, Vector3::new(x, y, 0.0)));
+            assert!(approx_vec(
+                actual.alignment_point,
+                Vector3::new(x, y + 4.0, 0.0)
+            ));
+            assert!(approx(actual.height, 3.0));
+            assert!(approx(actual.rotation, FRAC_PI_2));
+            assert_eq!(actual.common.layer, "Labels");
+            assert_eq!(actual.common.color, insert.common.color);
+            assert_eq!(actual.common.line_weight, insert.common.line_weight);
+            assert!(actual.flags.constant);
+            assert_eq!(actual.tag, "TAG");
+            assert_eq!(actual.prompt, "Prompt");
+            assert_eq!(actual.default_value, "Default");
+        }
+        let EntityType::AttributeDefinition(unchanged) = &input[0] else {
+            unreachable!()
+        };
+        assert_eq!(unchanged.insertion_point, definition.insertion_point);
+        assert_eq!(unchanged.height, definition.height);
+        assert_eq!(unchanged.common.layer, definition.common.layer);
+    }
+
+    #[test]
+    fn explode_from_document_uses_block_base_and_explodable_flag() {
+        let mut document = crate::CadDocument::new();
+        let mut record = crate::tables::BlockRecord::new("B");
+        record.handle = document.allocate_handle();
+        record.base_point = Vector3::new(40.0, 50.0, 0.0);
+        let owner = record.handle;
+        document.block_records.add(record).unwrap();
+        let mut block = Block::new("B", Vector3::new(10.0, 5.0, 0.0));
+        block.common.owner_handle = owner;
+        let marker = document.add_entity(EntityType::Block(block)).unwrap();
+        document
+            .block_records
+            .get_mut("B")
+            .unwrap()
+            .block_entity_handle = marker;
+        let mut definition =
+            AttributeDefinition::new("TAG".into(), "Prompt".into(), "Default".into());
+        definition.common.owner_handle = owner;
+        definition.insertion_point = Vector3::new(12.0, 8.0, 0.0);
+        document
+            .add_entity(EntityType::AttributeDefinition(definition))
+            .unwrap();
+        let insert = Insert::new("b", Vector3::new(100.0, 100.0, 0.0))
+            .with_uniform_scale(2.0)
+            .with_rotation(FRAC_PI_2);
+        let pieces = insert.explode_from_document(&document);
+        assert_eq!(pieces.len(), 1);
+        let EntityType::AttributeDefinition(actual) = &pieces[0] else {
+            panic!("expected an attribute definition");
+        };
+        assert!(approx_vec(
+            actual.insertion_point,
+            Vector3::new(94.0, 104.0, 0.0)
+        ));
+        document
+            .block_records
+            .get_mut("B")
+            .unwrap()
+            .block_entity_handle = Handle::NULL;
+        let fallback = insert.explode_from_document(&document);
+        let EntityType::AttributeDefinition(actual) = &fallback[0] else {
+            panic!("expected an attribute definition using the record base");
+        };
+        assert!(approx_vec(
+            actual.insertion_point,
+            Vector3::new(184.0, 44.0, 0.0)
+        ));
+        document.block_records.get_mut("B").unwrap().explodable = false;
+        assert!(insert.explode_from_document(&document).is_empty());
+        assert!(Insert::new("missing", Vector3::ZERO)
+            .explode_from_document(&document)
+            .is_empty());
     }
 
     // ── identity insert ─────────────────────────────────────────
@@ -1056,6 +1170,30 @@ mod tests {
         if let EntityType::Line(l1) = &result[1] {
             // Second column: insert_point.x + column_spacing = 5 + 10 = 15
             assert!(approx_vec(l1.start, Vector3::new(15.0, 0.0, 0.0)));
+        }
+    }
+
+    #[test]
+    fn explode_minsert_positions_follow_rotated_spacing_without_scaling_it() {
+        let input = vec![EntityType::Line(Line::from_points(
+            Vector3::ZERO,
+            Vector3::ZERO,
+        ))];
+        let insert = Insert::new("B", Vector3::new(100.0, 100.0, 0.0))
+            .with_rotation(FRAC_PI_2)
+            .with_uniform_scale(3.0)
+            .with_array(2, 2, 10.0, 20.0);
+        let pieces = insert.explode(&input);
+        assert_eq!(pieces.len(), 4);
+        for (piece, (x, y)) in
+            pieces
+                .iter()
+                .zip([(100.0, 100.0), (100.0, 110.0), (80.0, 100.0), (80.0, 110.0)])
+        {
+            let EntityType::Line(line) = piece else {
+                panic!("expected LINE");
+            };
+            assert!(approx_vec(line.start, Vector3::new(x, y, 0.0)));
         }
     }
 

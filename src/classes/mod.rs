@@ -154,7 +154,14 @@ impl DxfClassCollection {
             self.entries[idx].instance_count = class.instance_count;
         } else {
             if class.class_number < 500 {
-                class.class_number = 500 + self.entries.len() as i16;
+                // Its position names it, unless a source class already holds
+                // that number; two classes must never share one.
+                let positional = 500 + self.entries.len() as i16;
+                class.class_number = if self.entries.iter().any(|c| c.class_number == positional) {
+                    self.entries.iter().map(|c| c.class_number).max().unwrap_or(499) + 1
+                } else {
+                    positional
+                };
             }
             let idx = self.entries.len();
             self.name_index.insert(key, idx);
@@ -183,6 +190,12 @@ impl DxfClassCollection {
     pub fn get_by_name(&self, dxf_name: &str) -> Option<&DxfClass> {
         let key = dxf_name.to_uppercase();
         self.name_index.get(&key).map(|&idx| &self.entries[idx])
+    }
+
+    /// The class registered under `dxf_name`, to change its flags.
+    pub fn get_mut_by_name(&mut self, dxf_name: &str) -> Option<&mut DxfClass> {
+        let index = *self.name_index.get(&dxf_name.to_uppercase())?;
+        self.entries.get_mut(index)
     }
 
     /// Check if a class with the given DXF name exists

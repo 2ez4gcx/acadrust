@@ -17,13 +17,23 @@ use crate::tables::*;
 use crate::types::*;
 use crate::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
 
-/// Build a [`Matrix4`] from 12 doubles holding a 4×3 transform in DXF
-fn matrix_from_column_major(v: &[f64]) -> Matrix4 {
+/// Build a [`Matrix4`] from the 12 group-40 doubles of a `SPATIAL_FILTER`
+/// transform. The implied bottom row is `[0, 0, 0, 1]`.
+///
+/// The Autodesk reference calls this a "4x3 matrix written out in column
+/// major order": four rows by three columns, each column carrying four
+/// values. In the [`Matrix4`] (column-vector) convention that is one
+/// matrix row per group of four, translation last:
+/// `[m00, m01, m02, Tx, m10, m11, m12, Ty, m20, m21, m22, Tz]`.
+/// AutoCAD writes an XCLIP of an insert at (5, 5) as
+/// `[1, 0, 0, -5, 0, 1, 0, -5, 0, 0, 1, 0]`; reading it as four columns of
+/// three turns `y` into a constant and collapses the boundary to a line.
+fn matrix_from_dxf_4x3(v: &[f64]) -> Matrix4 {
     Matrix4 {
         m: [
-            [v[0], v[3], v[6], v[9]],
-            [v[1], v[4], v[7], v[10]],
-            [v[2], v[5], v[8], v[11]],
+            [v[0], v[1], v[2], v[3]],
+            [v[4], v[5], v[6], v[7]],
+            [v[8], v[9], v[10], v[11]],
             [0.0, 0.0, 0.0, 1.0],
         ],
     }
@@ -153,21 +163,18 @@ fn take_dgn_property(
     Some(properties.remove(index).value)
 }
 
+/// One pass over the properties: removing matches one by one is quadratic,
+/// and a stroke pattern can carry a million values.
 fn take_all_dgn_properties(
     properties: &mut Vec<SemanticProperty>,
     subclass: &str,
     code: i32,
-) -> Vec<SemanticPropertyValue> {
-    let mut result = Vec::new();
-    let mut index = 0;
-    while index < properties.len() {
-        if properties[index].subclass == subclass && properties[index].code == code {
-            result.push(properties.remove(index).value);
-        } else {
-            index += 1;
-        }
-    }
-    result
+) -> std::collections::VecDeque<SemanticPropertyValue> {
+    let (taken, kept): (Vec<_>, Vec<_>) = std::mem::take(properties)
+        .into_iter()
+        .partition(|property| property.subclass == subclass && property.code == code);
+    *properties = kept;
+    taken.into_iter().map(|property| property.value).collect()
 }
 
 fn dgn_i32(value: Option<SemanticPropertyValue>, default: i32) -> i32 {
@@ -260,12 +267,10 @@ fn read_dgn_stroke_pattern_dxf(
     }
 }
 
-fn take_first(values: &mut Vec<SemanticPropertyValue>) -> Option<SemanticPropertyValue> {
-    if values.is_empty() {
-        None
-    } else {
-        Some(values.remove(0))
-    }
+fn take_first(
+    values: &mut std::collections::VecDeque<SemanticPropertyValue>,
+) -> Option<SemanticPropertyValue> {
+    values.pop_front()
 }
 
 fn field_next_code<'a>(
@@ -1546,6 +1551,8 @@ impl<'a> SectionReader<'a> {
     /// Read the HEADER section
     pub fn read_header(&mut self, document: &mut CadDocument) -> Result<()> {
         let hdr = &mut document.header;
+        // A $CUSTOMPROPERTYTAG waits for its $CUSTOMPROPERTY value.
+        let mut custom_value_pending = false;
         let mut code_page_seen = false;
 
         while let Some(pair) = self.reader.read_pair()? {
@@ -1654,6 +1661,7 @@ impl<'a> SectionReader<'a> {
                 "$LASTSAVEDBY" => {
                     if let Some(p) = self.reader.read_pair()? {
                         hdr.last_saved_by = p.value_string.clone();
+                        document.summary_info.last_saved_by = p.value_string.clone();
                     }
                 }
                 "$FINGERPRINTGUID" => {
@@ -1679,6 +1687,44 @@ impl<'a> SectionReader<'a> {
                 "$HYPERLINKBASE" => {
                     if let Some(p) = self.reader.read_pair()? {
                         hdr.hyperlink_base = p.value_string.clone();
+                        document.summary_info.hyperlink_base = p.value_string.clone();
+                    }
+                }
+                // ── Drawing properties (DWGPROPS, R2004+) ──
+                "$TITLE" | "$SUBJECT" | "$AUTHOR" | "$KEYWORDS" | "$COMMENTS"
+                | "$REVISIONNUMBER" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        let info = &mut document.summary_info;
+                        let field = match var_name.as_str() {
+                            "$TITLE" => &mut info.title,
+                            "$SUBJECT" => &mut info.subject,
+                            "$AUTHOR" => &mut info.author,
+                            "$KEYWORDS" => &mut info.keywords,
+                            "$COMMENTS" => &mut info.comments,
+                            _ => &mut info.revision_number,
+                        };
+                        *field = p.value_string.clone();
+                    }
+                }
+                "$CUSTOMPROPERTYTAG" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        document
+                            .summary_info
+                            .custom_properties
+                            .push((p.value_string.clone(), String::new()));
+                        custom_value_pending = true;
+                    }
+                }
+                "$CUSTOMPROPERTY" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        let properties = &mut document.summary_info.custom_properties;
+                        match properties.last_mut() {
+                            Some((_, value)) if custom_value_pending => {
+                                *value = p.value_string.clone();
+                            }
+                            _ => properties.push((String::new(), p.value_string.clone())),
+                        }
+                        custom_value_pending = false;
                     }
                 }
                 "$STYLESHEET" => {
@@ -2080,6 +2126,81 @@ impl<'a> SectionReader<'a> {
                         if let Some(v) = p.as_i16() {
                             hdr.intersection_display = v;
                         }
+                    }
+                }
+                "$DIMFXL" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_fixed_ext_line_length = v;
+                        }
+                    }
+                }
+                "$DIMJOGANG" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_jog_angle = v;
+                        }
+                    }
+                }
+                "$DIMTFILL" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_text_fill = v;
+                        }
+                    }
+                }
+                "$DIMTFILLCLR" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_text_fill_color = Color::from_index(v);
+                        }
+                    }
+                }
+                "$3DDWFPREC" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dwf_3d_precision = v;
+                        }
+                    }
+                }
+                "$PSOLWIDTH" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.polysolid_width = v;
+                        }
+                    }
+                }
+                "$PSOLHEIGHT" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.polysolid_height = v;
+                        }
+                    }
+                }
+                "$LIGHTGLYPHDISPLAY" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.light_glyph_display = v.clamp(0, 1) as u8;
+                        }
+                    }
+                }
+                "$TILEMODELIGHTSYNCH" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.tile_model_light_synch = v.clamp(0, 1) as u8;
+                        }
+                    }
+                }
+                "$INTERFERECOLOR" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.interference_color = Color::from_index(v);
+                        }
+                    }
+                }
+                "$REALWORLDSCALE" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.real_world_scale = p.as_bool() != Some(false);
                     }
                 }
                 "$INTERSECTIONCOLOR" => {
@@ -4628,6 +4749,7 @@ impl<'a> SectionReader<'a> {
                             3
                         },
                     ),
+                    dwg_tail_byte: 0,
                 };
                 if dxf_name == "BLOCKROTATEACTION" {
                     DynamicBlockData::RotateAction(value)
@@ -6775,6 +6897,18 @@ impl<'a> SectionReader<'a> {
                                 ObjectType::BlockVisibilityParameter(parameter.clone()),
                             );
                         } else {
+                            // An evaluated reference names the dynamic block
+                            // it came from, as the DWG reader records it.
+                            if let DynamicBlockData::Representation(data) = &object.data {
+                                if matches!(
+                                    name.to_ascii_uppercase().as_str(),
+                                    "ACDB_BLOCKREPRESENTATION_DATA" | "BLOCKREPRESENTATION"
+                                ) {
+                                    document
+                                        .block_representations
+                                        .insert(object.handle, data.block);
+                                }
+                            }
                             document
                                 .objects
                                 .insert(object.handle, ObjectType::DynamicBlock(object));
@@ -8912,10 +9046,10 @@ impl<'a> SectionReader<'a> {
             }
         }
         if mat.len() >= 12 {
-            obj.inverse_block_transform = matrix_from_column_major(&mat[0..12]);
+            obj.inverse_block_transform = matrix_from_dxf_4x3(&mat[0..12]);
         }
         if mat.len() >= 24 {
-            obj.clip_bound_transform = matrix_from_column_major(&mat[12..24]);
+            obj.clip_bound_transform = matrix_from_dxf_4x3(&mat[12..24]);
         }
         Ok(Some(obj))
     }
@@ -13023,7 +13157,11 @@ impl<'a> SectionReader<'a> {
     fn read_mtext(&mut self) -> Result<Option<MText>> {
         use crate::entities::mtext::{AttachmentPoint, DrawingDirection};
 
-        let mut mtext = MText::new();
+        // An absent group 41 means no wrap width, not the new-entity default.
+        let mut mtext = MText {
+            rectangle_width: 0.0,
+            ..MText::new()
+        };
         let mut insertion = PointReader::new();
         let mut normal = PointReader::new();
         let mut x_direction = PointReader::new();
@@ -13271,15 +13409,7 @@ impl<'a> SectionReader<'a> {
                 }
                 70 => {
                     if let Some(flags_val) = pair.as_i16() {
-                        spline.dxf_flags = flags_val;
-                        if flags_val & 32 != 0 {
-                            spline.dwg_flags1 |= 1;
-                        }
-                        spline.flags.closed = (flags_val & 1) != 0;
-                        spline.flags.periodic = (flags_val & 2) != 0;
-                        spline.flags.rational = (flags_val & 4) != 0;
-                        spline.flags.planar = (flags_val & 8) != 0;
-                        spline.flags.linear = (flags_val & 16) != 0;
+                        crate::io::dxf::spline_flags::read(&mut spline, flags_val);
                     }
                 }
                 71 => {
@@ -13473,15 +13603,7 @@ impl<'a> SectionReader<'a> {
                 // ── AcDbSpline geometry ──
                 70 => {
                     if let Some(f) = pair.as_i16() {
-                        helix.spline.dxf_flags = f;
-                        if f & 32 != 0 {
-                            helix.spline.dwg_flags1 |= 1;
-                        }
-                        helix.spline.flags.closed = (f & 1) != 0;
-                        helix.spline.flags.periodic = (f & 2) != 0;
-                        helix.spline.flags.rational = (f & 4) != 0;
-                        helix.spline.flags.planar = (f & 8) != 0;
-                        helix.spline.flags.linear = (f & 16) != 0;
+                        crate::io::dxf::spline_flags::read(&mut helix.spline, f);
                     }
                 }
                 71 => {
@@ -17045,7 +17167,7 @@ impl<'a> SectionReader<'a> {
         let mut ucs_origin = PointReader::new();
         let mut ucs_x_axis = PointReader::new();
         let mut ucs_y_axis = PointReader::new();
-        let mut dxf_status: Option<i16> = None;
+        let mut status_field: Option<i16> = None;
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 {
@@ -17075,12 +17197,18 @@ impl<'a> SectionReader<'a> {
                 90 => {
                     if let Some(v) = pair.as_i32() {
                         vp.status = crate::entities::viewport::ViewportStatusFlags::from_bits(v);
+                        // VIEWPORT grid behavior uses group-90 bits 18..21.
+                        vp.grid_flags =
+                            crate::entities::GridFlags::from_bits(((v >> 18) & 0xf) as i16);
                     }
                 }
                 68 => {
-                    if let Some(value) = pair.as_i16() {
-                        dxf_status = Some(value);
-                        vp.off_screen = value == -1;
+                    status_field = pair.as_i16();
+                    vp.off_screen = status_field == Some(-1);
+                }
+                170 => {
+                    if let Some(v) = pair.as_i16() {
+                        vp.shade_plot_mode = v;
                     }
                 }
                 69 => {
@@ -17257,7 +17385,16 @@ impl<'a> SectionReader<'a> {
             grid_spacing_y.unwrap_or(10.0),
             0.0,
         );
-        vp.dxf_status = dxf_status.filter(|value| *value != vp.id);
+        // Group 68 says whether the viewport is on (0 = off); group 90 bit
+        // 0x8000 is only "always enabled", which some writers leave clear.
+        // Explicit off already controls visibility; retain its independent
+        // stored enable bit rather than discarding it during readback.
+        if !vp.status.is_off {
+            if let Some(status) = status_field {
+                vp.status.is_on = status != 0;
+            }
+        }
+        vp.dxf_status = status_field.filter(|value| *value != vp.id);
 
         Ok(Some(vp))
     }
@@ -21664,6 +21801,37 @@ mod tests {
         }
     }
 
+    /// An MTEXT without group 41 has no wrap width: it breaks only at its
+    /// own `\P`, instead of wrapping at the new-entity default width.
+    #[test]
+    fn test_dxf_read_mtext_without_width_does_not_wrap() {
+        let dxf = "\
+  0\r\nSECTION\r\n\
+  2\r\nENTITIES\r\n\
+  0\r\nMTEXT\r\n\
+  5\r\n1\r\n\
+100\r\nAcDbEntity\r\n\
+  8\r\n0\r\n\
+100\r\nAcDbMText\r\n\
+ 10\r\n85.0\r\n\
+ 20\r\n614.5\r\n\
+ 30\r\n0.0\r\n\
+ 40\r\n3.5\r\n\
+ 71\r\n5\r\n\
+  1\r\nONE LINE\\PSECOND LINE\r\n\
+  0\r\nENDSEC\r\n\
+  0\r\nEOF\r\n";
+
+        let cursor = std::io::Cursor::new(dxf.as_bytes());
+        let reader = crate::io::dxf::reader::DxfReader::from_reader(cursor).expect("from_reader");
+        let doc = reader.read().expect("read");
+        let entities: Vec<_> = doc.entities().collect();
+        let EntityType::MText(mtext) = entities[0] else {
+            panic!("Expected MText entity");
+        };
+        assert_eq!(mtext.rectangle_width, 0.0);
+    }
+
     /// ATTRIB angles are degrees in DXF and radians in memory, as for TEXT:
     /// kept as read, a tag rotated 75° came out at 75 rad (about -23°).
     #[test]
@@ -22149,29 +22317,114 @@ mod tests {
         }
     }
 
+    /// The inverse block transform AutoCAD 2013 (AC1027) writes for an XCLIP
+    /// of an insert at (5, 5): one matrix row per group of four, translation
+    /// last. Source: ezdxf `exploration/BlockClipped.dxf`, SPATIAL_FILTER #C1.
     #[test]
-    fn spatial_filter_matrix_is_column_major() {
+    fn spatial_filter_matrix_reads_autocad_order() {
         let v = [
-            1.0, 0.0, 0.0, // col 0 (X axis)
-            0.0, 1.0, 0.0, // col 1 (Y axis)
-            0.0, 0.0, 1.0, // col 2 (Z axis)
-            -200.0, -150.0, 0.0, // col 3 (translation)
+            1.0, 0.0, 0.0, -5.0, // row 0
+            0.0, 1.0, 0.0, -5.0, // row 1
+            0.0, 0.0, 1.0, 0.0, // row 2
         ];
-        let m = matrix_from_column_major(&v);
+        let m = matrix_from_dxf_4x3(&v);
         assert_eq!(
             m.m,
             [
-                [1.0, 0.0, 0.0, -200.0],
-                [0.0, 1.0, 0.0, -150.0],
+                [1.0, 0.0, 0.0, -5.0],
+                [0.0, 1.0, 0.0, -5.0],
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ]
         );
-        // A boundary point maps through the inverse then the insert
-        // transform back to itself: (210, 160) -> (-200,-150) -> + (200,150).
-        let p = m.transform_point(Vector3::new(210.0, 160.0, 0.0));
-        assert!((p.x - 10.0).abs() < 1e-9, "x={}", p.x);
-        assert!((p.y - 10.0).abs() < 1e-9, "y={}", p.y);
+        // The boundary corner (12, 5) lies at (7, 0) in block coordinates.
+        // Reading the values as four columns of three would map every
+        // boundary point to y == 1 and clip the whole insert away.
+        let p = m.transform_point(Vector3::new(12.0, 5.0, 0.0));
+        assert!((p.x - 7.0).abs() < 1e-9, "x={}", p.x);
+        assert!(p.y.abs() < 1e-9, "y={}", p.y);
+    }
+
+    /// Reads a complete AutoCAD SPATIAL_FILTER object (values from the same
+    /// AC1027 file) through the DXF reader.
+    #[test]
+    fn spatial_filter_from_autocad_dxf_keeps_its_boundary_area() {
+        use crate::objects::ObjectType;
+
+        let mut doc = CadDocument::new();
+        let h = crate::types::Handle::new(0xC1);
+        doc.objects.insert(
+            h,
+            ObjectType::SpatialFilter(crate::objects::SpatialFilter::new()),
+        );
+        let bytes = crate::io::dxf::writer::DxfWriter::new(&doc)
+            .write_to_vec()
+            .unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        // Swap the written object body for AutoCAD's: keep every line up to the
+        // SPATIAL_FILTER type line and from its next group-0 line on.
+        let lines: Vec<&str> = text.lines().collect();
+        let start = (1..lines.len())
+            .find(|&i| lines[i - 1].trim() == "0" && lines[i].trim() == "SPATIAL_FILTER")
+            .expect("filter written");
+        let end = (start + 1..lines.len())
+            .step_by(2)
+            .find(|&i| lines[i].trim() == "0")
+            .expect("object end");
+        let mut body = String::from("  5\nC1\n100\nAcDbFilter\n100\nAcDbSpatialFilter\n");
+        for (code, value) in [
+            ("70", "3"),
+            ("10", "5.0"),
+            ("20", "5.0"),
+            ("10", "12.0"),
+            ("20", "5.0"),
+            ("10", "8.5"),
+            ("20", "12.0"),
+            ("210", "0.0"),
+            ("220", "0.0"),
+            ("230", "1.0"),
+            ("11", "0.0"),
+            ("21", "0.0"),
+            ("31", "0.0"),
+            ("71", "1"),
+            ("72", "0"),
+            ("73", "0"),
+        ] {
+            body.push_str(&format!("{code:>3}\n{value}\n"));
+        }
+        for value in [
+            1.0, 0.0, 0.0, -5.0, 0.0, 1.0, 0.0, -5.0, 0.0, 0.0, 1.0, 0.0, // inverse block
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, // clip bound
+        ] {
+            body.push_str(&format!(" 40\n{value:?}\n"));
+        }
+        let text = format!(
+            "{}\n{}{}\n",
+            lines[..=start].join("\n"),
+            body,
+            lines[end..].join("\n")
+        );
+
+        let cursor = std::io::Cursor::new(text.into_bytes());
+        let doc2 = crate::io::dxf::reader::DxfReader::from_reader(cursor)
+            .unwrap()
+            .read()
+            .unwrap();
+        let Some(ObjectType::SpatialFilter(sf)) = doc2.objects.get(&h) else {
+            panic!("expected the SPATIAL_FILTER to be read");
+        };
+        let block: Vec<_> = sf
+            .boundary_points
+            .iter()
+            .map(|p| {
+                sf.inverse_block_transform
+                    .transform_point(Vector3::new(p.x, p.y, 0.0))
+            })
+            .collect();
+        assert_eq!(
+            block.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
+            [(0.0, 0.0), (7.0, 0.0), (3.5, 7.0)]
+        );
     }
 
     #[test]

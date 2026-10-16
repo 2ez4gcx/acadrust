@@ -31,7 +31,8 @@ impl DynamicBlockObject {
         }
     }
 
-    pub(crate) fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
+    /// Visit every handle the object refers to except its own.
+    pub fn visit_handles_mut(&mut self, visit: &mut impl FnMut(&mut Handle)) {
         visit(&mut self.owner);
         for handle in &mut self.reactors {
             visit(handle);
@@ -758,6 +759,12 @@ pub struct BlockFlipAction {
 pub struct BlockBasePointAction {
     pub action: BlockActionWithBasePoint,
     pub connections: Vec<BlockConnection>,
+    /// DWG-only byte after a scale action's connections (zero in every
+    /// sample seen; rotate actions carry none, and DXF has no group for
+    /// it). Strict readers read it, so a record written without it is
+    /// rejected as improperly read.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub dwg_tail_byte: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -888,6 +895,16 @@ pub struct SolidHistoryNodeBase {
 impl SolidHistoryNodeBase {
     pub const ROOT_PARENT: i32 = BlockEvalExpression::NO_PARENT;
     pub const NO_VALUE: i16 = -9999;
+
+    /// The id other nodes and the history root name this node by: its
+    /// evaluation node id, or its step id in histories that carry none.
+    pub fn node_id(&self) -> i32 {
+        if self.eval.node_id > 0 {
+            self.eval.node_id
+        } else {
+            self.step_id
+        }
+    }
 
     pub fn new(step_id: i32) -> Self {
         Self {
@@ -1082,6 +1099,54 @@ pub struct SolidHistoryBoolean {
     pub operation: u8,
     pub first_operand: i32,
     pub second_operand: i32,
+}
+
+impl SolidHistoryBoolean {
+    /// `operation` codes.
+    pub const UNION: u8 = 0;
+    pub const INTERSECT: u8 = 1;
+    pub const SUBTRACT: u8 = 2;
+}
+
+/// A solid's history as it evaluates: each operation over the results of its
+/// operands, in order. A primitive has none, an edge operation one, a boolean
+/// two.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SolidHistoryTree {
+    pub operation: SolidHistoryOperation,
+    pub operands: Vec<SolidHistoryTree>,
+}
+
+impl SolidHistoryTree {
+    /// The operation whose node id is `id`, anywhere in the tree.
+    pub fn find(&self, id: i32) -> Option<&SolidHistoryTree> {
+        if self.operation.base().is_some_and(|base| base.node_id() == id) {
+            return Some(self);
+        }
+        self.operands.iter().find_map(|operand| operand.find(id))
+    }
+
+    pub fn find_mut(&mut self, id: i32) -> Option<&mut SolidHistoryTree> {
+        if self.operation.base().is_some_and(|base| base.node_id() == id) {
+            return Some(self);
+        }
+        self.operands.iter_mut().find_map(|operand| operand.find_mut(id))
+    }
+
+    /// Whether any step combines two solids.
+    pub fn has_boolean(&self) -> bool {
+        matches!(self.operation, SolidHistoryOperation::Boolean(_))
+            || self.operands.iter().any(Self::has_boolean)
+    }
+
+    /// The operations with no operands — the primitives and profiles the
+    /// solid was built from — in operand order.
+    pub fn leaves(&self) -> Vec<&SolidHistoryOperation> {
+        if self.operands.is_empty() {
+            return vec![&self.operation];
+        }
+        self.operands.iter().flat_map(Self::leaves).collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -1311,4 +1376,59 @@ pub struct SolidHistoryRevolve {
     pub flag_290: bool,
     pub close_to_axis: bool,
     pub sweep_entity: Option<crate::entities::EmbeddedEntity>,
+}
+
+/// Whether a DXF class name is a dynamic-block object record (parameters,
+/// actions, grips, the evaluation graph and its helpers) — the names the DWG
+/// dynamic-block reader decodes. Entity classes are not included.
+pub fn is_dynamic_block_object_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_uppercase().as_str(),
+            "ACAD_EVALUATION_GRAPH"
+            | "ACDBBLOCKPARAMDEPENDENCYBODY"
+            | "ACDB_BLOCKREPRESENTATION_DATA"
+            | "ACDB_DYNAMICBLOCKPROXYNODE"
+            | "ACDB_DYNAMICBLOCKPURGEPREVENTER_VERSION"
+            | "BLOCKALIGNEDCONSTRAINTPARAMETER"
+            | "BLOCKALIGNMENTGRIP"
+            | "BLOCKALIGNMENTPARAMETER"
+            | "BLOCKANGULARCONSTRAINTPARAMETER"
+            | "BLOCKARRAYACTION"
+            | "BLOCKBASEPOINTPARAMETER"
+            | "BLOCKDIAMETRICCONSTRAINTPARAMETER"
+            | "BLOCKFLIPACTION"
+            | "BLOCKFLIPGRIP"
+            | "BLOCKFLIPPARAMETER"
+            | "BLOCKGRIPLOCATIONCOMPONENT"
+            | "BLOCKHORIZONTALCONSTRAINTPARAMETER"
+            | "BLOCKLINEARCONSTRAINTPARAMETER"
+            | "BLOCKLINEARGRIP"
+            | "BLOCKLINEARPARAMETER"
+            | "BLOCKLOOKUPACTION"
+            | "BLOCKLOOKUPGRIP"
+            | "BLOCKLOOKUPPARAMETER"
+            | "BLOCKMOVEACTION"
+            | "BLOCKPARAMDEPENDENCYBODY"
+            | "BLOCKPOINTPARAMETER"
+            | "BLOCKPOLARGRIP"
+            | "BLOCKPOLARPARAMETER"
+            | "BLOCKPOLARSTRETCHACTION"
+            | "BLOCKPROPERTIESTABLE"
+            | "BLOCKPROPERTIESTABLEGRIP"
+            | "BLOCKRADIALCONSTRAINTPARAMETER"
+            | "BLOCKREPRESENTATION"
+            | "BLOCKROTATEACTION"
+            | "BLOCKROTATIONGRIP"
+            | "BLOCKROTATIONPARAMETER"
+            | "BLOCKSCALEACTION"
+            | "BLOCKSTRETCHACTION"
+            | "BLOCKUSERPARAMETER"
+            | "BLOCKVERTICALCONSTRAINTPARAMETER"
+            | "BLOCKVISIBILITYGRIP"
+            | "BLOCKXYGRIP"
+            | "BLOCKXYPARAMETER"
+            | "DYNAMICBLOCKPROXYNODE"
+            | "DYNAMICBLOCKPURGEPREVENTER"
+            | "EVALUATION_GRAPH"
+    )
 }
