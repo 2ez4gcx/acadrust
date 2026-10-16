@@ -3267,10 +3267,10 @@ impl SatDocument {
                         count += 1;
                     }
                 }
+                // A pointer to a record left behind, or to none at all,
+                // becomes null rather than keeping a stale number.
                 let remap = |pointer: &mut SatPointer| {
-                    if let Some(at) = position(*pointer) {
-                        pointer.0 = index_map[at];
-                    }
+                    pointer.0 = position(*pointer).map_or(-1, |at| index_map[at]);
                 };
                 let mut document = SatDocument::with_header(self.header.clone());
                 for (at, record) in self.records.iter().enumerate() {
