@@ -4413,9 +4413,21 @@ impl CadDocument {
             }
             _ => return Vec::new(),
         };
-        self.xrecord(layer, key)
-            .map(|record| record.layer_viewport_overrides(value_code))
-            .unwrap_or_default()
+        // Renderers ask this once per entity for every viewport, so it must not
+        // fall back to `xrecord`'s scan over all objects for the many layers
+        // that have no extension dictionary. Every reader and
+        // `ensure_extension_dictionary` register a layer's dictionary here.
+        let Some(dictionary) = self.xdic_by_handle.get(&layer) else {
+            return Vec::new();
+        };
+        let record = match self.objects.get(dictionary) {
+            Some(ObjectType::Dictionary(dictionary)) => dictionary.get(key),
+            _ => None,
+        };
+        match record.and_then(|handle| self.objects.get(&handle)) {
+            Some(ObjectType::XRecord(record)) => record.layer_viewport_overrides(value_code),
+            _ => Vec::new(),
+        }
     }
 
     /// Walk the ownership chain upward from `start` (inclusive) and report
