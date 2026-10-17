@@ -750,6 +750,25 @@ fn entity_class_name(entity: &crate::entities::EntityType) -> &str {
     }
 }
 
+/// Walk `document.objects` in handle order.
+///
+/// `objects` is a `HashMap`, so it iterates in an order seeded per instance:
+/// reading the same file twice and writing both gives two different orders.
+/// The callers below turn that walk into on-disk structure - the class table
+/// is positional (`500 + index`, see `DxfClassCollection::add_or_update`) and
+/// names the type code of every class-registered record - so a random walk
+/// would hand out a different type code on every write. Lowest handle first
+/// makes the result the same file after file.
+fn objects_in_handle_order(document: &CadDocument) -> Vec<(Handle, &crate::objects::ObjectType)> {
+    let mut objects: Vec<_> = document
+        .objects
+        .iter()
+        .map(|(handle, obj)| (*handle, obj))
+        .collect();
+    objects.sort_by_key(|(handle, _)| handle.value());
+    objects
+}
+
 /// Shrink the class table to the pre-R2013 profile, keeping every class a
 /// record of the document is written under.
 ///
@@ -759,9 +778,11 @@ fn entity_class_name(entity: &crate::entities::EntityType) -> &str {
 /// record without a valid type code, so it is kept, after the profile.
 fn prepare_legacy_classes(document: &mut CadDocument) {
     let entity_classes = document.entities().map(entity_class_name);
-    let object_classes = document.objects.values().flat_map(
-        crate::io::dwg::dwg_stream_writers::object_writer::objects::object_class_names,
-    );
+    let object_classes = objects_in_handle_order(document)
+        .into_iter()
+        .flat_map(|(_, object)| {
+            crate::io::dwg::dwg_stream_writers::object_writer::objects::object_class_names(object)
+        });
     // FIELD / FIELDLIST records exist from R2004 on and are written from the
     // document's field table, not from `objects`.
     let field_classes: &[&str] = if document.version >= DxfVersion::AC1018 {
@@ -794,10 +815,11 @@ fn prepare_legacy_classes(document: &mut CadDocument) {
 /// later version's fixed code, which strict readers reject.
 fn add_missing_object_classes(document: &mut CadDocument) {
     let defaults = crate::classes::default_classes();
-    let missing: Vec<_> = document
-        .objects
-        .values()
-        .map(crate::io::dwg::dwg_stream_writers::object_writer::objects::object_class_names)
+    let missing: Vec<_> = objects_in_handle_order(document)
+        .into_iter()
+        .map(|(_, object)| {
+            crate::io::dwg::dwg_stream_writers::object_writer::objects::object_class_names(object)
+        })
         .filter(|names| !names.iter().any(|name| document.classes.contains(name)))
         .filter_map(|names| {
             defaults

@@ -316,8 +316,17 @@ impl<'a> DwgObjectWriter<'a> {
     /// Index the fallback ownership lookup used by `extension_dictionary_handle`.
     fn build_xdic_owner_index(document: &CadDocument) -> std::collections::HashMap<Handle, Handle> {
         let mut index = std::collections::HashMap::new();
-        for (handle, object) in &document.objects {
-            if let crate::objects::ObjectType::Dictionary(dictionary) = object {
+        // Several dictionaries can share one non-dictionary owner, and
+        // `or_insert` keeps the first one seen. `objects` is a hash map, so
+        // "first" would be a different dictionary on every write and the
+        // extension-dictionary handle that lands in the file would change with
+        // it. Walk in handle order so the lowest handle always wins.
+        let mut handles: Vec<Handle> = document.objects.keys().copied().collect();
+        handles.sort_by_key(|handle| handle.value());
+        for handle in handles {
+            if let Some(crate::objects::ObjectType::Dictionary(dictionary)) =
+                document.objects.get(&handle)
+            {
                 if handle.is_null() || dictionary.owner.is_null() {
                     continue;
                 }
@@ -327,7 +336,7 @@ impl<'a> DwgObjectWriter<'a> {
                 ) {
                     continue;
                 }
-                index.entry(dictionary.owner).or_insert(*handle);
+                index.entry(dictionary.owner).or_insert(handle);
             }
         }
         index
