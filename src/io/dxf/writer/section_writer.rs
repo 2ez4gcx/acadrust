@@ -3151,7 +3151,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             DynamicBlockData::AlignmentGrip(value) => {
                 self.write_dynamic_grip_dxf(&value.grip)?;
                 self.writer.write_subclass("AcDbBlockAlignmentGrip")?;
-                self.writer.write_point3d(140, value.orientation)?;
+                // Orientation vector groups are 140/141/142, not 140/150/160.
+                self.writer.write_double(140, value.orientation.x)?;
+                self.writer.write_double(141, value.orientation.y)?;
+                self.writer.write_double(142, value.orientation.z)?;
             }
             DynamicBlockData::FlipGrip(value) => {
                 self.write_dynamic_grip_dxf(&value.grip)?;
@@ -11312,14 +11315,28 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Clip boundary type
         self.writer.write_i16(71, wipeout.clip_type as i16)?;
 
+        // A polygonal clip boundary is a closed ring: the reference DXF repeats
+        // the first point as the last and counts it in 91. An unclosed ring
+        // leaves the reader short of a point and the drawing is discarded.
+        let ring_is_closed = wipeout.clip_type == crate::entities::WipeoutClipType::Polygonal
+            && wipeout.clip_boundary_vertices.len() >= 3
+            && wipeout.clip_boundary_vertices.first() != wipeout.clip_boundary_vertices.last();
+
         // Clip boundary count
-        self.writer
-            .write_i32(91, wipeout.clip_boundary_vertices.len() as i32)?;
+        self.writer.write_i32(
+            91,
+            (wipeout.clip_boundary_vertices.len() + usize::from(ring_is_closed)) as i32,
+        )?;
 
         // Clip boundary vertices
         for v in &wipeout.clip_boundary_vertices {
             self.writer.write_double(14, v.x)?;
             self.writer.write_double(24, v.y)?;
+        }
+        if ring_is_closed {
+            let first = wipeout.clip_boundary_vertices[0];
+            self.writer.write_double(14, first.x)?;
+            self.writer.write_double(24, first.y)?;
         }
 
         Ok(())

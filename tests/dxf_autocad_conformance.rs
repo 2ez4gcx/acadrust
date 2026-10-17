@@ -4,8 +4,9 @@
 
 use acadrust::entities::*;
 use acadrust::objects::{
-    BlockEvalValue, BlockVisibilityParameter, ObjectType, ProxyObject, ProxyObjectReference,
-    ProxyPayload, ProxyReferenceKind, Scale,
+    BlockEvalValue, BlockGrip, BlockOrientedGrip, BlockVisibilityParameter, DynamicBlockData,
+    DynamicBlockObject, ObjectType, ProxyObject, ProxyObjectReference, ProxyPayload,
+    ProxyReferenceKind, Scale,
 };
 use acadrust::types::{DxfVersion, Handle, Vector2, Vector3};
 use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
@@ -351,4 +352,77 @@ fn visibility_eval_expr_with_value_matches_parameter_layout() {
     let handle = visibility_parameter(&mut doc, 40, BlockEvalValue::Real(6.5));
     let codes = codes_after(&record(&write_pairs(&doc), handle), "AcDbEvalExpr");
     assert_eq!(&codes[..7], &[90, 98, 99, 1, 70, 140, 100], "{codes:?}");
+}
+
+fn alignment_grip(doc: &mut CadDocument) -> Handle {
+    let handle = doc.allocate_handle();
+    let object = DynamicBlockObject {
+        handle,
+        owner: Handle::NULL,
+        dxf_name: "BLOCKALIGNMENTGRIP".to_string(),
+        cpp_class_name: "AcDbBlockAlignmentGrip".to_string(),
+        data: DynamicBlockData::AlignmentGrip(BlockOrientedGrip {
+            grip: BlockGrip::default(),
+            orientation: Vector3::new(1.0, 0.0, 0.0),
+        }),
+        ..Default::default()
+    };
+    doc.objects.insert(handle, ObjectType::DynamicBlock(object));
+    handle
+}
+
+#[test]
+fn alignment_grip_orientation_uses_sequential_group_codes() {
+    // The reference writer emits AcDbBlockAlignmentGrip's orientation as the
+    // sequential trio 140/141/142. Deriving y/z as base+10/base+20 (the
+    // ordinary point convention) emits 140/150/160 instead, which a conforming
+    // reader rejects with "DXF read error" inside BLOCKALIGNMENTGRIP and then
+    // discards the whole drawing.
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let handle = alignment_grip(&mut doc);
+    let codes = codes_after(
+        &record(&write_pairs(&doc), handle),
+        "AcDbBlockAlignmentGrip",
+    );
+    assert_eq!(&codes[..3], &[140, 141, 142], "{codes:?}");
+}
+
+#[test]
+fn wipeout_polygonal_clip_boundary_writes_a_closed_ring() {
+    // The reference writer closes a polygonal clip boundary in DXF: a
+    // four-vertex ring is written as five points with the first repeated, so
+    // 91 reads 5. Writing the unclosed ring leaves the reader short of a point,
+    // which surfaces as "Xdata wasn't read" in WIPEOUT and a discarded drawing.
+    let mut doc = CadDocument::with_version(DxfVersion::AC1032);
+    let mut wipeout = Wipeout::new();
+    wipeout.clip_type = WipeoutClipType::Polygonal;
+    wipeout.clip_boundary_vertices = vec![
+        Vector2::new(-0.5, -0.5),
+        Vector2::new(0.5, -0.5),
+        Vector2::new(0.5, -0.394),
+        Vector2::new(-0.5, -0.394),
+    ];
+    let handle = doc.add_entity(EntityType::Wipeout(wipeout)).unwrap();
+    let rec = record(&write_pairs(&doc), handle);
+    let count = rec
+        .iter()
+        .position(|(code, _)| *code == 91)
+        .expect("clip boundary count written");
+    assert_eq!(
+        rec[count].1.trim(),
+        "5",
+        "polygonal clip boundary must be closed: {rec:?}"
+    );
+    let xs: Vec<&str> = rec
+        .iter()
+        .filter(|(code, _)| *code == 14)
+        .map(|(_, value)| value.trim())
+        .collect();
+    let ys: Vec<&str> = rec
+        .iter()
+        .filter(|(code, _)| *code == 24)
+        .map(|(_, value)| value.trim())
+        .collect();
+    assert_eq!(xs.len(), 5, "{xs:?}");
+    assert_eq!((xs[4], ys[4]), (xs[0], ys[0]), "ring must close: {xs:?}");
 }
