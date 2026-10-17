@@ -1,8 +1,8 @@
 //! Semantic round-trip validation of the annotative
 //! `AcDb*ObjectContextData` encoder.
 //!
-//! Strategy: the golden R2018 file `~/Downloads/0718-mbmdmc.dwg` carries 134
-//! real `AcDbBlkRefObjectContextData` leaves (class 533). The reader models each
+//! Strategy: the golden R2018 drawing `0718-mbmdmc.dwg` carries 134 real
+//! `AcDbBlkRefObjectContextData` leaves (class 533). The reader models each
 //! into an `ObjectContextData`.
 //!
 //! - `baseline_roundtrip_preserves_all_contexts` proves modeling did not
@@ -10,9 +10,15 @@
 //! - `encoder_preserves_context_fields_and_scale_link` verifies that the field
 //!   encoder preserves both the modeled payload and its annotation-scale link.
 //!
-//! Skips (does not fail) when the golden file is absent, so CI stays green.
+//! The golden drawing is not in the repository, so those two tests are
+//! ignored. To run them, point `ACADRUST_GOLDEN_0718` at the file:
+//!
+//! ```text
+//! ACADRUST_GOLDEN_0718=/path/to/0718-mbmdmc.dwg cargo test --test annotative_context_encoder -- --ignored
+//! ```
 
 use std::io::Cursor;
+use std::path::PathBuf;
 
 use acadrust::entities::{
     BoundaryEdge, BoundaryPath, BoundaryPathFlags, HatchPatternLine, LineEdge,
@@ -24,15 +30,16 @@ use acadrust::objects::{
 use acadrust::types::{DxfVersion, Vector2, Vector3};
 use acadrust::{CadDocument, DwgReader, DwgWriter, Handle};
 
-const GOLDEN: &str = "/home/hakanseven/Downloads/0718-mbmdmc.dwg";
+/// Environment variable holding the path of the golden drawing.
+const GOLDEN_ENV: &str = "ACADRUST_GOLDEN_0718";
 
-fn load_golden() -> Option<CadDocument> {
-    if std::fs::metadata(GOLDEN).is_err() {
-        eprintln!("SKIP: golden file {GOLDEN} not present");
-        return None;
-    }
-    let mut reader = DwgReader::from_file(GOLDEN).expect("open golden");
-    Some(reader.read().expect("read golden"))
+fn load_golden() -> CadDocument {
+    let path = std::env::var_os(GOLDEN_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panic!("set {GOLDEN_ENV} to the path of 0718-mbmdmc.dwg"));
+    let mut reader = DwgReader::from_file(&path)
+        .unwrap_or_else(|e| panic!("{GOLDEN_ENV}={}: {e}", path.display()));
+    reader.read().expect("read golden")
 }
 
 fn roundtrip(doc: &CadDocument) -> CadDocument {
@@ -42,8 +49,9 @@ fn roundtrip(doc: &CadDocument) -> CadDocument {
 }
 
 #[test]
+#[ignore = "needs 0718-mbmdmc.dwg; set ACADRUST_GOLDEN_0718 to its path"]
 fn baseline_roundtrip_preserves_all_contexts() {
-    let Some(doc) = load_golden() else { return };
+    let doc = load_golden();
 
     let ctx0 = doc.context_scales.len();
     let blk0 = blkref_fields(&doc);
@@ -101,8 +109,9 @@ fn blkref_fields(doc: &CadDocument) -> std::collections::BTreeMap<Handle, BlkFie
 }
 
 #[test]
+#[ignore = "needs 0718-mbmdmc.dwg; set ACADRUST_GOLDEN_0718 to its path"]
 fn encoder_preserves_context_fields_and_scale_link() {
-    let Some(doc) = load_golden() else { return };
+    let doc = load_golden();
 
     // Ground truth: the fields AutoCAD stored + which SCALE each leaf points at.
     let original = blkref_fields(&doc);

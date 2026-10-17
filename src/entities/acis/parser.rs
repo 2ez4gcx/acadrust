@@ -1044,11 +1044,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "needs examples/sat v7 samples/sample_sat_1.sat"]
     fn test_parse_sample_sat_1() {
         let path = "examples/sat v7 samples/sample_sat_1.sat";
-        let Ok(sat) = std::fs::read_to_string(path) else {
-            return;
-        };
+        let sat = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
         let doc = SatDocument::parse(&sat).unwrap();
 
         assert_eq!(doc.header.version, SatVersion::V7_0);
@@ -1087,11 +1086,10 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "needs examples/sat v7 samples/sample_sat_2.sat"]
     fn test_parse_sample_sat_2() {
         let path = "examples/sat v7 samples/sample_sat_2.sat";
-        let Ok(sat) = std::fs::read_to_string(path) else {
-            return;
-        };
+        let sat = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
         let doc = SatDocument::parse(&sat).unwrap();
 
         assert_eq!(doc.header.version, SatVersion::V7_0);

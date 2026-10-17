@@ -225,6 +225,12 @@ GitHub Actions runs these checks with stable Rust on Linux, Windows, and macOS
 for pull requests and pushes to `main`. It also checks default and all-feature
 library builds for `wasm32-unknown-unknown`.
 
+Tests that need drawings which are not in the repository are `#[ignore]`d,
+with the missing file as the reason, so `cargo test` reports them as ignored.
+If you have a file, run its tests with `--ignored`, for example
+`cargo test --test table_dwg_read -- --ignored`; a test whose file is missing
+then fails and names it.
+
 ---
 
 ## Used By

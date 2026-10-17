@@ -46,5 +46,5 @@ acadrust-only round-trip failure.
 The supplied issuesamples/*.dwg corpus is now covered by
 tests/issue129.rs: all five AC1018 drawings strict-read with the exact
 3DSOLID totals from the report, and NECG76A.dwg strict-reads all 28
-SURFACE entities. The test intentionally skips when the locally supplied
-folder is absent from another checkout.
+SURFACE entities. The folder is not in the repository, so the test is ignored
+by default; run it with `cargo test --test issue129 -- --ignored`.

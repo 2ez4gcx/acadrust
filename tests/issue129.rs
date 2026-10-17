@@ -363,13 +363,11 @@ fn modeler_entities_survive_strict_and_failsafe_file_reading() {
 }
 
 #[test]
+#[ignore = "needs the six issue #129 drawings in issuesamples/"]
 fn supplied_issue129_samples_keep_modeler_entities() {
     let root = std::path::Path::new("issuesamples");
-    if !root.is_dir() {
-        return;
-    }
     let mut files: Vec<_> = std::fs::read_dir(root)
-        .unwrap()
+        .unwrap_or_else(|e| panic!("{}: {e}", root.display()))
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("dwg")))
         .collect();

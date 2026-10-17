@@ -14,8 +14,16 @@ fn read(bytes: Vec<u8>) -> CadDocument {
     DwgReader::from_stream(Cursor::new(bytes)).read().unwrap()
 }
 
-fn native(name: &str) -> Option<CadDocument> {
-    Some(read(fs::read(path(name)).ok()?))
+/// Bytes of a native BricsCAD DWG. These binaries are not in the repository
+/// (see `tests/fixtures/r12/cad-created/README.md`), so the tests that read
+/// them are ignored.
+fn native_bytes(name: &str) -> Vec<u8> {
+    let file = path(name);
+    fs::read(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()))
+}
+
+fn native(name: &str) -> CadDocument {
+    read(native_bytes(name))
 }
 
 fn close(actual: f64, expected: f64) {
@@ -60,11 +68,8 @@ fn assert_viewports(document: &CadDocument, edited: bool) {
 }
 
 #[test]
-fn cad_created_dwg_and_dxf_restore_mview_in_radians() {
+fn cad_created_dxf_restores_mview_in_radians() {
     for suffix in ["", "-edited"] {
-        if let Some(document) = native(&format!("native-viewports{suffix}.dwg")) {
-            assert_viewports(&document, !suffix.is_empty());
-        }
         let dxf = DxfReader::from_file(path(&format!("native-viewports{suffix}.dxf")))
             .unwrap()
             .read()
@@ -74,10 +79,18 @@ fn cad_created_dwg_and_dxf_restore_mview_in_radians() {
 }
 
 #[test]
+#[ignore = "needs native-viewports.dwg and native-viewports-edited.dwg in tests/fixtures/r12/cad-created"]
+fn cad_created_dwg_restores_mview_in_radians() {
+    for suffix in ["", "-edited"] {
+        let document = native(&format!("native-viewports{suffix}.dwg"));
+        assert_viewports(&document, !suffix.is_empty());
+    }
+}
+
+#[test]
+#[ignore = "needs tests/fixtures/r12/cad-created/native-viewports-edited.dwg"]
 fn vx_references_resolve_and_rebase_across_three_saves() {
-    let Some(mut document) = native("native-viewports-edited.dwg") else {
-        return;
-    };
+    let mut document = native("native-viewports-edited.dwg");
     for _ in 0..3 {
         assert_viewports(&document, true);
         assert_eq!(document.vx_table.len(), 5);
@@ -117,10 +130,9 @@ fn vx_references_resolve_and_rebase_across_three_saves() {
 }
 
 #[test]
+#[ignore = "needs tests/fixtures/r12/cad-created/native-viewports.dwg"]
 fn shared_vx_block_sentinel_is_validated_without_weakening_crc_checks() {
-    let Ok(bytes) = fs::read(path("native-viewports.dwg")) else {
-        return;
-    };
+    let bytes = native_bytes("native-viewports.dwg");
     let header = read_header(&bytes).unwrap();
     assert_eq!(
         header.tables[9].address
@@ -144,10 +156,9 @@ fn shared_vx_block_sentinel_is_validated_without_weakening_crc_checks() {
 }
 
 #[test]
+#[ignore = "needs tests/fixtures/r12/cad-created/native-geometry.dwg"]
 fn native_block_name_is_resolved_from_its_table_locator() {
-    let Some(document) = native("native-geometry.dwg") else {
-        return;
-    };
+    let document = native("native-geometry.dwg");
     assert!(document
         .block_records
         .iter()
@@ -172,11 +183,10 @@ fn native_block_name_is_resolved_from_its_table_locator() {
 }
 
 #[test]
+#[ignore = "needs native-header.dwg and native-header-edited.dwg in tests/fixtures/r12/cad-created"]
 fn native_header_drafting_state_is_typed_and_honors_edits() {
     for suffix in ["", "-edited"] {
-        let Some(mut document) = native(&format!("native-header{suffix}.dwg")) else {
-            continue;
-        };
+        let mut document = native(&format!("native-header{suffix}.dwg"));
         let state = document.header.legacy.as_ref().unwrap();
         assert_eq!(state.snap_mode, 1);
         assert_eq!(state.grid_mode, 1);
@@ -222,18 +232,15 @@ fn native_header_drafting_state_is_typed_and_honors_edits() {
 
 #[cfg(feature = "serde")]
 #[test]
+#[ignore = "needs native-header.dwg and native-viewports-edited.dwg in tests/fixtures/r12/cad-created"]
 fn native_header_and_viewport_state_survive_serde() {
-    let Some(document) = native("native-header.dwg") else {
-        return;
-    };
+    let document = native("native-header.dwg");
     let bytes = serde_json::to_vec(&document).unwrap();
     let restored: CadDocument = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(restored.header.legacy, document.header.legacy);
     let reread = read(DwgWriter::write_to_vec(&restored).unwrap());
     assert_eq!(reread.header.legacy, document.header.legacy);
-    let Some(document) = native("native-viewports-edited.dwg") else {
-        return;
-    };
+    let document = native("native-viewports-edited.dwg");
     let bytes = serde_json::to_vec(&document).unwrap();
     let restored: CadDocument = serde_json::from_slice(&bytes).unwrap();
     assert_viewports(&restored, true);

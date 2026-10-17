@@ -2024,21 +2024,24 @@ fn binary_dxf_roundtrip_deep() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  REAL-FILE ROUNDTRIP (using .dwg files in workspace root)
+//  REAL-FILE ROUNDTRIP (DWG files that are not in the repository)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Test roundtrip of actual DWG files included in the repository.
+/// Round-trips the DWG at `$file`, relative to the crate root.
+///
+/// None of these drawings are in the repository (`.gitignore` excludes
+/// `*.dwg`), so every case is ignored with its file as the reason. Put the
+/// files in place and run `cargo test --test roundtrip -- --ignored real_dwg`.
+///
+/// The reason is the bare `$file` literal: `#[test]` reads it before macros
+/// inside attributes expand, so a `concat!(...)` reason would not be shown.
 macro_rules! real_dwg_roundtrip {
-    ($test_name:ident, $file:expr) => {
+    ($test_name:ident, $file:literal) => {
         #[test]
+        #[ignore = $file]
         fn $test_name() {
             let path = concat!(env!("CARGO_MANIFEST_DIR"), "/", $file);
-            if !std::path::Path::new(path).exists() {
-                eprintln!("Skipping {}: file not found", $file);
-                return;
-            }
-
-            let mut reader = DwgReader::from_file(path).expect("Failed to open DWG file");
+            let mut reader = DwgReader::from_file(path).unwrap_or_else(|e| panic!("{path}: {e}"));
             let doc = reader.read().expect("Failed to read DWG file");
             let orig_entity_count = doc.entity_count();
             let orig_layer_count = doc.layers.len();
