@@ -560,11 +560,32 @@ impl<'a> DwgObjectWriter<'a> {
                 }
                 self.writer.write_bit(value.flag_280);
             }
-            // DWG properties-table payloads remain Unknown objects until the
-            // class's variable-width binary layout is implemented. The DWG
-            // writer preflight rejects a typed table rather than emitting an
-            // object with a missing payload.
-            DynamicBlockData::PropertiesTable(_) => {}
+            DynamicBlockData::PropertiesTable(value) => {
+                self.write_dynamic_one_point(&value.parameter);
+                for field in &value.fields {
+                    match &field.value {
+                        BlockPropertiesTableValue::Text(value) => {
+                            self.writer.write_variable_text(value);
+                        }
+                        BlockPropertiesTableValue::Boolean(value) => {
+                            self.writer.write_bit(*value);
+                        }
+                        BlockPropertiesTableValue::Integer(value) => match field.code {
+                            170..=179 | 270..=279 | 370..=389 => {
+                                self.writer.write_bit_short(*value as i16);
+                            }
+                            _ => self.writer.write_bit_long(*value as i32),
+                        },
+                        BlockPropertiesTableValue::Real(value) => {
+                            self.writer.write_bit_double(*value);
+                        }
+                        BlockPropertiesTableValue::Handle(value) => self
+                            .writer
+                            .write_handle(DwgReferenceType::HardPointer, value.value()),
+                        BlockPropertiesTableValue::Binary(_) => {}
+                    }
+                }
+            }
             DynamicBlockData::StretchAction(value) => {
                 self.write_dynamic_action(&value.action);
                 for connection in &value.connections {
@@ -704,8 +725,12 @@ impl<'a> DwgObjectWriter<'a> {
 #[cfg(test)]
 mod ownership_tests {
     use super::*;
-    use crate::{CadDocument, objects::{BlockEvaluationGraph, BlockEvaluationNode}, types::{DxfVersion, Handle}};
     use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+    use crate::{
+        objects::{BlockEvaluationGraph, BlockEvaluationNode},
+        types::{DxfVersion, Handle},
+        CadDocument,
+    };
 
     #[test]
     fn evaluation_graph_owns_its_expression_in_the_handle_stream() {
@@ -714,13 +739,25 @@ mod ownership_tests {
         object.handle = Handle::new(0x100);
         object.owner = Handle::new(0x50);
         object.data = DynamicBlockData::EvaluationGraph(BlockEvaluationGraph {
-            nodes: vec![BlockEvaluationNode { expression: Handle::new(0x1234), ..Default::default() }],
+            nodes: vec![BlockEvaluationNode {
+                expression: Handle::new(0x1234),
+                ..Default::default()
+            }],
             ..Default::default()
         });
         let mut writer = DwgObjectWriter::new(&doc).unwrap();
         writer.write_dynamic_block(&object);
-        let offset = writer.handle_map.iter().find(|(h,_)| *h == 0x100).unwrap().1 as usize;
-        let mut reader = DwgBitReader::new(writer.output[offset..].to_vec(), writer.version, writer.dxf_version);
+        let offset = writer
+            .handle_map
+            .iter()
+            .find(|(h, _)| *h == 0x100)
+            .unwrap()
+            .1 as usize;
+        let mut reader = DwgBitReader::new(
+            writer.output[offset..].to_vec(),
+            writer.version,
+            writer.dxf_version,
+        );
         let bytes = reader.read_modular_short() as i64;
         let handle_bits = reader.read_modular_char() as i64;
         reader.set_position_in_bits(reader.position_in_bits() + bytes * 8 - handle_bits);

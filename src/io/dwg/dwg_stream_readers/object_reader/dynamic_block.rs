@@ -234,7 +234,10 @@ fn read_history_entity(
         } else {
             super::entities::read_extra_acis_data(reader, None).unwrap_or_default()
         };
-        return Some(crate::entities::EmbeddedEntity::Body { type_code, acis_data });
+        return Some(crate::entities::EmbeddedEntity::Body {
+            type_code,
+            acis_data,
+        });
     }
     let bit_length = safe_count(reader.read_bit_long(), reader) as usize;
     crate::io::dwg::embedded_entity::read_embedded_entity_bits(
@@ -940,10 +943,120 @@ pub fn read_dynamic_block_data(
                 extra,
             })
         }
-        // Preserve the complete native payload as an Unknown object until a
-        // complete properties-table decoder is available. A unit variant would
-        // silently erase the table when another part of the drawing is saved.
-        "BLOCKPROPERTIESTABLE" => return None,
+        // The table's ordered subclass fields are retained verbatim at the
+        // DXF level; this decoder maps the fixed DWG structure back to that list.
+        "BLOCKPROPERTIESTABLE" => {
+            let parameter = read_one_point(reader);
+            let mut fields = Vec::new();
+            macro_rules! integer {
+                ($code:expr, $value:expr) => {
+                    fields.push(BlockPropertiesTableField {
+                        code: $code,
+                        value: BlockPropertiesTableValue::Integer(i64::from($value)),
+                    })
+                };
+            }
+            integer!(90, reader.read_bit_long());
+            for code in [300, 301] {
+                fields.push(BlockPropertiesTableField {
+                    code,
+                    value: BlockPropertiesTableValue::Text(reader.read_variable_text()),
+                });
+            }
+            let column_count = safe_count(reader.read_bit_long(), reader);
+            integer!(91, column_count);
+            for column in 0..column_count {
+                if column == 0 {
+                    fields.push(BlockPropertiesTableField {
+                        code: 340,
+                        value: BlockPropertiesTableValue::Handle(Handle::from(
+                            reader.read_handle(),
+                        )),
+                    });
+                }
+                for code in [170, 171] {
+                    fields.push(BlockPropertiesTableField {
+                        code,
+                        value: BlockPropertiesTableValue::Integer(i64::from(
+                            reader.read_bit_short(),
+                        )),
+                    });
+                }
+                for code in [300, 301] {
+                    fields.push(BlockPropertiesTableField {
+                        code,
+                        value: BlockPropertiesTableValue::Text(reader.read_variable_text()),
+                    });
+                }
+                integer!(90, reader.read_bit_long());
+                for _ in 0..2 {
+                    fields.push(BlockPropertiesTableField {
+                        code: 170,
+                        value: BlockPropertiesTableValue::Integer(i64::from(
+                            reader.read_bit_short(),
+                        )),
+                    });
+                }
+                for code in 290..=294 {
+                    fields.push(BlockPropertiesTableField {
+                        code,
+                        value: BlockPropertiesTableValue::Boolean(reader.read_bit()),
+                    });
+                }
+                fields.push(BlockPropertiesTableField {
+                    code: 302,
+                    value: BlockPropertiesTableValue::Text(reader.read_variable_text()),
+                });
+                let handle_count = if column == 0 { 2 } else { 1 };
+                for _ in 0..handle_count {
+                    fields.push(BlockPropertiesTableField {
+                        code: 340,
+                        value: BlockPropertiesTableValue::Handle(Handle::from(
+                            reader.read_handle(),
+                        )),
+                    });
+                }
+            }
+            let row_count = safe_count(reader.read_bit_long(), reader);
+            integer!(92, row_count);
+            for _ in 0..row_count {
+                integer!(90, reader.read_bit_long());
+                for _ in 0..column_count {
+                    let value_type = reader.read_bit_short();
+                    integer!(170, value_type);
+                    let value = match value_type {
+                        40 => BlockPropertiesTableValue::Real(reader.read_bit_double()),
+                        1 => BlockPropertiesTableValue::Text(reader.read_variable_text()),
+                        90 => BlockPropertiesTableValue::Integer(i64::from(reader.read_bit_long())),
+                        70 => {
+                            BlockPropertiesTableValue::Integer(i64::from(reader.read_bit_short()))
+                        }
+                        91 => BlockPropertiesTableValue::Handle(Handle::from(reader.read_handle())),
+                        290 => BlockPropertiesTableValue::Boolean(reader.read_bit()),
+                        _ => return None,
+                    };
+                    let code = match value_type {
+                        40 => 140,
+                        1 => 300,
+                        90 => 90,
+                        70 => 170,
+                        91 => 340,
+                        290 => 290,
+                        _ => unreachable!(),
+                    };
+                    fields.push(BlockPropertiesTableField { code, value });
+                }
+            }
+            let state_count = safe_count(reader.read_bit_long(), reader);
+            integer!(93, state_count);
+            for index in 0..state_count {
+                fields.push(BlockPropertiesTableField {
+                    code: 290 + index,
+                    value: BlockPropertiesTableValue::Boolean(reader.read_bit()),
+                });
+            }
+            DynamicBlockData::PropertiesTable(BlockPropertiesTable { parameter, fields })
+        }
         "EVALUATION_GRAPH" | "ACAD_EVALUATION_GRAPH" => {
             let first_node_id = reader.read_bit_long();
             let first_node_id_copy = reader.read_bit_long();
