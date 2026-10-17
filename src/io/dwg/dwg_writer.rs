@@ -834,10 +834,12 @@ fn add_missing_object_classes(document: &mut CadDocument) {
     }
 }
 
-/// Remove style dictionaries only before the versions introducing their
-/// objects: TABLESTYLE in R2004 and MLEADERSTYLE in R2007.
+/// Bring a document into shape for a version older than the one it came from.
+///
+/// Today that means only the viewport table: R14 and older expect a VxTable
+/// record per viewport. Style dictionaries are deliberately left alone - see
+/// the note at the end of this function.
 fn prepare_legacy_document(document: &mut CadDocument) {
-    use crate::objects::ObjectType;
     if document.version <= DxfVersion::AC1014 {
         let missing: Vec<_> = document
             .entities()
@@ -873,33 +875,13 @@ fn prepare_legacy_document(document: &mut CadDocument) {
         }
     }
 
-    // R2004 saves keep ACAD_MLEADERSTYLE (with the MLEADERSTYLE class
-    // declared), written in the pre-R2010 record layout, as the reference
-    // application does; only older versions drop it.
-    let keep_mleader_style = document.version >= DxfVersion::AC1018
-        && document.classes.get_by_name("MLEADERSTYLE").is_some();
-    let root_handle = document.header.named_objects_dict_handle;
-    let mut obsolete = Vec::new();
-    if let Some(ObjectType::Dictionary(root)) = document.objects.get_mut(&root_handle) {
-        root.entries.retain(|(name, handle)| {
-            let remove = (name == "ACAD_MLEADERSTYLE"
-                && document.version < DxfVersion::AC1021
-                && !keep_mleader_style)
-                || (name == "ACAD_TABLESTYLE" && document.version < DxfVersion::AC1018);
-            if remove {
-                obsolete.push(*handle);
-            }
-            !remove
-        });
-    }
-
-    for handle in obsolete {
-        if let Some(ObjectType::Dictionary(dictionary)) = document.objects.remove(&handle) {
-            for (_, child) in dictionary.entries {
-                document.objects.remove(&child);
-            }
-        }
-    }
+    // Style dictionaries stay in the file whatever the target version.
+    //
+    // ACAD_TABLESTYLE and ACAD_MLEADERSTYLE used to be deleted below R2004
+    // and R2010, with the dictionary and the style object each entry holds.
+    // Other records point at those handles, so removing the styles left
+    // dangling references behind; a drawing saved at any of those versions
+    // still carries both entries and both style objects.
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -2948,11 +2930,13 @@ mod tests {
         let mut reader = crate::io::dwg::DwgReader::from_stream(std::io::Cursor::new(bytes));
         let decoded = reader.read().unwrap();
 
-        // Mirrors the compact profile in validated R2000 fixtures.
+        // Mirrors the compact profile of R2000 fixtures: they keep
+        // ACAD_TABLESTYLE and ACAD_MLEADERSTYLE with the Standard style
+        // objects those entries hold.
         let mut expected = doc.classes.clone();
         expected.retain_legacy_dwg_classes();
         assert_eq!(decoded.classes.len(), expected.len());
-        assert_eq!(decoded.objects.len(), 13);
+        assert_eq!(decoded.objects.len(), 17);
     }
 
     #[test]

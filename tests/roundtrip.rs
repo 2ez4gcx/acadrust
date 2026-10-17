@@ -1458,7 +1458,9 @@ fn dwg_roundtrip_deep_r2000() {
     let rt = dwg_roundtrip(&doc);
     let report = compare_documents(&doc, &rt);
     assert_eq!(rt.classes.len(), 38);
-    assert_eq!(rt.objects.len(), 13);
+    // 13 plus the four style records R2000 keeps: the TABLESTYLE and
+    // MLEADERSTYLE dictionaries and their two Standard objects.
+    assert_eq!(rt.objects.len(), 17);
 
     let expected_profile_changes = ["Object count mismatch:", "Class count mismatch:"];
     let unexpected = DiffReport {
