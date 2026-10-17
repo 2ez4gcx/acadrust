@@ -1,6 +1,9 @@
 
 use acadrust::{
-    objects::{DynamicBlockData, ObjectType},
+    objects::{
+        BlockPropertiesTable, BlockPropertiesTableField, BlockPropertiesTableValue,
+        DynamicBlockData, ObjectType,
+    },
     types::Handle,
     CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter,
 };
@@ -153,4 +156,50 @@ fn undecoded_properties_table_keeps_its_payload() {
     );
     let saved = read(&DwgWriter::write_to_vec(&first).unwrap());
     assert_eq!(first.objects[&handle], saved.objects[&handle]);
+}
+
+#[test]
+fn properties_table_dxf_fields_roundtrip_and_dwg_write_is_rejected() {
+    let mut doc = read(include_bytes!("fixtures/dynamic-blocks/point.dwg"));
+    let handle = Handle::new(0x25C);
+    let ObjectType::DynamicBlock(object) = doc.objects.get_mut(&handle).unwrap() else {
+        panic!()
+    };
+    object.dxf_name = "BLOCKPROPERTIESTABLE".into();
+    object.cpp_class_name = "AcDbBlockPropertiesTable".into();
+    object.data = DynamicBlockData::PropertiesTable(BlockPropertiesTable {
+        parameter: Default::default(),
+        fields: vec![
+            BlockPropertiesTableField {
+                code: 90,
+                value: BlockPropertiesTableValue::Integer(2),
+            },
+            BlockPropertiesTableField {
+                code: 300,
+                value: BlockPropertiesTableValue::Text("Example table".into()),
+            },
+            BlockPropertiesTableField {
+                code: 291,
+                value: BlockPropertiesTableValue::Boolean(true),
+            },
+        ],
+    });
+    let mut class = doc
+        .classes
+        .get_by_name("BLOCKPOINTPARAMETER")
+        .unwrap()
+        .clone();
+    class.dxf_name = "BLOCKPROPERTIESTABLE".into();
+    class.cpp_class_name = "AcDbBlockPropertiesTable".into();
+    doc.classes.add_or_update(class);
+
+    let dxf = DxfWriter::new(&doc).write_to_vec().unwrap();
+    let decoded = DxfReader::from_reader(Cursor::new(dxf))
+        .unwrap()
+        .read()
+        .unwrap();
+    assert_eq!(data(&doc, handle.value()), data(&decoded, handle.value()));
+
+    let error = DwgWriter::write_to_vec(&doc).unwrap_err().to_string();
+    assert!(error.contains("Block Properties Table"), "{error}");
 }

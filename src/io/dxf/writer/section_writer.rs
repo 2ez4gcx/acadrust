@@ -9,7 +9,8 @@ use crate::document::CadDocument;
 use crate::entities::*;
 use crate::error::Result;
 use crate::objects::{
-    BlockEvalValue, BlockVisibilityParameter, BookColor, DataObject, DataObjectData, Dictionary,
+    BlockEvalValue, BlockPropertiesTableValue, BlockVisibilityParameter, BookColor, DataObject,
+    DataObjectData, Dictionary,
     DictionaryVariable, DictionaryWithDefault, DimSubtype, DynamicBlockData, DynamicBlockObject,
     GeoData, Group, ImageDefinition, ImageDefinitionReactor, Layout, MLineStyle, Material,
     MaterialColor, MaterialMap, MaterialProceduralValue, MaterialTexture, MultiLeaderStyle,
@@ -3382,6 +3383,36 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     self.writer.write_string(304, &column.connection_name)?;
                 }
                 self.writer.write_bool(280, value.flag_280)?;
+            }
+            DynamicBlockData::PropertiesTable(value) => {
+                self.write_dynamic_one_point_dxf(&value.parameter)?;
+                self.writer.write_subclass("AcDbBlockPropertiesTable")?;
+                for field in &value.fields {
+                    match &field.value {
+                        BlockPropertiesTableValue::Text(value) => {
+                            self.writer.write_string(field.code, value)?;
+                        }
+                        BlockPropertiesTableValue::Boolean(value) => {
+                            self.writer.write_bool(field.code, *value)?;
+                        }
+                        BlockPropertiesTableValue::Integer(value) => match field.code {
+                            160..=169 => self.writer.write_i64(field.code, *value)?,
+                            60..=79 | 170..=179 | 270..=279 | 370..=389 | 400..=409 => {
+                                self.writer.write_i16(field.code, *value as i16)?;
+                            }
+                            _ => self.writer.write_i32(field.code, *value as i32)?,
+                        },
+                        BlockPropertiesTableValue::Real(value) => {
+                            self.writer.write_double(field.code, *value)?;
+                        }
+                        BlockPropertiesTableValue::Handle(value) => {
+                            self.writer.write_handle(field.code, *value)?;
+                        }
+                        BlockPropertiesTableValue::Binary(value) => {
+                            self.writer.write_binary(field.code, value)?;
+                        }
+                    }
+                }
             }
             DynamicBlockData::StretchAction(value) => {
                 self.write_dynamic_action_dxf(&value.action)?;

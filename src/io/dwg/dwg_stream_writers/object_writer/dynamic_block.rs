@@ -560,6 +560,11 @@ impl<'a> DwgObjectWriter<'a> {
                 }
                 self.writer.write_bit(value.flag_280);
             }
+            // DWG properties-table payloads remain Unknown objects until the
+            // class's variable-width binary layout is implemented. The DWG
+            // writer preflight rejects a typed table rather than emitting an
+            // object with a missing payload.
+            DynamicBlockData::PropertiesTable(_) => {}
             DynamicBlockData::StretchAction(value) => {
                 self.write_dynamic_action(&value.action);
                 for connection in &value.connections {

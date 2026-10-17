@@ -227,6 +227,14 @@ fn validate_unknown_records(document: &CadDocument) -> Result<()> {
         }
     }
     for object in document.objects.values() {
+        if let crate::objects::ObjectType::DynamicBlock(value) = object {
+            if matches!(value.data, crate::objects::DynamicBlockData::PropertiesTable(_)) {
+                return Err(DxfError::NotImplemented(format!(
+                    "Cannot encode Block Properties Table at handle {} as DWG: its binary layout is not yet supported",
+                    value.handle
+                )));
+            }
+        }
         if let crate::objects::ObjectType::Unknown {
             type_name, handle, raw_dwg_data, raw_dwg_version, ..
         } = object {
