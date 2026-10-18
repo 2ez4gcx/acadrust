@@ -11,7 +11,7 @@
 use std::f64::consts::PI;
 
 use crate::entities::*;
-use crate::types::{Handle, Vector3};
+use crate::types::{Handle, Matrix3, Vector3};
 
 // ============================================================================
 // Helpers
@@ -31,6 +31,16 @@ fn inherit_common(source: &EntityCommon) -> EntityCommon {
         transparency: source.transparency,
         color_name: source.color_name.clone(),
         color_book_handle: source.color_book_handle,
+        linetype_handle: source.linetype_handle,
+        full_visual_style_handle: source.full_visual_style_handle,
+        face_visual_style_handle: source.face_visual_style_handle,
+        edge_visual_style_handle: source.edge_visual_style_handle,
+        material_flags: source.material_flags,
+        material_handle: source.material_handle,
+        shadow_flags: source.shadow_flags,
+        plotstyle_flags: source.plotstyle_flags,
+        plotstyle_handle: source.plotstyle_handle,
+        entity_mode: source.entity_mode,
         invisible: source.invisible,
         owner_handle: source.owner_handle,
         ..EntityCommon::new()
@@ -138,6 +148,7 @@ fn explode_lwpolyline(pl: &LwPolyline) -> Vec<EntityType> {
 
     let seg_count = if pl.is_closed { n } else { n - 1 };
     let mut result = Vec::with_capacity(seg_count);
+    let to_wcs = Matrix3::arbitrary_axis(pl.normal);
 
     for i in 0..seg_count {
         let v1 = &pl.vertices[i];
@@ -145,8 +156,8 @@ fn explode_lwpolyline(pl: &LwPolyline) -> Vec<EntityType> {
 
         if v1.bulge.abs() < 1e-10 {
             result.push(line_entity(
-                Vector3::new(v1.location.x, v1.location.y, pl.elevation),
-                Vector3::new(v2.location.x, v2.location.y, pl.elevation),
+                to_wcs * Vector3::new(v1.location.x, v1.location.y, pl.elevation),
+                to_wcs * Vector3::new(v2.location.x, v2.location.y, pl.elevation),
                 pl.thickness,
                 pl.normal,
                 &pl.common,
@@ -177,6 +188,7 @@ fn explode_polyline2d(pl: &Polyline2D) -> Vec<EntityType> {
     let closed = pl.flags.is_closed();
     let seg_count = if closed { n } else { n - 1 };
     let mut result = Vec::with_capacity(seg_count);
+    let to_wcs = Matrix3::arbitrary_axis(pl.normal);
 
     for i in 0..seg_count {
         let v1 = &pl.vertices[i];
@@ -184,8 +196,8 @@ fn explode_polyline2d(pl: &Polyline2D) -> Vec<EntityType> {
 
         if v1.bulge.abs() < 1e-10 {
             result.push(line_entity(
-                v1.location,
-                v2.location,
+                to_wcs * v1.location,
+                to_wcs * v2.location,
                 pl.thickness,
                 pl.normal,
                 &pl.common,
@@ -299,10 +311,11 @@ fn explode_solid(solid: &Solid) -> Vec<EntityType> {
     let corners = solid.boundary_corners();
     let n = corners.len();
     let mut result = Vec::with_capacity(n);
+    let to_wcs = Matrix3::arbitrary_axis(solid.normal);
     for i in 0..n {
         result.push(line_entity(
-            corners[i],
-            corners[(i + 1) % n],
+            to_wcs * corners[i],
+            to_wcs * corners[(i + 1) % n],
             solid.thickness,
             solid.normal,
             common,
@@ -378,7 +391,11 @@ pub(crate) fn nurbs_points(
         .iter()
         .enumerate()
         .map(|(i, c)| {
-            let w = if rational && weights[i] > 0.0 { weights[i] } else { 1.0 };
+            let w = if rational && weights[i] > 0.0 {
+                weights[i]
+            } else {
+                1.0
+            };
             [c.x * w, c.y * w, c.z * w, w]
         })
         .collect();
@@ -388,7 +405,11 @@ pub(crate) fn nurbs_points(
             for j in (r..=p).rev() {
                 let i = j + k - p;
                 let denom = knots[i + p + 1 - r] - knots[i];
-                let alpha = if denom.abs() < 1e-15 { 0.0 } else { (u - knots[i]) / denom };
+                let alpha = if denom.abs() < 1e-15 {
+                    0.0
+                } else {
+                    (u - knots[i]) / denom
+                };
                 let (prev, cur) = (d[j - 1], d[j]);
                 d[j] = std::array::from_fn(|c| (1.0 - alpha) * prev[c] + alpha * cur[c]);
             }
@@ -420,7 +441,13 @@ pub(crate) fn nurbs_points(
 pub(crate) fn spline_points(spline: &Spline) -> Vec<Vector3> {
     if spline.control_points.len() >= 2 {
         let degree = usize::try_from(spline.degree).unwrap_or(3).max(1);
-        let mut points = nurbs_points(degree, &spline.control_points, &spline.weights, &spline.knots, 16);
+        let mut points = nurbs_points(
+            degree,
+            &spline.control_points,
+            &spline.weights,
+            &spline.knots,
+            16,
+        );
         if spline.flags.closed && points.len() > 2 && points[0] != points[points.len() - 1] {
             points.push(points[0]);
         }
@@ -456,7 +483,11 @@ fn wrap_paragraph(text: &str, width: f64, char_width: f64) -> Vec<String> {
     let mut lines = Vec::new();
     let mut line = String::new();
     for word in text.split(' ') {
-        let candidate = if line.is_empty() { word.to_string() } else { format!("{line} {word}") };
+        let candidate = if line.is_empty() {
+            word.to_string()
+        } else {
+            format!("{line} {word}")
+        };
         if candidate.chars().count() > max_chars && !line.is_empty() {
             lines.push(std::mem::take(&mut line));
             line = word.to_string();
@@ -472,14 +503,22 @@ fn explode_mtext(mtext: &MText) -> Vec<EntityType> {
     // One TEXT per line: formatting codes removed, paragraphs and (approximate)
     // word wrapping at the reference rectangle width, aligned by the attachment point.
     let plain = crate::entities::mtext_format::parse_mtext(&mtext.value, true).to_plain_text();
-    let height = if mtext.height > 0.0 { mtext.height } else { 1.0 };
+    let height = if mtext.height > 0.0 {
+        mtext.height
+    } else {
+        1.0
+    };
     // average character width of typical CAD fonts
     let char_width = height * 0.6;
     let lines: Vec<String> = plain
         .split('\n')
         .flat_map(|paragraph| wrap_paragraph(paragraph, mtext.rectangle_width, char_width))
         .collect();
-    let factor = if mtext.line_spacing_factor > 0.0 { mtext.line_spacing_factor } else { 1.0 };
+    let factor = if mtext.line_spacing_factor > 0.0 {
+        mtext.line_spacing_factor
+    } else {
+        1.0
+    };
     let spacing = height * 5.0 / 3.0 * factor;
     let total = height + spacing * (lines.len().saturating_sub(1)) as f64;
     let attachment = mtext.attachment_point as i32;
@@ -723,7 +762,8 @@ fn explode_multileader(ml: &MultiLeader) -> Vec<EntityType> {
 }
 
 fn explode_mline(mline: &MLine) -> Vec<EntityType> {
-    // Decompose MLine into line segments (centerline path).
+    // Context-free entities do not carry their MLINESTYLE definition.  Keep
+    // the center path here; the document-aware API can resolve style offsets.
     let n = mline.vertices.len();
     if n < 2 {
         return Vec::new();
@@ -767,50 +807,75 @@ fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
 
     let mut result = Vec::new();
 
+    // Dimension geometry is defined by two measured points and a point on the
+    // dimension line.  Project each measured point onto that line so the
+    // exploded extension and dimension lines meet at their endpoints.
+    let projected_pair =
+        |first: Vector3, second: Vector3, on_line: Vector3, line_direction: Vector3| {
+            let direction = line_direction.normalize();
+            if direction.length_squared() <= 1e-20 {
+                return (first, second);
+            }
+            let project = |point: Vector3| {
+                let offset = point - on_line;
+                on_line + direction * offset.dot(&direction)
+            };
+            (project(first), project(second))
+        };
+
     match dim {
         Dimension::Linear(d) => {
-            // Extension lines from definition points to dimension line.
+            let direction = Matrix3::arbitrary_axis(base.normal)
+                * Vector3::new(d.rotation.cos(), d.rotation.sin(), 0.0);
+            let (first_on_line, second_on_line) =
+                projected_pair(d.first_point, d.second_point, d.definition_point, direction);
             result.push(line_entity(
                 d.first_point,
-                d.definition_point,
+                first_on_line,
                 0.0,
                 base.normal,
                 common,
             ));
             result.push(line_entity(
                 d.second_point,
-                d.definition_point,
+                second_on_line,
                 0.0,
                 base.normal,
                 common,
             ));
             // Dimension line between first and second projected points.
             result.push(line_entity(
-                d.first_point,
-                d.second_point,
+                first_on_line,
+                second_on_line,
                 0.0,
                 base.normal,
                 common,
             ));
         }
         Dimension::Aligned(d) => {
+            let (first_on_line, second_on_line) = projected_pair(
+                d.first_point,
+                d.second_point,
+                d.definition_point,
+                d.second_point - d.first_point,
+            );
             result.push(line_entity(
                 d.first_point,
-                d.definition_point,
+                first_on_line,
                 0.0,
                 base.normal,
                 common,
             ));
             result.push(line_entity(
                 d.second_point,
-                d.definition_point,
+                second_on_line,
                 0.0,
                 base.normal,
                 common,
             ));
             result.push(line_entity(
-                d.first_point,
-                d.second_point,
+                first_on_line,
+                second_on_line,
                 0.0,
                 base.normal,
                 common,
@@ -975,6 +1040,13 @@ fn explode_hatch(hatch: &Hatch) -> Vec<EntityType> {
                     }));
                 }
                 BoundaryEdge::EllipticArc(ea_edge) => {
+                    let (start_parameter, end_parameter) = if ea_edge.counter_clockwise {
+                        (ea_edge.start_angle, ea_edge.end_angle)
+                    } else {
+                        // Clockwise HATCH edges store mirrored parameters.
+                        // Reverse the geometric endpoints for CCW ELLIPSE.
+                        (-ea_edge.end_angle, -ea_edge.start_angle)
+                    };
                     result.push(EntityType::Ellipse(Ellipse {
                         common: inherit_common(common),
                         center: Vector3::new(ea_edge.center.x, ea_edge.center.y, elevation),
@@ -984,8 +1056,8 @@ fn explode_hatch(hatch: &Hatch) -> Vec<EntityType> {
                             0.0,
                         ),
                         minor_axis_ratio: ea_edge.minor_axis_ratio,
-                        start_parameter: ea_edge.start_angle,
-                        end_parameter: ea_edge.end_angle,
+                        start_parameter,
+                        end_parameter,
                         normal,
                     }));
                 }
@@ -1079,6 +1151,29 @@ fn explode_mesh(mesh: &Mesh) -> Vec<EntityType> {
     result
 }
 
+/// AutoCAD emits one 3DFACE for each mesh face, retaining quads instead of
+/// introducing a diagonal that was not present in the source mesh.
+fn explode_mesh_autocad(mesh: &Mesh) -> Vec<EntityType> {
+    let mut result = Vec::with_capacity(mesh.faces.len());
+    for face in &mesh.faces {
+        let indices = &face.vertices;
+        if !(3..=4).contains(&indices.len())
+            || indices.iter().any(|&index| index >= mesh.vertices.len())
+        {
+            continue;
+        }
+        let points: Vec<Vector3> = indices.iter().map(|&index| mesh.vertices[index]).collect();
+        let mut output = if points.len() == 3 {
+            Face3D::triangle(points[0], points[1], points[2])
+        } else {
+            Face3D::new(points[0], points[1], points[2], points[3])
+        };
+        output.common = inherit_common(&mesh.common);
+        result.push(EntityType::Face3D(output));
+    }
+    result
+}
+
 fn explode_polyface_mesh(mesh: &PolyfaceMesh) -> Vec<EntityType> {
     // Each face references vertices by 1-based index.
     let common = &mesh.common;
@@ -1126,6 +1221,63 @@ fn explode_polyface_mesh(mesh: &PolyfaceMesh) -> Vec<EntityType> {
     result
 }
 
+fn explode_polyface_mesh_autocad(mesh: &PolyfaceMesh) -> Vec<EntityType> {
+    let get_vertex = |index: i16| -> Option<Vector3> {
+        let index = index.unsigned_abs() as usize;
+        (index > 0 && index <= mesh.vertices.len()).then(|| mesh.vertices[index - 1].location)
+    };
+    let mut result = Vec::new();
+    for face in &mesh.faces {
+        let indices = face.vertex_indices();
+        let points: Vec<Vector3> = indices
+            .iter()
+            .filter_map(|&index| get_vertex(index))
+            .collect();
+        if points.len() != indices.len() {
+            continue;
+        }
+        match points.as_slice() {
+            [] => {}
+            [point] => result.push(EntityType::Point(Point {
+                common: inherit_common(&face.common),
+                location: *point,
+                ..Point::new()
+            })),
+            [start, end] => result.push(EntityType::Line(Line {
+                common: inherit_common(&face.common),
+                start: *start,
+                end: *end,
+                ..Line::new()
+            })),
+            [a, b, c] => {
+                let mut output = Face3D::triangle(*a, *b, *c);
+                output.common = inherit_common(&face.common);
+                output.invisible_edges.set_first_invisible(face.index1 < 0);
+                output.invisible_edges.set_second_invisible(face.index2 < 0);
+                output.invisible_edges.set_third_invisible(face.index3 < 0);
+                if let Some(color) = face.color {
+                    output.common.color = color;
+                }
+                result.push(EntityType::Face3D(output));
+            }
+            [a, b, c, d] => {
+                let mut output = Face3D::new(*a, *b, *c, *d);
+                output.common = inherit_common(&face.common);
+                output.invisible_edges.set_first_invisible(face.index1 < 0);
+                output.invisible_edges.set_second_invisible(face.index2 < 0);
+                output.invisible_edges.set_third_invisible(face.index3 < 0);
+                output.invisible_edges.set_fourth_invisible(face.index4 < 0);
+                if let Some(color) = face.color {
+                    output.common.color = color;
+                }
+                result.push(EntityType::Face3D(output));
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
 fn explode_polygon_mesh(mesh: &PolygonMeshEntity) -> Vec<EntityType> {
     // Decompose a polygon mesh grid (M × N) into Face3D entities.
     let common = &mesh.common;
@@ -1149,23 +1301,105 @@ fn explode_polygon_mesh(mesh: &PolygonMeshEntity) -> Vec<EntityType> {
     result
 }
 
+fn explode_polygon_mesh_autocad(mesh: &PolygonMeshEntity) -> Vec<EntityType> {
+    let Ok(m) = usize::try_from(mesh.m_vertex_count) else {
+        return Vec::new();
+    };
+    let Ok(n) = usize::try_from(mesh.n_vertex_count) else {
+        return Vec::new();
+    };
+    if m < 2
+        || n < 2
+        || m.checked_mul(n)
+            .is_none_or(|count| mesh.vertices.len() < count)
+    {
+        return Vec::new();
+    }
+    let close_m = mesh.flags.contains(PolygonMeshFlags::CLOSED_M);
+    let close_n = mesh.flags.contains(PolygonMeshFlags::CLOSED_N);
+    let m_cells = if close_m { m } else { m - 1 };
+    let n_cells = if close_n { n } else { n - 1 };
+    let get = |i: usize, j: usize| -> Vector3 { mesh.vertices[(i % m) * n + (j % n)].location };
+    let mut result = Vec::with_capacity(m_cells.saturating_mul(n_cells));
+    for i in 0..m_cells {
+        for j in 0..n_cells {
+            let mut face = Face3D::new(get(i, j), get(i, j + 1), get(i + 1, j + 1), get(i + 1, j));
+            face.common = inherit_common(&mesh.common);
+            result.push(EntityType::Face3D(face));
+        }
+    }
+    result
+}
+
 // ============================================================================
 // EntityType::explode
 // ============================================================================
 
 impl EntityType {
-    /// Explode this entity into simpler constituent entities.
+    /// Explode this entity using AutoCAD's standalone-object rules.
     ///
-    /// Complex entities (polylines, hatches, meshes, etc.) are decomposed
-    /// into primitives such as [`Line`], [`Arc`], [`Face3D`], and [`Text`].
-    ///
-    /// Atomic entities that cannot be further decomposed return an **empty**
-    /// `Vec`.
-    ///
-    /// All returned entities have [`Handle::NULL`].  Use
-    /// [`CadDocument::explode_entity`](crate::document::CadDocument::explode_entity)
-    /// to obtain entities with properly allocated handles.
+    /// Primitive curves and faces that AutoCAD refuses to explode return an
+    /// empty vector. Legacy exporters can use flatten instead.
     pub fn explode(&self) -> Vec<EntityType> {
+        match self {
+            EntityType::Helix(helix) => {
+                let mut spline = helix.spline.clone();
+                spline.common = inherit_common(&helix.common);
+                vec![EntityType::Spline(spline)]
+            }
+            EntityType::MText(e) => explode_mtext(e),
+            EntityType::LwPolyline(e) => explode_lwpolyline(e),
+            EntityType::Polyline2D(e) => explode_polyline2d(e),
+            EntityType::Polyline(e) => explode_polyline3d(e),
+            EntityType::Polyline3D(e) => explode_polyline3d_new(e),
+            EntityType::Dimension(e) => explode_dimension(e),
+            EntityType::Leader(e) => explode_leader(e),
+            EntityType::MultiLeader(e) => explode_multileader(e),
+            EntityType::MLine(e) => explode_mline(e),
+            EntityType::Hatch(e) => super::explode_hatch::explode_hatch(e),
+            EntityType::Mesh(e) => explode_mesh_autocad(e),
+            EntityType::PolyfaceMesh(e) => explode_polyface_mesh_autocad(e),
+            EntityType::PolygonMesh(e) => explode_polygon_mesh_autocad(e),
+            EntityType::Circle(_)
+            | EntityType::Arc(_)
+            | EntityType::Ellipse(_)
+            | EntityType::Spline(_)
+            | EntityType::Solid(_)
+            | EntityType::Face3D(_)
+            | EntityType::Point(_)
+            | EntityType::Line(_)
+            | EntityType::Text(_)
+            | EntityType::Ray(_)
+            | EntityType::XLine(_)
+            | EntityType::Viewport(_)
+            | EntityType::Block(_)
+            | EntityType::BlockEnd(_)
+            | EntityType::Seqend(_)
+            | EntityType::Insert(_)
+            | EntityType::AttributeDefinition(_)
+            | EntityType::AttributeEntity(_)
+            | EntityType::RasterImage(_)
+            | EntityType::Solid3D(_)
+            | EntityType::Region(_)
+            | EntityType::Body(_)
+            | EntityType::Surface(_)
+            | EntityType::Table(_)
+            | EntityType::Tolerance(_)
+            | EntityType::Wipeout(_)
+            | EntityType::Shape(_)
+            | EntityType::Underlay(_)
+            | EntityType::Ole2Frame(_)
+            | EntityType::Light(_)
+            | EntityType::SectionSymbol(_)
+            | EntityType::ViewBorder(_)
+            | EntityType::Extended(_)
+            | EntityType::Unknown(_) => Vec::new(),
+        }
+    }
+
+    /// Flatten this entity into the library's historical primitive geometry.
+    /// This is retained for format conversion such as R12.
+    pub fn flatten(&self) -> Vec<EntityType> {
         match self {
             // Complex entities that decompose.
             EntityType::Circle(e) => explode_circle(e),
@@ -1230,23 +1464,23 @@ mod tests {
     #[test]
     fn test_atomic_entities_return_empty() {
         let line = EntityType::Line(Line::from_coords(0.0, 0.0, 0.0, 1.0, 1.0, 0.0));
-        assert!(line.explode().is_empty());
+        assert!(line.flatten().is_empty());
 
         let arc = EntityType::Arc(Arc::new());
-        assert!(arc.explode().is_empty());
+        assert!(arc.flatten().is_empty());
 
         let point = EntityType::Point(Point::new());
-        assert!(point.explode().is_empty());
+        assert!(point.flatten().is_empty());
 
         let text = EntityType::Text(Text::new());
-        assert!(text.explode().is_empty());
+        assert!(text.flatten().is_empty());
     }
 
     #[test]
     fn test_explode_circle() {
         let circle = Circle::from_center_radius(Vector3::new(5.0, 5.0, 0.0), 10.0);
         let entity = EntityType::Circle(circle);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 1);
         match &parts[0] {
             EntityType::Arc(arc) => {
@@ -1267,7 +1501,7 @@ mod tests {
         pl.add_point(Vector2::new(10.0, 10.0));
 
         let entity = EntityType::LwPolyline(pl);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 2);
         assert!(matches!(&parts[0], EntityType::Line(_)));
         assert!(matches!(&parts[1], EntityType::Line(_)));
@@ -1282,7 +1516,7 @@ mod tests {
         pl.close();
 
         let entity = EntityType::LwPolyline(pl);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 3); // 3 segments for closed triangle
     }
 
@@ -1293,9 +1527,72 @@ mod tests {
         pl.add_point(Vector2::new(10.0, 0.0));
 
         let entity = EntityType::LwPolyline(pl);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], EntityType::Arc(_)));
+    }
+
+    #[test]
+    fn test_explode_planar_lines_convert_ocs_to_wcs() {
+        let normal = Vector3::UNIT_Y;
+        let to_wcs = Matrix3::arbitrary_axis(normal);
+        let start = Vector3::new(1.0, 2.0, 3.0);
+        let end = Vector3::new(4.0, 5.0, 3.0);
+
+        let mut lightweight = LwPolyline::new();
+        lightweight.normal = normal;
+        lightweight.elevation = 3.0;
+        lightweight.add_point(Vector2::new(start.x, start.y));
+        lightweight.add_point(Vector2::new(end.x, end.y));
+        let mut heavy = Polyline2D::new();
+        heavy.normal = normal;
+        heavy.add_vertex(Vertex2D::new(start));
+        heavy.add_vertex(Vertex2D::new(end));
+        let solid = Solid::triangle(start, end, Vector3::new(7.0, 8.0, 3.0)).with_normal(normal);
+        for entity in [
+            EntityType::LwPolyline(lightweight),
+            EntityType::Polyline2D(heavy),
+            EntityType::Solid(solid),
+        ] {
+            let parts = entity.flatten();
+            let EntityType::Line(line) = &parts[0] else {
+                panic!("expected a WCS line");
+            };
+            assert_eq!(line.start, to_wcs * start);
+            assert_eq!(line.end, to_wcs * end);
+        }
+    }
+
+    #[test]
+    fn test_explode_hatch_clockwise_elliptic_edge_uses_geometric_parameters() {
+        let mut path = BoundaryPath::new();
+        path.edges.push(BoundaryEdge::EllipticArc(
+            crate::entities::hatch::EllipticArcEdge {
+                center: Vector2::ZERO,
+                major_axis_endpoint: Vector2::new(4.0, 0.0),
+                minor_axis_ratio: 0.5,
+                start_angle: 0.3,
+                end_angle: 1.2,
+                counter_clockwise: false,
+            },
+        ));
+        let mut hatch = Hatch::new();
+        hatch.paths.push(path);
+        let parts = EntityType::Hatch(Box::new(hatch)).flatten();
+        let EntityType::Ellipse(ellipse) = &parts[0] else {
+            panic!("expected ellipse");
+        };
+        let point = |parameter: f64| {
+            ellipse.center
+                + ellipse.major_axis * parameter.cos()
+                + ellipse.normal.cross(&ellipse.major_axis)
+                    * (ellipse.minor_axis_ratio * parameter.sin())
+        };
+        let expected_start = Vector3::new(4.0 * 1.2f64.cos(), -2.0 * 1.2f64.sin(), 0.0);
+        let expected_end = Vector3::new(4.0 * 0.3f64.cos(), -2.0 * 0.3f64.sin(), 0.0);
+        assert!(point(ellipse.start_parameter).distance(&expected_start) < 1e-12);
+        assert!(point(ellipse.end_parameter).distance(&expected_end) < 1e-12);
+        assert!((ellipse.end_parameter - ellipse.start_parameter - 0.9).abs() < 1e-12);
     }
 
     #[test]
@@ -1306,7 +1603,7 @@ mod tests {
         let fourth = Vector3::new(10.0, 10.0, 0.0);
         let solid = Solid::new(first, second, third, fourth);
         let entity = EntityType::Solid(solid);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         let expected = [
             (first, second),
             (second, fourth),
@@ -1330,7 +1627,7 @@ mod tests {
             Vector3::new(5.0, 10.0, 0.0),
         );
         let entity = EntityType::Solid(solid);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 3); // 3 edge lines
     }
 
@@ -1343,7 +1640,7 @@ mod tests {
             Vector3::new(0.0, 10.0, 0.0),
         );
         let entity = EntityType::Face3D(face);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 4); // All edges visible
     }
 
@@ -1359,7 +1656,7 @@ mod tests {
         face.invisible_edges.set_third_invisible(true);
 
         let entity = EntityType::Face3D(face);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 2); // Only 2 visible edges
     }
 
@@ -1371,7 +1668,7 @@ mod tests {
             Vector3::new(10.0, 10.0, 0.0),
         ]);
         let entity = EntityType::Polyline(pl);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 2);
         assert!(matches!(&parts[0], EntityType::Line(_)));
     }
@@ -1384,7 +1681,7 @@ mod tests {
         leader.vertices.push(Vector3::new(20.0, 10.0, 0.0));
 
         let entity = EntityType::Leader(leader);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 2);
         assert!(matches!(&parts[0], EntityType::Line(_)));
     }
@@ -1431,7 +1728,7 @@ mod tests {
 
     #[test]
     fn test_explode_multileader_single_vertex_line() {
-        let parts = EntityType::MultiLeader(Box::new(callout(&[Vector3::ZERO]))).explode();
+        let parts = EntityType::MultiLeader(Box::new(callout(&[Vector3::ZERO]))).flatten();
         let arrows = solids(&parts);
         let lines = line_ends(&parts);
 
@@ -1462,7 +1759,7 @@ mod tests {
             .points
             .extend([Vector3::new(5.0, 0.0, 0.0), Vector3::new(10.0, 10.0, 0.0)]);
 
-        let lines = line_ends(&EntityType::MultiLeader(Box::new(ml)).explode());
+        let lines = line_ends(&EntityType::MultiLeader(Box::new(ml)).flatten());
 
         assert_eq!(
             lines,
@@ -1477,7 +1774,7 @@ mod tests {
     #[test]
     fn test_explode_multileader_lines_share_one_landing() {
         let ml = callout(&[Vector3::ZERO, Vector3::new(20.0, 0.0, 0.0)]);
-        let parts = EntityType::MultiLeader(Box::new(ml)).explode();
+        let parts = EntityType::MultiLeader(Box::new(ml)).flatten();
 
         // One arrowhead per leader line, never one on the landing.
         assert_eq!(solids(&parts).len(), 2);
@@ -1495,7 +1792,7 @@ mod tests {
         second.connection_point = Vector3::new(30.0, 10.0, 0.0);
         ml.context.leader_roots.push(second);
 
-        let parts = EntityType::MultiLeader(Box::new(ml)).explode();
+        let parts = EntityType::MultiLeader(Box::new(ml)).flatten();
 
         assert_eq!(solids(&parts).len(), 2);
         assert_eq!(line_ends(&parts).len(), 4);
@@ -1508,7 +1805,7 @@ mod tests {
         ml.context.has_text_contents = true;
         ml.context.text_string = "NOTE".to_string();
 
-        let parts = EntityType::MultiLeader(Box::new(ml)).explode();
+        let parts = EntityType::MultiLeader(Box::new(ml)).flatten();
 
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], EntityType::MText(_)));
@@ -1519,7 +1816,7 @@ mod tests {
         let mut ml = callout(&[Vector3::ZERO]);
         ml.enable_dogleg = false;
 
-        let lines = line_ends(&EntityType::MultiLeader(Box::new(ml)).explode());
+        let lines = line_ends(&EntityType::MultiLeader(Box::new(ml)).flatten());
 
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].1, Vector3::new(10.0, 10.0, 0.0));
@@ -1536,7 +1833,7 @@ mod tests {
         line.override_flags = LeaderLinePropertyOverrideFlags::ARROWHEAD;
 
         for ml in [entity_level, line_level] {
-            let parts = EntityType::MultiLeader(Box::new(ml)).explode();
+            let parts = EntityType::MultiLeader(Box::new(ml)).flatten();
             assert!(solids(&parts).is_empty());
             // The shaft is not trimmed when no arrowhead covers its start.
             assert_eq!(line_ends(&parts)[0].0, Vector3::ZERO);
@@ -1548,7 +1845,10 @@ mod tests {
         let mut ml = callout(&[Vector3::ZERO]);
         ml.arrowhead_handle = Some(Handle::NULL);
 
-        assert_eq!(solids(&EntityType::MultiLeader(Box::new(ml)).explode()).len(), 1);
+        assert_eq!(
+            solids(&EntityType::MultiLeader(Box::new(ml)).flatten()).len(),
+            1
+        );
     }
 
     #[test]
@@ -1558,7 +1858,7 @@ mod tests {
         line.arrowhead_size = 2.0;
         line.override_flags = LeaderLinePropertyOverrideFlags::ARROWHEAD_SIZE;
 
-        let parts = EntityType::MultiLeader(Box::new(ml)).explode();
+        let parts = EntityType::MultiLeader(Box::new(ml)).flatten();
         let base = (solids(&parts)[0].second_corner + solids(&parts)[0].third_corner) * 0.5;
 
         assert!((base.length() - 2.0).abs() < 1e-9);
@@ -1569,7 +1869,7 @@ mod tests {
         let mut ml = callout(&[Vector3::new(9.5, 10.0, 0.0)]);
         ml.context.arrowhead_size = 1.0;
 
-        let parts = EntityType::MultiLeader(Box::new(ml)).explode();
+        let parts = EntityType::MultiLeader(Box::new(ml)).flatten();
 
         assert!(solids(&parts).is_empty());
         assert_eq!(line_ends(&parts)[0].0, Vector3::new(9.5, 10.0, 0.0));
@@ -1579,7 +1879,7 @@ mod tests {
     fn test_explode_mtext() {
         let mtext = MText::with_value("Hello World", Vector3::new(5.0, 5.0, 0.0));
         let entity = EntityType::MText(Box::new(mtext));
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 1);
         match &parts[0] {
             EntityType::Text(t) => {
@@ -1593,9 +1893,10 @@ mod tests {
 
     #[test]
     fn test_explode_mtext_paragraphs_and_formatting() {
-        let mut mtext = MText::with_value("{\\fArial|b1;Line 1}\\PLine 2", Vector3::new(0.0, 0.0, 0.0));
+        let mut mtext =
+            MText::with_value("{\\fArial|b1;Line 1}\\PLine 2", Vector3::new(0.0, 0.0, 0.0));
         mtext.height = 2.0;
-        let parts = EntityType::MText(Box::new(mtext)).explode();
+        let parts = EntityType::MText(Box::new(mtext)).flatten();
         let values: Vec<&str> = parts
             .iter()
             .map(|p| match p {
@@ -1623,7 +1924,7 @@ mod tests {
             &[(0, 1, 2)],
         );
         let entity = EntityType::Mesh(mesh);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], EntityType::Face3D(_)));
     }
@@ -1632,7 +1933,7 @@ mod tests {
     fn test_explode_ellipse() {
         let ellipse = Ellipse::from_center_axes(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0), 0.5);
         let entity = EntityType::Ellipse(ellipse);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], EntityType::Spline(_)));
     }
@@ -1645,7 +1946,7 @@ mod tests {
         circle.common.linetype = "DASHED".to_string();
 
         let entity = EntityType::Circle(circle);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 1);
         let common = parts[0].common();
         assert_eq!(common.layer, "WALLS");
@@ -1664,7 +1965,7 @@ mod tests {
         ];
         let spline = Spline::from_control_points(3, pts);
         let entity = EntityType::Spline(spline);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         // one clamped cubic span sampled with 16 segments
         assert_eq!(parts.len(), 16);
         let ends: Vec<(Vector3, Vector3)> = parts
@@ -1684,7 +1985,11 @@ mod tests {
     #[test]
     fn test_nurbs_rational_quarter_circle() {
         // quadratic rational Bezier with weights 1, sqrt(2)/2, 1 is an exact quarter circle
-        let pts = [Vector3::new(1.0, 0.0, 0.0), Vector3::new(1.0, 1.0, 0.0), Vector3::new(0.0, 1.0, 0.0)];
+        let pts = [
+            Vector3::new(1.0, 0.0, 0.0),
+            Vector3::new(1.0, 1.0, 0.0),
+            Vector3::new(0.0, 1.0, 0.0),
+        ];
         let w = [1.0, std::f64::consts::FRAC_1_SQRT_2, 1.0];
         let knots = [0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
         for p in nurbs_points(2, &pts, &w, &knots, 8) {
@@ -1696,11 +2001,38 @@ mod tests {
     fn test_explode_dimension() {
         let dim = DimensionLinear::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0));
         let entity = EntityType::Dimension(Box::new(Dimension::Linear(dim)));
-        let parts = entity.explode();
+        let parts = entity.flatten();
         // Should contain dimension lines + text
         assert!(parts.len() >= 2);
         assert!(parts.iter().any(|p| matches!(p, EntityType::Text(_))));
         assert!(parts.iter().any(|p| matches!(p, EntityType::Line(_))));
+    }
+
+    #[test]
+    fn test_explode_linear_dimension_projects_onto_offset_line() {
+        let mut dimension =
+            DimensionLinear::horizontal(Vector3::new(1.0, 2.0, 0.0), Vector3::new(11.0, 4.0, 0.0));
+        dimension.definition_point = Vector3::new(11.0, 8.0, 0.0);
+        let parts = EntityType::Dimension(Box::new(Dimension::Linear(dimension))).flatten();
+        assert_eq!(
+            line_ends(&parts),
+            vec![
+                (Vector3::new(1.0, 2.0, 0.0), Vector3::new(1.0, 8.0, 0.0)),
+                (Vector3::new(11.0, 4.0, 0.0), Vector3::new(11.0, 8.0, 0.0)),
+                (Vector3::new(1.0, 8.0, 0.0), Vector3::new(11.0, 8.0, 0.0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_explode_aligned_dimension_projects_onto_offset_line() {
+        let mut dimension = DimensionAligned::new(Vector3::ZERO, Vector3::new(3.0, 4.0, 0.0));
+        dimension.definition_point = Vector3::new(-1.0, 7.0, 0.0);
+        let parts = EntityType::Dimension(Box::new(Dimension::Aligned(dimension))).flatten();
+        let lines = line_ends(&parts);
+        assert!(lines[0].1.distance(&Vector3::new(-4.0, 3.0, 0.0)) < 1e-12);
+        assert!(lines[1].1.distance(&Vector3::new(-1.0, 7.0, 0.0)) < 1e-12);
+        assert_eq!(lines[2], (lines[0].1, lines[1].1));
     }
 
     #[test]
@@ -1712,7 +2044,7 @@ mod tests {
         mesh.add_face(PolyfaceFace::triangle(1, 2, 3));
 
         let entity = EntityType::PolyfaceMesh(mesh);
-        let parts = entity.explode();
+        let parts = entity.flatten();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], EntityType::Face3D(_)));
     }
@@ -1722,10 +2054,12 @@ mod tests {
         use crate::document::CadDocument;
 
         let mut doc = CadDocument::new();
-        let mut circle = Circle::from_center_radius(Vector3::ZERO, 5.0);
-        circle.common.owner_handle = Handle::new(0x100);
+        let mut polyline = LwPolyline::new();
+        polyline.add_point(Vector2::ZERO);
+        polyline.add_point(Vector2::new(5.0, 0.0));
+        polyline.common.owner_handle = Handle::new(0x100);
 
-        let entity = EntityType::Circle(circle);
+        let entity = EntityType::LwPolyline(polyline);
         let parts = doc.explode_entity(&entity);
         assert_eq!(parts.len(), 1);
         assert!(parts[0].common().handle.is_valid());

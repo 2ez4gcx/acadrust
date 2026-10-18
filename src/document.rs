@@ -85,6 +85,7 @@ pub use legacy_header::LegacyHeaderState;
 pub use semantic_inventory::*;
 mod block_graph;
 pub use block_graph::BlockGraph;
+mod explode;
 mod dynamic_properties;
 pub use dynamic_properties::DynamicBlockProperty;
 
@@ -3507,6 +3508,9 @@ impl CadDocument {
     ///
     /// Returns an empty `Vec` for atomic entities that cannot be decomposed.
     pub fn explode_entity(&mut self, entity: &EntityType) -> Vec<EntityType> {
+        if let EntityType::Insert(insert) = entity {
+            return self.explode_insert_with_context(insert);
+        }
         let mut parts = entity.explode();
         let owner = entity.common().owner_handle;
         for part in &mut parts {

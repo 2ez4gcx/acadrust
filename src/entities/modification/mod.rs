@@ -5,6 +5,7 @@
 //! [`EntityType`](super::EntityType) methods.
 
 pub mod explode;
+mod explode_hatch;
 pub mod mirror;
 pub mod rotate;
 pub mod rotate3d;

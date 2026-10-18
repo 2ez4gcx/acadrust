@@ -253,23 +253,23 @@ pub(crate) fn transform_lwpolyline(e: &mut LwPolyline, transform: &Transform) {
     // in the new normal's OCS.
     let new_normal = transform.apply_rotation(e.normal).normalize();
     let (ocs, new_t) = ocs_pair(e.normal, new_normal);
-    let mut new_elevation = e.elevation;
+    // All vertices lie in one OCS plane.  Compute the transformed plane
+    // elevation from its origin once; assigning `l.z` per vertex makes a
+    // tilted non-uniformly scaled polyline drift as each vertex overwrites
+    // the shared elevation field.
+    let plane_origin = new_t * transform.apply(ocs * Vector3::new(0.0, 0.0, e.elevation));
+    let new_elevation = plane_origin.z;
     for vertex in &mut e.vertices {
         let pt3d = Vector3::new(vertex.location.x, vertex.location.y, e.elevation);
         let l = new_t * transform.apply(ocs * pt3d);
         vertex.location.x = l.x;
         vertex.location.y = l.y;
-        new_elevation = l.z;
         if flip {
             // Bulge encodes the arc's side/direction in the plane; a
             // reflection reverses it. Without this, exploding a mirrored
             // INSERT bows every bulged segment to the wrong side.
             vertex.bulge = -vertex.bulge;
         }
-    }
-    if e.vertices.is_empty() {
-        let l = new_t * transform.apply(ocs * Vector3::new(0.0, 0.0, e.elevation));
-        new_elevation = l.z;
     }
     e.elevation = new_elevation;
     e.normal = new_normal;
@@ -906,6 +906,21 @@ pub(crate) fn transform_insert(e: &mut Insert, transform: &Transform) {
     let trans_wo_rot = Matrix3::rotation_z(new_rotation).transpose() * trans_wo;
     let s = trans_wo_rot
         * (transformation * (trans_ow * Vector3::new(e.x_scale(), e.y_scale(), e.z_scale())));
+
+    // MINSERT spacing is measured in the INSERT's local X/Y axes.  Carry the
+    // vectors through the same world transform so a nested array under a
+    // uniform parent scale grows with its geometry (AutoCAD doubles a 10-unit
+    // spacing under a 2x parent).  A scalar spacing cannot encode shear, so
+    // retain the transformed vector length, which is the closest representable
+    // INSERT spacing and is exact for similarity transforms.
+    if e.column_spacing != 0.0 {
+        let v = transformation * (trans_ow * Vector3::new(e.column_spacing, 0.0, 0.0));
+        e.column_spacing = v.length();
+    }
+    if e.row_spacing != 0.0 {
+        let v = transformation * (trans_ow * Vector3::new(0.0, e.row_spacing, 0.0));
+        e.row_spacing = v.length();
+    }
 
     let clamp = |val: f64| -> f64 {
         if val.abs() < SCALE_EPSILON {
