@@ -524,6 +524,12 @@ fn wrap_paragraph(text: &str, width: f64, char_width: f64) -> Vec<String> {
 }
 
 fn explode_mtext(mtext: &MText) -> Vec<EntityType> {
+    let formatted = crate::entities::mtext_format::parse_mtext(&mtext.value, false);
+    if formatted.paragraphs.iter().any(|paragraph| {
+        paragraph.spans.len() > 1 || paragraph.spans.iter().any(|span| !span.is_plain())
+    }) {
+        return explode_formatted_mtext(mtext, &formatted);
+    }
     // One TEXT per line: formatting codes removed, paragraphs and (approximate)
     // word wrapping at the reference rectangle width, aligned by the attachment point.
     let plain = crate::entities::mtext_format::parse_mtext(&mtext.value, true).to_plain_text();
@@ -593,6 +599,78 @@ fn explode_mtext(mtext: &MText) -> Vec<EntityType> {
             })
         })
         .collect()
+}
+
+fn explode_formatted_mtext(
+    mtext: &MText,
+    document: &crate::entities::mtext_format::MTextDocument,
+) -> Vec<EntityType> {
+    use crate::entities::mtext_format::{MTextColor, MTextScalar};
+    let base_height = if mtext.height > 0.0 { mtext.height } else { 1.0 };
+    let spacing = base_height * 5.0 / 3.0
+        * if mtext.line_spacing_factor > 0.0 { mtext.line_spacing_factor } else { 1.0 };
+    let (sin, cos) = mtext.rotation.sin_cos();
+    let mut result = Vec::new();
+    for (paragraph_index, paragraph) in document.paragraphs.iter().enumerate() {
+        let mut advance = 0.0;
+        let y = -(paragraph_index as f64) * spacing - base_height;
+        for span in &paragraph.spans {
+            let value = span
+                .stacking
+                .as_ref()
+                .map(|stack| stack.to_plain_text())
+                .unwrap_or_else(|| span.text.clone());
+            if value.is_empty() {
+                continue;
+            }
+            let height = match span.properties.height {
+                Some(MTextScalar::Factor(factor)) => (base_height * factor).max(1e-9),
+                Some(MTextScalar::Absolute(value)) => value.max(1e-9),
+                None => base_height,
+            };
+            let width_factor = span.properties.width_factor.unwrap_or(1.0).max(1e-9);
+            let rotation = mtext.rotation
+                + span.properties.oblique_angle.unwrap_or(0.0).to_radians();
+            let point = Vector3::new(
+                mtext.insertion_point.x - y * sin + advance * cos,
+                mtext.insertion_point.y + y * cos + advance * sin,
+                mtext.insertion_point.z,
+            );
+            let mut text = Text {
+                common: inherit_common(&mtext.common),
+                value,
+                insertion_point: point,
+                alignment_point: None,
+                height,
+                rotation,
+                width_factor,
+                oblique_angle: 0.0,
+                style: mtext.style.clone(),
+                horizontal_alignment: TextHorizontalAlignment::Left,
+                vertical_alignment: TextVerticalAlignment::Baseline,
+                normal: mtext.normal,
+                thickness: 0.0,
+                generation_flags: 0,
+            };
+            if let Some(font) = span.properties.font.as_ref() {
+                if !font.name.is_empty() {
+                    text.style = font.name.clone();
+                }
+            }
+            if let Some(color) = span.properties.color {
+                text.common.color = match color {
+                    MTextColor::Index(index) => Color::from_index(index as i16),
+                    MTextColor::TrueColor(value) => Color::from_true_color_value(value as i32),
+                    MTextColor::ByLayer => Color::ByLayer,
+                    MTextColor::ByBlock => Color::ByBlock,
+                    MTextColor::None => text.common.color,
+                };
+            }
+            result.push(EntityType::Text(text));
+            advance += span.text.chars().count() as f64 * height * 0.6 * width_factor;
+        }
+    }
+    result
 }
 
 fn explode_leader(leader: &Leader) -> Vec<EntityType> {
@@ -2107,6 +2185,28 @@ mod tests {
             _ => unreachable!(),
         };
         assert!((y(0) - y(1) - 2.0 * 5.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_explode_mtext_preserves_formatted_runs() {
+        let mtext = MText::with_value(
+            r"A{\C1;RED}B{\H2x;BIG}",
+            Vector3::ZERO,
+        );
+        let parts = EntityType::MText(Box::new(mtext)).explode();
+        assert_eq!(parts.len(), 4);
+        let texts: Vec<_> = parts
+            .iter()
+            .map(|part| match part {
+                EntityType::Text(text) => text,
+                _ => panic!("expected text run"),
+            })
+            .collect();
+        assert_eq!(texts[0].value, "A");
+        assert_eq!(texts[1].value, "RED");
+        assert_eq!(texts[1].common.color, Color::from_index(1));
+        assert_eq!(texts[2].value, "B");
+        assert!((texts[3].height - 2.0).abs() < 1e-12);
     }
 
     #[test]
