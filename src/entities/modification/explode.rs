@@ -895,32 +895,45 @@ fn explode_multileader(ml: &MultiLeader) -> Vec<EntityType> {
 
 fn explode_mline(mline: &MLine) -> Vec<EntityType> {
     // Context-free entities do not carry their MLINESTYLE definition.  Keep
-    // the center path here; the document-aware API can resolve style offsets.
+    // Standard's two canonical offsets here; the document-aware API resolves
+    // custom style objects and their element colors.
     let n = mline.vertices.len();
     if n < 2 {
         return Vec::new();
     }
 
-    let mut result = Vec::with_capacity(n - 1);
-    for i in 0..n - 1 {
-        result.push(line_entity(
-            mline.vertices[i].position,
-            mline.vertices[i + 1].position,
-            0.0,
-            mline.normal,
-            &mline.common,
-        ));
+    let offsets = if mline.style_name.eq_ignore_ascii_case("Standard") && mline.style_element_count >= 2 {
+        vec![0.5 * mline.scale_factor, -0.5 * mline.scale_factor]
+    } else {
+        vec![0.0]
+    };
+    let mut result = Vec::with_capacity((n - 1) * offsets.len());
+    for offset in offsets {
+        for i in 0..n - 1 {
+            let a = &mline.vertices[i];
+            let b = &mline.vertices[i + 1];
+            let start = a.position + a.miter.normalize() * offset;
+            let end = b.position + b.miter.normalize() * offset;
+            result.push(line_entity(start, end, 0.0, mline.normal, &mline.common));
+        }
     }
 
     // Close if the MLine is closed.
     if mline.flags.contains(MLineFlags::CLOSED) && n > 2 {
-        result.push(line_entity(
-            mline.vertices[n - 1].position,
-            mline.vertices[0].position,
-            0.0,
-            mline.normal,
-            &mline.common,
-        ));
+        let offsets = if mline.style_name.eq_ignore_ascii_case("Standard") && mline.style_element_count >= 2 {
+            vec![0.5 * mline.scale_factor, -0.5 * mline.scale_factor]
+        } else {
+            vec![0.0]
+        };
+        for offset in offsets {
+            result.push(line_entity(
+                mline.vertices[n - 1].position + mline.vertices[n - 1].miter.normalize() * offset,
+                mline.vertices[0].position + mline.vertices[0].miter.normalize() * offset,
+                0.0,
+                mline.normal,
+                &mline.common,
+            ));
+        }
     }
 
     result
@@ -1059,6 +1072,15 @@ fn explode_region(region: &Region) -> Vec<EntityType> {
         if wire.points.len() > 2 {
             result.push(line_entity(*wire.points.last().unwrap(), wire.points[0], 0.0, Vector3::UNIT_Z, &region.common));
         }
+    }
+    if result.is_empty() {
+        return modeler_regions(&region.common, region.parse_sat())
+            .into_iter()
+            .flat_map(|entity| match entity {
+                EntityType::Region(region) => explode_region(&region),
+                _ => Vec::new(),
+            })
+            .collect();
     }
     result
 }
@@ -1502,7 +1524,11 @@ fn explode_polyface_mesh_autocad(mesh: &PolyfaceMesh) -> Vec<EntityType> {
     };
     let mut result = Vec::new();
     for face in &mesh.faces {
-        let indices = face.vertex_indices();
+        let indices: Vec<i16> = face
+            .vertex_indices()
+            .into_iter()
+            .filter(|index| *index != 0)
+            .collect();
         let points: Vec<Vector3> = indices
             .iter()
             .filter_map(|&index| get_vertex(index))
@@ -1960,6 +1986,21 @@ mod tests {
         assert!(matches!(&parts[0], EntityType::Line(_)));
     }
 
+    #[test]
+    fn test_explode_standard_mline_emits_style_elements() {
+        let mline = MLine::from_points(&[Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0)]);
+        let parts = EntityType::MLine(mline).explode();
+        assert_eq!(parts.len(), 2);
+        let ys: Vec<f64> = parts
+            .iter()
+            .map(|part| match part {
+                EntityType::Line(line) => line.start.y,
+                _ => panic!("expected line"),
+            })
+            .collect();
+        assert!(ys.contains(&0.5) && ys.contains(&-0.5));
+    }
+
     /// A callout the way AutoCAD stores it: the leader line holds only the
     /// arrow tip, the root holds the bend (connection point) and the landing.
     fn callout(tips: &[Vector3]) -> MultiLeader {
@@ -2343,6 +2384,18 @@ mod tests {
         let parts = entity.flatten();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], EntityType::Face3D(_)));
+    }
+
+    #[test]
+    fn test_explode_polyface_low_vertex_faces() {
+        let mut mesh = PolyfaceMesh::new();
+        mesh.add_vertex(PolyfaceVertex::new(Vector3::ZERO));
+        mesh.add_vertex(PolyfaceVertex::new(Vector3::UNIT_X));
+        mesh.add_face(PolyfaceFace::triangle(1, 0, 0));
+        mesh.add_face(PolyfaceFace::triangle(1, 2, 0));
+        let parts = EntityType::PolyfaceMesh(mesh).explode();
+        assert!(matches!(parts[0], EntityType::Point(_)));
+        assert!(matches!(parts[1], EntityType::Line(_)));
     }
 
     #[test]
