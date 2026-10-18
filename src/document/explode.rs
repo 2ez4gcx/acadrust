@@ -131,23 +131,31 @@ impl CadDocument {
                     _ => None,
                 })
             });
-        let offsets: Vec<(f64, crate::types::Color)> = style
+        let fill_on = style
+            .map(|style| style.flags.fill_on)
+            .unwrap_or(false);
+        let offset_values: Vec<f64> = style
             .map(|style| {
                 style
                     .elements
                     .iter()
-                    .map(|element| (element.offset * mline.scale_factor, element.color))
+                    .map(|element| element.offset * mline.scale_factor)
                     .collect()
             })
             .filter(|offsets: &Vec<_>| !offsets.is_empty())
-            .unwrap_or_else(|| vec![(0.0, mline.common.color)]);
+            .unwrap_or_else(|| vec![0.0]);
+        let colors: Vec<crate::types::Color> = style
+            .map(|style| style.elements.iter().map(|element| element.color).collect())
+            .filter(|colors: &Vec<_>| !colors.is_empty())
+            .unwrap_or_else(|| vec![mline.common.color]);
         let mut parts = Vec::new();
         let segment_count = if mline.is_closed() && mline.vertices.len() > 2 {
             mline.vertices.len()
         } else {
             mline.vertices.len().saturating_sub(1)
         };
-        for (offset, color) in offsets {
+        for (element_index, offset) in offset_values.iter().copied().enumerate() {
+            let color = colors.get(element_index).copied().unwrap_or(mline.common.color);
             for i in 0..segment_count {
                 let a = &mline.vertices[i];
                 let b = &mline.vertices[(i + 1) % mline.vertices.len()];
@@ -163,6 +171,28 @@ impl CadDocument {
                 line.common = crate::entities::modification::explode::inherit_common(&mline.common);
                 line.common.color = color;
                 parts.push(EntityType::Line(line));
+            }
+        }
+        if fill_on && offset_values.len() >= 2 {
+            let low = offset_values
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, f64::min);
+            let high = offset_values
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max);
+            for i in 0..segment_count {
+                let a = &mline.vertices[i];
+                let b = &mline.vertices[(i + 1) % mline.vertices.len()];
+                let mut solid = crate::entities::Solid::new(
+                    a.position + a.miter.normalize() * low,
+                    a.position + a.miter.normalize() * high,
+                    b.position + b.miter.normalize() * low,
+                    b.position + b.miter.normalize() * high,
+                );
+                solid.common = crate::entities::modification::explode::inherit_common(&mline.common);
+                parts.push(EntityType::Solid(solid));
             }
         }
         parts
