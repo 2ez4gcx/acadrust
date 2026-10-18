@@ -843,14 +843,23 @@ fn explode_leader_line(
         path[0] = base;
     }
 
-    for pair in path.windows(2) {
-        result.push(line_entity(
-            pair[0],
-            pair[1],
-            0.0,
-            Vector3::UNIT_Z,
-            &ml.common,
-        ));
+    if line.path_type == MultiLeaderPathType::Spline && path.len() >= 3 {
+        let mut spline = Spline::from_control_points(
+            (path.len().min(4) - 1) as i32,
+            path,
+        );
+        spline.common = inherit_common(&ml.common);
+        result.push(EntityType::Spline(spline));
+    } else {
+        for pair in path.windows(2) {
+            result.push(line_entity(
+                pair[0],
+                pair[1],
+                0.0,
+                Vector3::UNIT_Z,
+                &ml.common,
+            ));
+        }
     }
 }
 
