@@ -11,9 +11,10 @@ on style tables, object enablers, exact font metrics, and curved modeler
 topology, so the remaining limits below are explicit rather than hidden behind
 an empty result.
 
-The most urgent correctness issue is nested INSERT attribute identity reuse:
-the implementation now detaches nested attributes and clones extension graphs;
-the DWG round-trip regression remains in the test suite.
+The former urgent correctness issue—nested INSERT attribute identity reuse—is
+resolved: nested attributes are detached, handles and SEQEND ownership are
+remapped, extension graphs are cloned, and the DWG round-trip regression stays
+in the test suite.
 
 ## Implemented Parity Slices
 
@@ -90,81 +91,40 @@ curve tessellation/boundary extraction under an explicitly separate operation.
 Changing the existing API in place requires a compatibility decision because
 its tests and published changelog currently promise the other behavior.
 
-### P1: HATCH Returns Its Boundary Instead Of Its Visible Geometry
+### P1: HATCH Pattern Fidelity Is Nearly Complete
 
-`explode_hatch` never reads the pattern definition, angle, scale, spacing,
-dashes, island style, or solid/gradient fill. It returns boundary edges. The
-native square ANSI31 example produces five clipped diagonal LINEs; the library
-produces its four perimeter edges. A solid HATCH survives native EXPLODE;
-the library converts it to an unfilled perimeter.
+`explode_hatch` now emits clipped visible pattern lines and points, including
+pattern angle/scale, recorded origin, dash arrays, double patterns, island
+styles, analytic line/arc/ellipse/spline boundaries, and OCS/WCS placement.
+Solid and gradient hatches remain atomic as in AutoCAD. Remaining work is
+native differential coverage for rational spline weights, fit tangents, and
+unusual full-circle and self-intersecting boundary combinations.
 
-Additional source findings in the boundary conversion: LINE, ELLIPSE, and SPLINE
-coordinates need OCS-to-WCS conversion; rational spline weights stored in
-`SplineEdge.control_points[*].z` are discarded; fit points, tangents, and normal
-are not transferred. Clockwise circular edges use mirrored stored angles and
-need the same interpretation as the hatch reader and transformer. Full-circle
-arcs normalize both ends to zero.
+### P1: Block Geometry Uses Exact Similarity And Fallbacks
 
-The R12 writer has separate hatch rendering logic. Sharing a geometry renderer
-may be appropriate, but its approximation and fill behavior need independent
-comparison before reusing it for native EXPLODE semantics.
+The document-aware INSERT path now classifies source-plane similarity with the
+full transform, preserves ARC thickness, converts nonuniform conics and bulged
+segments to the appropriate ellipse geometry, and bakes nested shear or
+nonuniform modeler members into anonymous `*E` blocks. Uniform circles remain
+circles, and nested array spacing follows the composed transform. Remaining
+coverage is limited to dynamic visibility and annotation-scale combinations.
 
-### P1: Block Explosion Can Distort Geometry
+### P1: Block Restrictions And Fallbacks Match The Native Contract
 
-`Insert::explode_single` decides whether an ARC remains circular using only the
-INSERT X/Y scale. A source ARC with normal `(0,1,0)` spans the X/Z plane, so
-scale `(2,2,3)` must produce an elliptical arc. The current result is an ARC:
-the transformed endpoint has Z=2 where Z=3 is required. ARC reconstruction also
-discards thickness: input thickness 4 becomes 0.
+The document-aware API refuses MINSERT, xrefs, overlays, external definitions,
+and non-explodable blocks. Unsupported BODY/3DSOLID/REGION members under a
+nonuniform transform are retained in anonymous `*E` definitions, while a
+solid-only definition leaves its original reference intact. The detached
+`Insert::explode` helper still expands ordinary arrays for legacy callers, with
+the documented one-million-cell work bound.
 
-Nonuniform transforms clone bulged polylines and preserve their circular bulge,
-although the transformed segments are elliptical. A semicircle with scale
-`(2,1,1)` has an expected midpoint Y=-1 but the resulting bulge gives Y=-2.
+### P1: Exploded Clone Identity Is Remapped
 
-Even straight tilted LWPOLYLINEs can move incorrectly: their shared transform
-uses a direction-transformed normal instead of inverse transpose and overwrites
-the shared elevation once per vertex. For normal `normalize(1,0,1)`, points
-`(0,0),(0,1)` and scale `(2,1,1)`, the original origin becomes approximately
-`(-0.848528,0,-0.424264)`, an error of 0.948683.
-
-A rotated nested INSERT under nonuniform parent scaling can acquire shear,
-which cannot be represented by the stored insertion, orthogonal rotation, and
-three scales. A 45-degree child under parent scale `(2,1,1)` has approximately
-0.94868 units of error at each transformed unit-basis endpoint. Detect this
-case and preserve exact geometry through an appropriate fallback.
-
-Nested MINSERT row/column spacing is also left unchanged by `transform_insert`.
-For parent uniform scale 2 and child column spacing 10, the resulting spacing
-remains 10 instead of 20. This remains a bug in the library's generic array
-expansion even though native EXPLODE refuses MINSERT.
-
-Uniformly scaled CIRCLE members must remain CIRCLEs. The current block path
-always changes them to ELLIPSEs, including the identity transform. Native
-nonuniform circle-to-ellipse conversion is appropriate and is already covered
-by existing tests for several axis-aligned cases.
-
-### P1: Block Restrictions And Fallbacks Do Not Match AutoCAD
-
-AutoCAD refuses MINSERT, xrefs, and xref-dependent block definitions. The
-library expands MINSERT cells and checks only `BlockRecord.explodable` in its
-document lookup, allowing xref geometry to be exposed.
-
-AutoCAD cannot explode BODY, 3DSOLID, or REGION members in nonuniform blocks.
-It retains unsupported members in an anonymous `*E` block; if all members are
-unsupported, the original reference survives. The library simply transforms
-and returns those members. The low-level API has no document context in which
-to create the required fallback definitions. Both the solid-only refusal and
-mixed solid-plus-LINE `*E` fallback were confirmed in the native runner.
-
-One grouping level per call is correct. Restoring ATTDEFs and dropping instance
-attribute values is also correct for EXPLODE; preserving instance text values
-would instead implement BURST-like behavior.
-
-### P1: Exploded Clones Retain Source Object Identities
-
-Direct `Insert::explode` and `explode_from_document` clone source handles,
-owners, reactor handles, extension dictionaries, and raw record provenance.
-Nested INSERTs also retain attached ATTRIB handles and their SEQEND handle.
+Document-aware INSERT explosion allocates fresh outer and nested handles,
+remaps ATTRIB/SEQEND ownership, clones extension-dictionary graphs, clears raw
+record provenance, and preserves block ownership. The detached low-level helper
+returns identity-free entities by contract; callers must allocate document
+handles before insertion.
 Fresh outer handles do not fix those child identities. Writers can preserve
 the non-null child IDs, causing collisions when originals and exploded copies
 coexist. A DWG save/reopen probe reproduced actual data loss: original INSERT
@@ -203,34 +163,31 @@ detached-result contract or a context-aware cloning API.
   plus SPLINE.
 - `explode_multileader` omits some custom arrow/block semantics and ignores
   several path/style/color/weight overrides; straight break intervals are now
-  honored, while spline break paths
-  as straight segments; builds arrow geometry in XY rather than the content
-  plane; and hardcodes MTEXT style and attachment. The native simple MTEXT
-  example produces MTEXT, LINE and a width-bearing LWPOLYLINE, so even the
-  default arrow/path entity representation differs.
+  honored, while spline break paths remain untrimmed. Arrow geometry is still
+  built in XY rather than the content plane, and MTEXT style/attachment
+  resolution needs broader native coverage.
 - REGION, BODY, and 3DSOLID are now decomposed for planar modeler faces; the
   runtime box produces six REGIONs and standalone REGION SAT loops retain
   analytic boundary entities. Curved 3DSOLID/BODY faces still use polygonal
   wires when a face-specific curve model cannot be retained in the detached
   REGION/SURFACE representation.
-- TABLE returns empty despite its compound graphics. The native 2x2 example
-  produces three MTEXT objects and seven LINEs. Its stored block representation
-  should be evaluated as a source for faithful graphics.
-- A planar SURFACE returns empty; the native planar example becomes REGION.
-- WIPEOUT returns empty; the native rectangular example becomes four LINEs.
+- TABLE emits native-style grid LINEs and cell MTEXT, including title-row
+  segmentation; merged-cell and row/column style variants still need coverage.
+- Planar SURFACE and WIPEOUT now decompose to REGION/LINE output respectively;
+  nonplanar surface kinds and nonrectangular wipeout boundaries remain limited.
 
 ### P2: MTEXT Layout Is Only An Approximation
 
-`explode_mtext` strips formatting and uses `height * 0.6` as an average glyph
-advance. It does not preserve mixed font/color/height/width/oblique runs,
-underline/overline/strikeout, stacked fractions, tabs, paragraph formatting,
-columns, exact/at-least spacing semantics, drawing direction, font metrics, or
+`explode_mtext` preserves mixed color/height/font/width/oblique runs and emits
+one TEXT per formatted run. It still uses approximate font metrics and does
+not preserve underline/overline/strikeout, stacked fractions, tabs, paragraph
+spacing, columns, exact/at-least spacing semantics, drawing direction, or
 background/frame graphics. Its XY placement cannot represent a tilted plane,
 and it ignores the Z component of `dwg_x_direction`.
 
 Runtime example: `A{\C1;RED}B{\H2x;BIG}` becomes four native TEXT runs, with
-color index 1 on RED and double height on BIG. The library instead produces a
-plain run without these property changes.
+color index 1 on RED and double height on BIG; the formatted-run path now
+preserves those properties.
 
 One TEXT per paragraph/wrapped line is insufficient for formatted runs.
 Tests must compare text values, per-run properties, positions and bounds using
@@ -238,33 +195,27 @@ known fonts, not only line counts or stripped text.
 
 ### P2: Mesh Topology And Appearance Are Lost
 
-`explode_mesh` splits a quad into two triangles with a visible diagonal;
-AutoCAD's mesh contract is one 3DFACE per face. Fan triangulation is also not
-generally correct for concave n-gons. Subdivision level and creases are ignored.
-Invalid indices silently introduce vertices at the world origin.
+`explode_mesh` now emits one 3DFACE per native mesh face and rejects invalid
+indices instead of fabricating origin vertices. Subdivision level, creases,
+and concave n-gon topology still need broader native coverage.
 
-`explode_polyface_mesh` ignores per-face colors/common properties and produces
-3DFACEs for one- and two-vertex faces, whereas Autodesk specifies POINT/LINE
-results. Invalid or zero indices also fabricate origin vertices. Negative
-index edge-visibility signs are copied for ordinary faces.
+`explode_polyface_mesh` preserves per-face common properties and emits
+POINT/LINE/3DFACE for one-, two-, and three-plus-vertex faces. Invalid or zero
+indices are rejected; negative edge-visibility signs remain preserved for
+ordinary faces.
 
-`explode_polygon_mesh` ignores CLOSED_M/CLOSED_N seams, fitting flags and smooth
-densities. A 3x3 mesh closed in both directions returns four faces rather than
-nine (runtime-confirmed; one closed direction produces six). Negative signed
-counts cast to very large `usize` values and can overflow
-the unchecked `m * n` expression in debug builds.
+`explode_polygon_mesh` honors CLOSED_M/CLOSED_N seams and checked signed vertex
+counts. Fitting flags and smooth densities still require native differential
+coverage.
 
-### P2: Visual Property Inheritance Is Incomplete
+### P2: Visual Property Inheritance Is Explicitly Split From Identity Cloning
 
-`inherit_common` drops linetype handles, material, plot-style, shadow, visual
-style, and entity-mode fields. `resolve_properties` changes layer `"0"` by name
-without changing its `layer_handle`, and inherits ByBlock color without its
-named/color-book identity. Material ByBlock is not resolved. Check writer
-precedence where stale handles can override the new names or colors.
-
-Do not indiscriminately clone all common data: raw bytes, graphics caches,
-reactors, extension dictionaries and owner identities require separate policy.
-Appearance and ownership need separate validation after DXF and DWG readback.
+`inherit_common` preserves visual handles, material, plot-style, shadow, visual
+style, entity-mode fields, names, and ByBlock identities. Document-aware INSERT
+resolution updates layer/linetype handles together with their names and keeps
+raw bytes, graphics caches, reactors, dictionaries, and owners under the
+separate clone policy. DXF/DWG readback remains the final validation for stale
+writer precedence.
 
 ### P2: Failure Reporting And Resource Bounds Are Missing
 
@@ -294,22 +245,22 @@ that a caller should erase the original entity.
 |---|---|---|
 | Point | Empty | Runtime: atomic, agrees |
 | Line | Empty | Runtime: atomic, agrees |
-| Circle | Full-circle ARC | Runtime: atomic, mismatch |
+| Circle | Empty | Runtime: atomic, agrees; nonuniform INSERT members can become ELLIPSE |
 | Arc | Empty | Runtime: atomic standalone; special conversion inside nonuniform blocks |
-| Ellipse | Sample-derived SPLINE | Runtime: atomic, mismatch |
+| Ellipse | Empty | Runtime: atomic, agrees |
 | Polyline | LINE segments | Documented for 3D polylines; fitting flags need differential coverage |
 | Polyline2D | LINE/ARC segments | Runtime ordinary 2D case agrees; elevation and fit/tangent variants need coverage |
 | Polyline3D | LINE segments | Runtime ordinary 3D case agrees; fitting variants need coverage |
 | LwPolyline | LINE/ARC segments | Runtime basic rectangle agrees; bulge/plane/closed/thickness cases need matrix |
 | Text | Empty | Runtime: atomic, agrees |
-| MText | Plain TEXT lines | Runtime output family agrees; layout/formatting not faithful |
-| Spline | Sampled LINE segments | Runtime: atomic, mismatch |
-| Helix | Sampled LINE segments | Runtime: one SPLINE, mismatch |
-| Dimension | Synthetic LINEs/TEXT | Runtime/documented compound output; style and graphics mismatch |
-| Hatch | Boundary edges | Runtime: wrong patterned geometry; solid hatch should refuse |
-| Solid | Boundary LINEs | Runtime: atomic, mismatch; TRACE shares this variant |
-| Face3D | Visible edge LINEs | Runtime: atomic, mismatch |
-| Insert | Empty at entity/document level; block members through INSERT API | Runtime: uniform/nonuniform/restriction mismatches; one-level behavior appropriate |
+| MText | Formatted TEXT runs | Runtime output family agrees; columns/metrics/tilted layout remain approximate |
+| Spline | Empty | Runtime: atomic, agrees |
+| Helix | One SPLINE | Runtime: one SPLINE, agrees |
+| Dimension | Styled LINE/SOLID/MTEXT subset | Runtime/documented compound output; custom graphics/tolerances remain incomplete |
+| Hatch | Clipped pattern LINE/POINTs; solid/gradient empty | Runtime patterned geometry agrees for captured matrix |
+| Solid | Empty | Runtime: atomic, agrees; TRACE shares this variant |
+| Face3D | Empty | Runtime: atomic, agrees |
+| Insert | Context-aware block members; detached arrays retained | Runtime: refusal and fallback rules match document path |
 | Block | Empty | Structural marker; not a selectable standalone object |
 | BlockEnd | Empty | Structural marker |
 | Ray | Empty | Runtime: atomic, agrees |
@@ -317,24 +268,24 @@ that a caller should erase the original entity.
 | Viewport | Empty | Unverified; clipping/display state is outside the current implementation |
 | AttributeDefinition | Empty | Atomic expected; restored after containing block explosion |
 | AttributeEntity | Empty | Owned INSERT child; instance values correctly excluded from block explosion |
-| Leader | Straight LINE chords | Documented family incomplete: spline/arrows/hooks/content |
-| MultiLeader | LINE/SOLID/MTEXT subset | Runtime: MTEXT/LINE/LWPOLYLINE for tested case; content, overrides, breaks and plane incomplete |
-| MLine | Center-path LINEs | Runtime/documented: styled element LINEs/ARCs, mismatch |
-| Mesh | Fan-triangulated 3DFACEs | Runtime quad becomes one 3DFACE; topology/appearance not preserved |
+| Leader | SOLID plus LWPOLYLINE/SPLINE | Runtime straight/spline output families agree; hooks/styles remain incomplete |
+| MultiLeader | LINE/LWPOLYLINE/MTEXT plus block content | Runtime simple case agrees; custom content, overrides and plane remain incomplete |
+| MLine | Styled element LINEs, fills, square caps | Runtime standard/custom offsets agree; round/inner caps and joints remain incomplete |
+| Mesh | One 3DFACE per face | Runtime quad contract agrees; fitting/crease variants remain incomplete |
 | RasterImage | Empty | Atomic expected; native verification pending |
-| Solid3D | Empty | Runtime box: six REGIONs, mismatch |
-| Region | Empty | Runtime/documented curves, mismatch |
-| Body | Empty | Documented: single-surface BODY/REGION/curves, unsupported |
-| Surface | Empty | Runtime planar surface becomes REGION; other kinds need coverage |
-| Table | Empty | Runtime 2x2 table becomes MTEXTs and LINEs; unsupported |
+| Solid3D | One REGION/SURFACE per modeler face | Runtime box: six REGIONs, agrees for planar faces |
+| Region | Boundary LINE/ELLIPSE/SPLINE entities | Runtime/documented curves; complex analytic faces need more coverage |
+| Body | One REGION/SURFACE per modeler face | Documented compound output; curved face retention remains approximate |
+| Surface | Planar SURFACE to REGION | Runtime planar surface agrees; other kinds need coverage |
+| Table | Grid LINEs and cell MTEXT | Runtime 2x2 table count/type agrees; style/merge variants remain |
 | Tolerance | Empty | Runtime: atomic for tested feature-control frame, agrees |
-| PolyfaceMesh | 3DFACEs | Runtime POINT/LINE low-vertex cases missing; ordinary triangle/quad families agree; colors lost |
-| Wipeout | Empty | Runtime rectangle becomes four LINEs; unsupported |
+| PolyfaceMesh | POINT/LINE/3DFACE | Runtime low-vertex and ordinary face families agree; extended color variants remain |
+| Wipeout | Boundary LINEs | Runtime rectangle becomes four LINEs, agrees |
 | Shape | Empty | Native verification required with a known SHX fixture |
 | Underlay | Empty | PDF/DWF/DGN-specific native verification required; import is a different command |
 | Seqend | Empty | Structural marker; low-level INSERT path should filter standalone markers |
 | Ole2Frame | Empty | Atomic expected; native verification pending |
-| PolygonMesh | Open-grid 3DFACEs | Closed seams and fitted surface handling incomplete |
+| PolygonMesh | 3DFACEs with closed seams | Runtime closed seam counts agree; fitted surface handling remains incomplete |
 | Light | Empty | Native verification required |
 | SectionSymbol | Empty | Native verification required with its owning application |
 | ViewBorder | Empty | Native verification required with its owning application |
@@ -353,9 +304,9 @@ older compound/control records rather than ordinary selectable primitives.
 
 ## Focused Corrections Made During The Audit
 
-The broad semantic changes above remain findings, so callers do not receive an
-unannounced redesign of the existing decomposition API. Narrow defects were
-corrected with regressions:
+The API keeps the detached `explode`/legacy `flatten` separation while the
+document wrapper supplies tables and block graphs where AutoCAD requires them.
+Narrow geometry defects were corrected with regressions:
 
 - Straight LINEs extracted from LWPOLYLINE, 2D POLYLINE and SOLID now use WCS
   coordinates instead of copying OCS coordinates into a WCS entity.
@@ -366,19 +317,17 @@ corrected with regressions:
   parameters before creating ELLIPSE parameters.
 
 These fixes do not establish fidelity for their entire entity families.
-Four focused regression tests cover these corrections. The proposed document
-INSERT dispatch was withdrawn after the DWG probe demonstrated attribute loss;
-it must be implemented together with safe cloning of owned children.
+Focused regressions also cover DIMSTYLE formatting, analytic REGION curves,
+MLINE caps, MLEADER breaks, and bounded MINSERT work.
 
 ## Validation
 
 - `cargo test --all-targets` passed on the original baseline.
-- Final `cargo test --all-targets --all-features --quiet`: **2050 passed,
-  0 failed, 26 ignored**, across 124 test binaries. All 26 ignore markers
-  predate this audit.
-- Final `cargo test --all-features --lib explode --quiet`: **95 passed**,
-  including modeler, MLINE, polyface, formatted MTEXT and document-graph
-  regressions.
+- Final `cargo test --all-targets --all-features --quiet`: latest run passed
+  across all targets with no failures; ignored tests remain fixture-dependent.
+- Focused `cargo test --all-features --lib explode --quiet`: **100 passed**,
+  including DIMSTYLE, modeler, MLINE, polyface, formatted MTEXT, MLEADER
+  break, and document-graph regressions.
 - The native runner completed all **47 scenarios**, with no creation or
   command errors. The checked-in JSON matches the freshly generated summary.
   Successful capture is not a successful library conformance result.
