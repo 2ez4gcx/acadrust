@@ -8,8 +8,9 @@
 use std::collections::HashMap;
 
 use super::CadDocument;
-use crate::entities::{EntityType, Insert, Line, MLine, MultiLeader};
-use crate::types::{Handle, Transform};
+use crate::entities::{Block, BlockEnd, EntityCommon, EntityType, Insert, Line, MLine, MultiLeader};
+use crate::tables::BlockRecord;
+use crate::types::{Handle, Transform, Vector3};
 
 impl CadDocument {
     /// Expand MULTILEADER block content after resolving the referenced block.
@@ -154,9 +155,159 @@ impl CadDocument {
             .collect();
 
         let transform = insert.get_transform();
-        let mut parts = insert.explode_with_transform(&source, &transform, false);
+        let mut parts = Vec::new();
+        let unsupported: Vec<EntityType> = if !insert.has_uniform_scale() {
+            source
+                .iter()
+                .filter(|entity| Self::is_nonuniform_modeler(entity))
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if !unsupported.is_empty() {
+            let drawable_count = source
+                .iter()
+                .filter(|entity| !matches!(entity, EntityType::Block(_) | EntityType::BlockEnd(_) | EntityType::Seqend(_)))
+                .count();
+            if unsupported.len() == drawable_count {
+                // AutoCAD leaves an INSERT containing only unsupported
+                // modeler members untouched under a non-uniform transform.
+                return Vec::new();
+            }
+            let geometry = unsupported
+                .into_iter()
+                .map(|mut entity| {
+                    entity.as_entity_mut().apply_transform(&transform);
+                    entity
+                })
+                .collect();
+            if let Some(fallback) = self.make_anonymous_fallback(geometry, &insert.common) {
+                parts.push(fallback);
+            }
+        }
+        for entity in &source {
+            if Self::is_nonuniform_modeler(entity) && !insert.has_uniform_scale() {
+                continue;
+            }
+            if let EntityType::Insert(nested) = entity {
+                let composite = Transform::from_matrix(transform.matrix * nested.get_transform().matrix);
+                if Insert::has_unrepresentable_shear(&composite) {
+                    if let Some(fallback) =
+                        self.make_shear_fallback(insert, nested, &transform)
+                    {
+                        parts.push(fallback);
+                        continue;
+                    }
+                }
+            }
+            parts.extend(insert.explode_with_transform(std::slice::from_ref(entity), &transform, false));
+        }
         self.detach_exploded_parts(&mut parts, insert.common.owner_handle);
         parts
+    }
+
+    fn is_nonuniform_modeler(entity: &EntityType) -> bool {
+        matches!(entity, EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_))
+    }
+
+    /// Preserve an exact nested INSERT whose parent transform introduces
+    /// shear.  The INSERT record cannot encode that affine map, so bake the
+    /// nested block's transformed primitives into an anonymous `*E` block and
+    /// return an identity reference to it, matching AutoCAD's fallback.
+    fn make_shear_fallback(
+        &mut self,
+        parent: &Insert,
+        nested: &Insert,
+        parent_transform: &Transform,
+    ) -> Option<EntityType> {
+        let record = self.block_records.get(&nested.block_name).cloned()?;
+        if !record.explodable
+            || record.flags.is_xref
+            || record.flags.is_xref_overlay
+            || record.flags.is_external
+            || !record.xref_path.is_empty()
+        {
+            return None;
+        }
+        let base = self
+            .get_entity(record.block_entity_handle)
+            .and_then(|entity| match entity {
+                EntityType::Block(block) => Some(block.base_point),
+                _ => None,
+            })
+            .unwrap_or(record.base_point);
+        let to_base = Transform::from_translation(base * -1.0);
+        let source: Vec<EntityType> = record
+            .entity_handles
+            .iter()
+            .filter_map(|handle| self.get_entity(*handle).cloned())
+            .map(|mut entity| {
+                entity.as_entity_mut().apply_transform(&to_base);
+                entity
+            })
+            .collect();
+        let composite = Transform::from_matrix(parent_transform.matrix * nested.get_transform().matrix);
+        let geometry = nested.explode_with_transform(&source, &composite, true);
+        if geometry.is_empty() {
+            return None;
+        }
+
+        let mut common = nested.common.clone();
+        if common.layer == "0" {
+            common.layer = parent.common.layer.clone();
+            common.layer_handle = parent.common.layer_handle;
+        }
+        if common.color == crate::types::Color::ByBlock {
+            common.color = parent.common.color;
+            common.color_name = parent.common.color_name.clone();
+            common.color_book_handle = parent.common.color_book_handle;
+        }
+        self.make_anonymous_fallback(geometry, &common)
+    }
+
+    fn make_anonymous_fallback(
+        &mut self,
+        geometry: Vec<EntityType>,
+        common: &EntityCommon,
+    ) -> Option<EntityType> {
+        if geometry.is_empty() {
+            return None;
+        }
+        let mut ordinal = 0u64;
+        let name = loop {
+            let candidate = format!("*E{}", ordinal);
+            if !self.block_records.contains(&candidate) {
+                break candidate;
+            }
+            ordinal += 1;
+        };
+        let record_handle = self.allocate_handle();
+        let marker_handle = self.allocate_handle();
+        let end_handle = self.allocate_handle();
+        let mut fallback_record = BlockRecord::new(&name);
+        fallback_record.handle = record_handle;
+        fallback_record.block_entity_handle = marker_handle;
+        fallback_record.block_end_handle = end_handle;
+        fallback_record.flags.anonymous = true;
+        self.block_records.add(fallback_record).ok()?;
+
+        let mut marker = Block::new(&name, Vector3::ZERO);
+        marker.common.handle = marker_handle;
+        marker.common.owner_handle = record_handle;
+        self.add_entity(EntityType::Block(marker)).ok()?;
+        for mut entity in geometry {
+            entity.common_mut().owner_handle = record_handle;
+            self.add_entity(entity).ok()?;
+        }
+        let mut end = BlockEnd::new();
+        end.common.handle = end_handle;
+        end.common.owner_handle = record_handle;
+        self.add_entity(EntityType::BlockEnd(end)).ok()?;
+
+        let mut fallback = Insert::new(name, Vector3::ZERO);
+        fallback.common = common.clone();
+        Some(EntityType::Insert(fallback))
     }
 
     /// Assign fresh entity and compound-child identities and clone each
@@ -350,5 +501,81 @@ mod tests {
             output.common.handle
         );
         assert_ne!(output.seqend_handle, Some(Handle::new(0x1202)));
+    }
+
+    #[test]
+    fn context_explode_bakes_nested_shear_into_anonymous_block() {
+        let mut document = CadDocument::new();
+        let child_owner = {
+            let mut record = BlockRecord::new("CHILD");
+            record.handle = document.allocate_handle();
+            let owner = record.handle;
+            document.block_records.add(record).unwrap();
+            let mut marker = Block::new("CHILD", Vector3::ZERO);
+            marker.common.owner_handle = owner;
+            let marker_handle = document.add_entity(EntityType::Block(marker)).unwrap();
+            document.block_records.get_mut("CHILD").unwrap().block_entity_handle = marker_handle;
+            let mut line = Line::from_points(Vector3::ZERO, Vector3::new(1.0, 0.0, 0.0));
+            line.common.owner_handle = owner;
+            document.add_entity(EntityType::Line(line)).unwrap();
+            owner
+        };
+        let parent_owner = {
+            let mut record = BlockRecord::new("PARENT");
+            record.handle = document.allocate_handle();
+            let owner = record.handle;
+            document.block_records.add(record).unwrap();
+            let mut marker = Block::new("PARENT", Vector3::ZERO);
+            marker.common.owner_handle = owner;
+            let marker_handle = document.add_entity(EntityType::Block(marker)).unwrap();
+            document.block_records.get_mut("PARENT").unwrap().block_entity_handle = marker_handle;
+            owner
+        };
+        let mut nested = Insert::new("CHILD", Vector3::ZERO).with_rotation(std::f64::consts::FRAC_PI_4);
+        nested.common.owner_handle = parent_owner;
+        document.add_entity(EntityType::Insert(nested)).unwrap();
+        let mut outer = Insert::new("PARENT", Vector3::ZERO).with_scale(2.0, 1.0, 1.0);
+        outer.common.owner_handle = document.header.model_space_block_handle;
+        let parts = document.explode_entity(&EntityType::Insert(outer));
+        let fallback = parts.iter().find_map(|part| match part {
+            EntityType::Insert(insert) if insert.block_name.starts_with("*E") => Some(insert),
+            _ => None,
+        }).expect("nested shear should use an anonymous fallback block");
+        assert!(document.block_records.contains(&fallback.block_name));
+        assert!(document.entities_in_block(&fallback.block_name).any(|entity| {
+            matches!(entity, EntityType::Line(_))
+        }));
+        assert_ne!(child_owner, parent_owner);
+    }
+
+    #[test]
+    fn context_explode_keeps_nonuniform_modeler_member_in_anonymous_block() {
+        let mut document = CadDocument::new();
+        let mut record = BlockRecord::new("MODEL");
+        record.handle = document.allocate_handle();
+        let owner = record.handle;
+        document.block_records.add(record).unwrap();
+        let mut marker = Block::new("MODEL", Vector3::ZERO);
+        marker.common.owner_handle = owner;
+        let marker_handle = document.add_entity(EntityType::Block(marker)).unwrap();
+        document.block_records.get_mut("MODEL").unwrap().block_entity_handle = marker_handle;
+        let mut solid = crate::entities::Solid3D::new();
+        solid.common.owner_handle = owner;
+        document.add_entity(EntityType::Solid3D(solid)).unwrap();
+        let mut line = Line::from_points(Vector3::ZERO, Vector3::new(1.0, 0.0, 0.0));
+        line.common.owner_handle = owner;
+        document.add_entity(EntityType::Line(line)).unwrap();
+
+        let mut insert = Insert::new("MODEL", Vector3::ZERO).with_scale(2.0, 1.0, 1.0);
+        insert.common.owner_handle = document.header.model_space_block_handle;
+        let parts = document.explode_entity(&EntityType::Insert(insert));
+        assert!(parts.iter().any(|part| matches!(part, EntityType::Line(_))));
+        let fallback = parts.iter().find_map(|part| match part {
+            EntityType::Insert(value) if value.block_name.starts_with("*E") => Some(value),
+            _ => None,
+        }).expect("modeler member fallback INSERT");
+        assert!(document.entities_in_block(&fallback.block_name).any(|entity| {
+            matches!(entity, EntityType::Solid3D(_))
+        }));
     }
 }

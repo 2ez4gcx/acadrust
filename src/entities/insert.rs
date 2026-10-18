@@ -556,6 +556,26 @@ impl Insert {
             && x.dot(&y).abs() <= 1e-10 * lx * ly
     }
 
+    /// Whether a linear transform introduces shear relative to an INSERT's
+    /// orthogonal local axes.  INSERT can encode three signed scales and one
+    /// rotation, so non-orthogonal transformed basis vectors require an
+    /// anonymous fallback block in the document-aware EXPLODE path.
+    pub(crate) fn has_unrepresentable_shear(transform: &Transform) -> bool {
+        let x = transform.apply_rotation(Vector3::UNIT_X);
+        let y = transform.apply_rotation(Vector3::UNIT_Y);
+        let z = transform.apply_rotation(Vector3::UNIT_Z);
+        let vectors = [x, y, z];
+        for i in 0..vectors.len() {
+            for j in (i + 1)..vectors.len() {
+                let scale = vectors[i].length() * vectors[j].length();
+                if scale > SCALE_EPSILON && vectors[i].dot(&vectors[j]).abs() > 1e-10 * scale {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Explode an arc with uniform XY scale — keeps it as an Arc.
     fn explode_arc_uniform(&self, arc: &Arc, transform: &Transform) -> EntityType {
         // DXF arcs store `center` in OCS (arbitrary-axis algorithm with the
