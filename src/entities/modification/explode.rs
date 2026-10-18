@@ -585,6 +585,41 @@ fn wrap_paragraph(text: &str, width: f64, char_width: f64) -> Vec<String> {
     lines
 }
 
+fn mtext_axes(mtext: &MText) -> (Vector3, Vector3) {
+    let normal = if mtext.normal.length_squared() > 1e-20 {
+        mtext.normal.normalize()
+    } else {
+        Vector3::UNIT_Z
+    };
+    let fallback = Vector3::new(mtext.rotation.cos(), mtext.rotation.sin(), 0.0);
+    let raw_x = mtext.dwg_x_direction.unwrap_or(fallback);
+    let projected = raw_x - normal * raw_x.dot(&normal);
+    let x_axis = if projected.length_squared() > 1e-20 {
+        projected.normalize()
+    } else {
+        (Matrix3::arbitrary_axis(normal) * Vector3::UNIT_X).normalize()
+    };
+    let y_axis = normal.cross(&x_axis).normalize();
+    (x_axis, y_axis)
+}
+
+fn mtext_column_layout(mtext: &MText, line_count: usize, line_index: usize) -> (usize, usize) {
+    let columns = if mtext.column_data.column_type == 0 {
+        1
+    } else {
+        (mtext.column_data.column_count.max(1) as usize).max(1)
+    };
+    if columns == 1 || line_count == 0 {
+        return (0, line_index);
+    }
+    let lines_per_column = line_count.div_ceil(columns).max(1);
+    let mut column = (line_index / lines_per_column).min(columns - 1);
+    if mtext.column_data.flow_reversed {
+        column = columns - 1 - column;
+    }
+    (column, line_index % lines_per_column)
+}
+
 fn explode_mtext(mtext: &MText) -> Vec<EntityType> {
     let formatted = crate::entities::mtext_format::parse_mtext(&mtext.value, false);
     if formatted.paragraphs.iter().any(|paragraph| {
@@ -622,27 +657,28 @@ fn explode_mtext(mtext: &MText) -> Vec<EntityType> {
         1 => -height + total / 2.0,
         _ => -height + total,
     };
-    let rotation = match mtext.dwg_x_direction {
-        Some(d) if d.x.abs() + d.y.abs() > 1e-12 => d.y.atan2(d.x),
-        _ => mtext.rotation,
-    };
-    let (sin, cos) = rotation.sin_cos();
+    let rotation = mtext
+        .dwg_x_direction
+        .filter(|direction| direction.x.abs() + direction.y.abs() > 1e-12)
+        .map(|direction| direction.y.atan2(direction.x))
+        .unwrap_or(mtext.rotation);
+    let (x_axis, y_axis) = mtext_axes(mtext);
+    let column_width = (mtext.rectangle_width + mtext.column_data.gutter).max(0.0);
     let horizontal = match column {
         0 => TextHorizontalAlignment::Left,
         1 => TextHorizontalAlignment::Center,
         _ => TextHorizontalAlignment::Right,
     };
+    let line_count = lines.len();
     lines
         .into_iter()
         .enumerate()
         .filter(|(_, line)| !line.trim().is_empty())
         .map(|(i, line)| {
-            let y = first - spacing * i as f64;
-            let point = Vector3::new(
-                mtext.insertion_point.x - y * sin,
-                mtext.insertion_point.y + y * cos,
-                mtext.insertion_point.z,
-            );
+            let (column_index, row_index) = mtext_column_layout(mtext, line_count, i);
+            let y = first - spacing * row_index as f64;
+            let point = mtext.insertion_point + x_axis * (column_width * column_index as f64)
+                + y_axis * y;
             EntityType::Text(Text {
                 common: inherit_common(&mtext.common),
                 value: line,
@@ -671,11 +707,18 @@ fn explode_formatted_mtext(
     let base_height = if mtext.height > 0.0 { mtext.height } else { 1.0 };
     let spacing = base_height * 5.0 / 3.0
         * if mtext.line_spacing_factor > 0.0 { mtext.line_spacing_factor } else { 1.0 };
-    let (sin, cos) = mtext.rotation.sin_cos();
+    let (x_axis, y_axis) = mtext_axes(mtext);
+    let column_width = (mtext.rectangle_width + mtext.column_data.gutter).max(0.0);
     let mut result = Vec::new();
     for (paragraph_index, paragraph) in document.paragraphs.iter().enumerate() {
         let mut advance = 0.0;
-        let y = -(paragraph_index as f64) * spacing - base_height;
+        let (column_index, row_index) = mtext_column_layout(
+            mtext,
+            document.paragraphs.len(),
+            paragraph_index,
+        );
+        let y = -(row_index as f64) * spacing - base_height;
+        let column_offset = x_axis * (column_width * column_index as f64);
         for span in &paragraph.spans {
             let value = span
                 .stacking
@@ -693,11 +736,7 @@ fn explode_formatted_mtext(
             let width_factor = span.properties.width_factor.unwrap_or(1.0).max(1e-9);
             let rotation = mtext.rotation
                 + span.properties.oblique_angle.unwrap_or(0.0).to_radians();
-            let point = Vector3::new(
-                mtext.insertion_point.x - y * sin + advance * cos,
-                mtext.insertion_point.y + y * cos + advance * sin,
-                mtext.insertion_point.z,
-            );
+            let point = mtext.insertion_point + column_offset + y_axis * y + x_axis * advance;
             let mut text = Text {
                 common: inherit_common(&mtext.common),
                 value,
@@ -2891,6 +2930,45 @@ mod tests {
         assert_eq!(texts[1].common.color, Color::from_index(1));
         assert_eq!(texts[2].value, "B");
         assert!((texts[3].height - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_explode_mtext_uses_tilted_normal_axes() {
+        let mut mtext = MText::with_value("A\nB", Vector3::ZERO);
+        mtext.normal = Vector3::new(0.0, 1.0, 0.0);
+        mtext.dwg_x_direction = Some(Vector3::UNIT_X);
+        let parts = EntityType::MText(Box::new(mtext)).explode();
+        let texts: Vec<_> = parts
+            .iter()
+            .filter_map(|part| match part {
+                EntityType::Text(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts.len(), 2);
+        assert!(texts.iter().all(|text| text.insertion_point.y.abs() < 1e-12));
+        assert!(texts[1].insertion_point.z > texts[0].insertion_point.z);
+        assert_eq!(texts[0].normal, Vector3::new(0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn test_explode_mtext_static_columns_flow_across_gutter() {
+        let mut mtext = MText::with_value("A\nB\nC", Vector3::ZERO);
+        mtext.rectangle_width = 10.0;
+        mtext.column_data.column_type = 1;
+        mtext.column_data.column_count = 2;
+        mtext.column_data.gutter = 2.0;
+        let parts = EntityType::MText(Box::new(mtext)).explode();
+        let texts: Vec<_> = parts
+            .iter()
+            .filter_map(|part| match part {
+                EntityType::Text(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts.len(), 3);
+        assert!((texts[2].insertion_point.x - 12.0).abs() < 1e-12);
+        assert!((texts[2].insertion_point.y - texts[0].insertion_point.y).abs() < 1e-12);
     }
 
     #[test]
