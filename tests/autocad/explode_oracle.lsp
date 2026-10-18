@@ -174,6 +174,8 @@
     (entmake '((0 . "SEQEND")))))
   (command "_.-wblock" (strcat ae:root "/target/explode-oracle/ae_xref.dwg") "AE_BLOCK")
   (ae:run "XREF" '(lambda () (command "_.-xref" "_attach" (strcat ae:root "/target/explode-oracle/ae_xref.dwg") "_non" '(0.0 0.0 0.0) 1.0 1.0 0.0)))
+  (ae:run "AEC_WALL" '(lambda ()
+    (command "_.walladd" "_non" '(0.0 0.0 0.0) "_non" '(10.0 0.0 0.0) "")))
   (ae:emit "DONE")
   (foreach variable saved (setvar (car variable) (cdr variable)))
   (close ae:out)

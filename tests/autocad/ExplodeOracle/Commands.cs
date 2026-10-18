@@ -53,6 +53,61 @@ public sealed class Commands
         return new BlockReference(Point3d.Origin, id) { ScaleFactors = new Scale3d(2, 1, 1) };
     }
 
+    private static Entity CustomDimension()
+    {
+        var database = Application.DocumentManager.MdiActiveDocument.Database;
+        ObjectId styleId;
+        using (var transaction = database.TransactionManager.StartTransaction())
+        {
+            var table = (DimStyleTable)transaction.GetObject(database.DimStyleTableId, OpenMode.ForWrite);
+            const string name = "AE_CUSTOM_DIM";
+            if (table.Has(name))
+            {
+                styleId = table[name];
+            }
+            else
+            {
+                var style = new DimStyleTableRecord
+                {
+                    Name = name,
+                    Dimtxt = 3.0,
+                    Dimasz = 1.0,
+                    Dimexo = 1.0,
+                    Dimexe = 2.0,
+                    Dimlfac = 2.0,
+                    Dimdec = 1,
+                    Dimpost = "<> mm",
+                    Dimgap = 0.5
+                };
+                styleId = table.Add(style);
+                transaction.AddNewlyCreatedDBObject(style, true);
+            }
+            transaction.Commit();
+        }
+        return new AlignedDimension(
+            new Point3d(0, 0, 0),
+            new Point3d(10, 0, 0),
+            new Point3d(0, 5, 0),
+            "",
+            styleId);
+    }
+
+    private static Entity CurvedRegion()
+    {
+        var circle = new Circle(Point3d.Origin, Vector3d.ZAxis, 5.0);
+        var curves = new DBObjectCollection { circle };
+        var regions = Region.CreateFromCurves(curves);
+        circle.Dispose();
+        return (Region)regions[0];
+    }
+
+    private static Entity CurvedSolid()
+    {
+        var solid = new Solid3d();
+        solid.CreateFrustum(10.0, 5.0, 5.0, 5.0);
+        return solid;
+    }
+
     private static void Run(StreamWriter output, string name, Func<Entity> create)
     {
         var editor = Application.DocumentManager.MdiActiveDocument.Editor;
@@ -133,6 +188,9 @@ public sealed class Commands
         });
         Run(output, "INSERT_NONUNIFORM_ACIS_ONLY", () => NonuniformAcis(false));
         Run(output, "INSERT_NONUNIFORM_ACIS_MIXED", () => NonuniformAcis(true));
+        Run(output, "DIM_ALIGNED_CUSTOM_STYLE", CustomDimension);
+        Run(output, "REGION_CIRCLE", CurvedRegion);
+        Run(output, "3DSOLID_CYLINDER", CurvedSolid);
         Application.DocumentManager.MdiActiveDocument.Editor.WriteMessage("\nAE_EXTRA|DONE\n");
         output.WriteLine("DONE");
     }

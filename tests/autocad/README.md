@@ -1,6 +1,6 @@
 # AutoCAD EXPLODE Oracle
 
-This directory records **47 observed scenarios**, not a full conformance claim.
+This directory records **51 observed scenarios**, not a full conformance claim.
 The library-wide audit is [Explode Compatibility Audit](../../src/docs/explode_audit.md).
 
 ## Provenance
@@ -11,7 +11,7 @@ The library-wide audit is [Explode Compatibility Audit](../../src/docs/explode_a
 - The host selected its existing AutoCAD Architecture (Global) profile and
   `AEC Model (Global Ctb).dwt`. The native script restores `Standard` DIMSTYLE
   and explicitly sets the tested dimension variables and MLINE scale.
-- Forty scenarios use AutoLISP and seven use the managed helper. Both invoke
+- Forty-one scenarios use AutoLISP and ten use the managed helper. Both invoke
   the actual `EXPLODE` command. The managed helper uses `Editor.Command`, not
   `Entity.Explode` or COM `Explode`.
 - Scratch xrefs are created under `target/explode-oracle`. The console discards
@@ -31,7 +31,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tests/autocad/run-explode-or
 references. The captured host uses .NET 10.0.9 with an available .NET 8 SDK;
 the helper project references those installed host runtime assemblies directly.
 No SDK or runtime is installed by the runner. `-SkipManaged` runs only the
-40 AutoLISP scenarios.
+41 AutoLISP scenarios.
 
 The runner launches hidden console processes with a 60-second deadline, requires
 completion markers, rejects creation/runtime failures, and writes fresh logs
@@ -43,11 +43,12 @@ exit. The native script also restores the profile variables it changes.
 ## Retained Observations
 
 - [observed-2027.json](observed-2027.json): source survival and output DXF types
-  for all 47 scenarios. These are observations, not library test expectations.
+  for all 51 scenarios. These are observations, not library test expectations.
 - [observed-2027-native.txt](observed-2027-native.txt): source/result `entget`
-  records, output types, counts, and completion marker for the 40 native cases.
-- [observed-2027-managed.txt](observed-2027-managed.txt): seven managed-created
-  cases, including the anonymous block name for the nonuniform ACIS fallback.
+  records, output types, counts, and completion marker for the 41 native cases.
+- [observed-2027-managed.txt](observed-2027-managed.txt): ten managed-created
+  cases, including custom DIMSTYLE, circular REGION, curved-cylinder, and the
+  anonymous block name for the nonuniform ACIS fallback.
 
 `sourceSurvives=true` means AutoCAD refused the requested explosion and produced
 no replacement objects. It does not authorize deleting the source. Entity
@@ -76,6 +77,10 @@ Important confirmed cases include:
 | Nonuniform solid+line block | Anonymous `*E` INSERT and transformed LINE |
 | Block with an attribute instance | ATTDEF with default value, plus LINE |
 | `A{\C1;RED}B{\H2x;BIG}` MTEXT | Four TEXT runs: A, red RED, B, double-height BIG |
+| Custom DIMSTYLE aligned dimension | Four LINEs, two SOLIDs, one MTEXT |
+| Circular REGION | One CIRCLE |
+| Curved cylinder 3DSOLID | One SURFACE and two REGIONs |
+| AutoCAD Architecture AEC_WALL | Anonymous `INSERT` block reference |
 
 The formatted MTEXT result retains color index 1 on `RED` and height 5.0 on
 `BIG`, while the other runs have height 2.5. The attribute result contains
@@ -88,8 +93,10 @@ native geometry records; it does not compare every output coordinate/property
 with the Rust library. It does not cover every entity variant, dimension
 subtype, text font/layout mode, hatch pattern/island/gradient, leader style,
 MLINE style/cap/gap, fitted/smoothed mesh, ACIS curve/surface family, annotation
-scale, dynamic block, proxy/object enabler, or file roundtrip. The full audit
-marks those remaining obligations explicitly.
+scale, dynamic block, arbitrary proxy/object enabler, or file roundtrip. The
+installed AutoCAD Architecture enabler is covered by the AEC_WALL fixture; the
+Rust library has no typed AEC wall representation. The full audit marks those
+remaining obligations explicitly.
 
 ## Autodesk References
 

@@ -300,6 +300,12 @@
 
                                  ]
              },
+    "AEC_WALL":  {
+                     "sourceSurvives":  false,
+                     "resultTypes":  [
+                                         "INSERT"
+                                     ]
+                 },
     "TABLE":  {
                   "sourceSurvives":  false,
                   "resultTypes":  [
@@ -357,5 +363,31 @@
                                                              "LINE"
                                                          ],
                                          "resultBlock":  "*E9"
-                                     }
+                                     },
+    "DIM_ALIGNED_CUSTOM_STYLE":  {
+                                     "sourceSurvives":  false,
+                                     "resultTypes":  [
+                                                         "LINE",
+                                                         "LINE",
+                                                         "LINE",
+                                                         "LINE",
+                                                         "SOLID",
+                                                         "SOLID",
+                                                         "MTEXT"
+                                                     ]
+                                 },
+    "REGION_CIRCLE":  {
+                          "sourceSurvives":  false,
+                          "resultTypes":  [
+                                              "CIRCLE"
+                                          ]
+                      },
+    "3DSOLID_CYLINDER":  {
+                             "sourceSurvives":  false,
+                             "resultTypes":  [
+                                                 "SURFACE",
+                                                 "REGION",
+                                                 "REGION"
+                                             ]
+                         }
 }

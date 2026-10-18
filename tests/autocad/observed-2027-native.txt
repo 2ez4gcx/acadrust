@@ -333,4 +333,10 @@ XREF|SOURCE|((-1 . <Entity name: 1ede0834a40>) (0 . "INSERT") (330 . <Entity nam
 XREF|SOURCE_TYPE|INSERT
 XREF|SOURCE_SURVIVES|YES
 XREF|RESULT_COUNT|0
+AEC_WALL|SOURCE|((-1 . <Entity name: 188a44d4af0>) (0 . "AEC_WALL") (330 . <Entity name: 1889a8149f0>) (5 . "3EB7") (100 . "AcDbEntity") (67 . 0) (410 . "Model") (8 . "A-Wall"))
+AEC_WALL|SOURCE_TYPE|AEC_WALL
+AEC_WALL|SOURCE_SURVIVES|NO
+AEC_WALL|RESULT_TYPE|INSERT
+AEC_WALL|RESULT|((-1 . <Entity name: 188a44d4b80>) (0 . "INSERT") (330 . <Entity name: 1889a8149f0>) (5 . "3EC0") (100 . "AcDbEntity") (67 . 0) (410 . "Model") (8 . "A-Wall") (62 . 113) (6 . "Continuous") (370 . 50) (100 . "AcDbBlockReference") (2 . "*U14") (10 0.0 0.0 0.0) (41 . 1.0) (42 . 1.0) (43 . 1.0) (50 . 0.0) (70 . 0) (71 . 0) (44 . 0.0) (45 . 0.0) (210 0.0 0.0 1.0))
+AEC_WALL|RESULT_COUNT|1
 DONE

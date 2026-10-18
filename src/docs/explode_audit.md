@@ -37,7 +37,9 @@ in the test suite.
   fresh nested handles and cloned extension dictionaries.
 - ACIS planar face extraction to REGION entities for 3DSOLID/BODY/REGION and
   planar SURFACE inputs; REGION SAT loops retain straight, analytic ellipse,
-  and NURBS edge curves, including coedge orientation and bounded spans.
+  and NURBS edge curves, including coedge orientation and bounded spans;
+  full analytic circles become CIRCLE entities and curved cylinders retain
+  their SURFACE plus planar REGION outputs.
 - MTEXT formatted runs preserve explicit color, height, font and width data.
 - MTEXT exploded TEXT positions honor tilted normals/DWG X directions and
   static or dynamic column flow with gutter spacing.
@@ -58,7 +60,7 @@ Evidence is distinguished below as:
 
 Reference: [Autodesk EXPLODE command documentation](https://help.autodesk.com/cloudhelp/2026/ENU/AutoCAD-Core/files/GUID-E98BCEF4-DED6-48A6-87EB-10FE87188083.htm).
 The [native runner and provenance](../../tests/autocad/README.md) and
-[47 captured observations](../../tests/autocad/observed-2027.json) use AutoCAD
+[51 captured observations](../../tests/autocad/observed-2027.json) use AutoCAD
 2027 build `26.0.118.0.0`. They exercise the `EXPLODE` command, rather than
 assuming that a detached modeler API has the same refusal and database behavior.
 
@@ -292,7 +294,11 @@ object enablers and saved graphics determine native behavior. In particular,
 do not count ArcAlignedText, remote/geographic text or legacy compound classes
 as verified atomic just because the top-level wrapper returns empty. The legacy
 subvariants Repeat, EndRepeat, Load and Jump are also declined; they encode
-older compound/control records rather than ordinary selectable primitives.
+older compound/control records rather than ordinary selectable primitives. The
+installed AutoCAD Architecture enabler now provides one concrete native
+fixture: `AEC_WALL` EXPLODE erases the source and emits an anonymous INSERT.
+The Rust model has no typed AEC wall/proxy representation, so that result is
+verified as an explicit unsupported boundary rather than claimed as parity.
 
 ## Focused Corrections Made During The Audit
 
@@ -320,7 +326,7 @@ MLINE caps, MLEADER breaks, and bounded MINSERT work.
 - Focused `cargo test --all-features --lib explode --quiet`: **104 passed**,
   including DIMSTYLE, modeler, MLINE, polyface, formatted MTEXT, MLEADER
   break, and document-graph regressions.
-- The native runner completed all **47 scenarios**, with no creation or
+- The native runner completed all **51 scenarios**, with no creation or
   command errors. The checked-in JSON matches the freshly generated summary.
   Successful capture is not a successful library conformance result.
 - Mathematical INSERT probes reproduced tilted ARC, bulged/tilted polyline,

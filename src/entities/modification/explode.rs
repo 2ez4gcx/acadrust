@@ -1270,24 +1270,30 @@ fn modeler_regions(common: &EntityCommon, sat: Option<crate::entities::acis::Sat
     let Some(doc) = sat else { return Vec::new() };
     doc.faces().into_iter().filter_map(|face| {
         let points = sat_face_points(&doc, &face);
-        (points.len() >= 3).then(|| {
-            let wire = Wire::from_points(points);
-            let surface_type = doc
-                .resolve(face.surface())
-                .map(|record| record.entity_type.as_str())
-                .unwrap_or("plane-surface");
-            if surface_type.contains("plane") {
+        let surface_type = doc
+            .resolve(face.surface())
+            .map(|record| record.entity_type.as_str())
+            .unwrap_or("plane-surface");
+        if surface_type.contains("plane") {
+            (!points.is_empty()).then(|| {
+                let wire = Wire::from_points(points);
                 let mut region = Region::new();
                 region.common = inherit_common(common);
                 region.wires.push(wire);
                 EntityType::Region(region)
-            } else {
+            })
+        } else {
+            // Analytic curved faces can have a one-vertex seam loop (for
+            // example a cylindrical face). Preserve the face as a SURFACE
+            // even when its detached polygon wire is degenerate.
+            (!points.is_empty()).then(|| {
+                let wire = Wire::from_points(points);
                 let mut surface = Surface::new(SurfaceKind::Generic);
                 surface.common = inherit_common(common);
                 surface.wires.push(wire);
                 EntityType::Surface(Box::new(surface))
-            }
-        })
+            })
+        }
     }).collect()
 }
 
@@ -1330,14 +1336,27 @@ fn sat_edge_entity(
         let (cx, cy, cz) = curve.center();
         let (nx, ny, nz) = curve.normal();
         let (ax, ay, az) = curve.major_axis();
+        let normal = Vector3::new(nx, ny, nz).normalize();
+        let center = Vector3::new(cx, cy, cz);
+        let major_axis = Vector3::new(ax, ay, az);
+        let start_parameter = edge.start_param();
+        let end_parameter = edge.end_param();
+        let full_circle = (curve.ratio() - 1.0).abs() <= 1e-9
+            && (end_parameter - start_parameter).abs() >= std::f64::consts::TAU - 1e-8;
+        if full_circle {
+            let mut circle = Circle::from_center_radius(center, major_axis.length());
+            circle.common = inherit_common(common);
+            circle.normal = normal;
+            return Some(EntityType::Circle(circle));
+        }
         let mut ellipse = Ellipse {
             common: inherit_common(common),
-            center: Vector3::new(cx, cy, cz),
-            major_axis: Vector3::new(ax, ay, az),
+            center,
+            major_axis,
             minor_axis_ratio: curve.ratio(),
-            start_parameter: edge.start_param(),
-            end_parameter: edge.end_param(),
-            normal: Vector3::new(nx, ny, nz).normalize(),
+            start_parameter,
+            end_parameter,
+            normal,
         };
         if reverse {
             std::mem::swap(&mut ellipse.start_parameter, &mut ellipse.end_parameter);
@@ -3071,16 +3090,15 @@ mod tests {
         let sat = crate::entities::acis::primitives::build_cylinder([0.0, 0.0, 0.0], 2.0, 3.0);
         let region = Region::from_sat(&sat.to_sat_string());
         let parts = EntityType::Region(region).explode();
-        let ellipses: Vec<_> = parts
+        let circles: Vec<_> = parts
             .iter()
             .filter_map(|part| match part {
-                EntityType::Ellipse(ellipse) => Some(ellipse),
+                EntityType::Circle(circle) => Some(circle),
                 _ => None,
             })
             .collect();
-        assert_eq!(ellipses.len(), 4);
-        assert!(ellipses.iter().all(|ellipse| (ellipse.major_axis.length() - 2.0).abs() < 1e-9));
-        assert!(ellipses.iter().all(|ellipse| (ellipse.end_parameter - ellipse.start_parameter).abs() > 6.0));
+        assert_eq!(circles.len(), 4);
+        assert!(circles.iter().all(|circle| (circle.radius - 2.0).abs() < 1e-9));
     }
 
     #[test]
@@ -3234,6 +3252,15 @@ mod tests {
     }
 
     #[test]
+    fn test_explode_curved_cylinder_into_surface_and_planar_regions() {
+        let sat = crate::entities::acis::primitives::build_cylinder([0.0, 0.0, 0.0], 2.0, 3.0);
+        let solid = Solid3D::from_sat(&sat.to_sat_string());
+        let parts = EntityType::Solid3D(solid).explode();
+        assert_eq!(parts.iter().filter(|part| matches!(part, EntityType::Surface(_))).count(), 1);
+        assert_eq!(parts.iter().filter(|part| matches!(part, EntityType::Region(_))).count(), 2);
+    }
+
+    #[test]
     fn test_autocad_table_graphics_have_grid_and_cell_text() {
         let mut table = Table::new(Vector3::ZERO, 2, 2);
         table.set_cell_text(0, 0, "Title");
@@ -3259,5 +3286,32 @@ mod tests {
         assert_eq!(parts.len(), 1);
         assert!(parts[0].common().handle.is_valid());
         assert_eq!(parts[0].common().owner_handle, Handle::new(0x100));
+    }
+
+    #[test]
+    fn test_document_explode_dimension_resolves_dimstyle() {
+        use crate::document::CadDocument;
+
+        let mut document = CadDocument::new();
+        let mut style = crate::tables::DimStyle::new("CUSTOM");
+        style.dimlfac = 2.0;
+        style.dimdec = 1;
+        style.dimtxt = 3.0;
+        style.dimpost = "<> mm".to_string();
+        document.dim_styles.add(style).unwrap();
+
+        let mut dimension = DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0));
+        dimension.definition_point = Vector3::new(0.0, 5.0, 0.0);
+        dimension.base.text_middle_point = Vector3::new(5.0, 5.0, 0.0);
+        dimension.base.style_name = "CUSTOM".to_string();
+        let parts = document.explode_entity(&EntityType::Dimension(Box::new(
+            Dimension::Linear(dimension),
+        )));
+        let text = parts.iter().find_map(|part| match part {
+            EntityType::MText(text) => Some(text),
+            _ => None,
+        }).expect("dimension MTEXT");
+        assert_eq!(text.value, "\\A1;20.0 mm");
+        assert!((text.height - 3.0).abs() < 1e-12);
     }
 }
