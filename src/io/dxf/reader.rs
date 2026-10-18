@@ -410,6 +410,11 @@ impl DxfReader {
             crate::io::dwg::dwg_reader::recover_mtext_bg_roundtrip(&mut document);
         }
 
+        // Vertex ids are absent in pre-R2010 sources while constraint edge
+        // subentities already reference them; rebuild the ids so the
+        // references survive a re-encode to R2010+ formats.
+        document.restore_constraint_vertex_ids();
+
         source_records = source_records.saturating_add(skipped_source_records);
         let stats = crate::io::read::ReadStats::from_document(
             &document,

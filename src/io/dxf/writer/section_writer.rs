@@ -4094,7 +4094,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_double(40, vertex.start_width)?;
             self.writer.write_double(41, vertex.end_width)?;
             self.writer.write_double(42, vertex.bulge)?;
-            if vertex.vertex_id != 0 {
+            // Vertex ids only exist in R2010+ drawings; earlier formats have
+            // no such field.
+            if vertex.vertex_id != 0 && self.dxf_version >= DxfVersion::AC1024 {
                 self.writer.write_i32(91, vertex.vertex_id)?;
             }
         }

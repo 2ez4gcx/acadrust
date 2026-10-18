@@ -1555,6 +1555,11 @@ impl<R: Read + Seek> DwgReader<R> {
             .notifications
             .extend(std::mem::take(&mut self.notifications));
 
+        // Pre-R2010 formats cannot store polyline vertex ids, but constraint
+        // edge subentities already reference them; rebuild the ids so the
+        // references survive a re-encode to R2010+ formats.
+        document.restore_constraint_vertex_ids();
+
         if perf {
             eprintln!(
                 "[perf] dwg-read total={:.1}ms entities={} objects={} classes={}",

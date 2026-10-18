@@ -20,9 +20,9 @@
 use crate::classes::DxfClassCollection;
 use crate::entities::{EntityCommon, EntityType};
 use crate::objects::{
-    BlockEvaluationEdge, BlockEvaluationGraph, BlockEvaluationNode, DataObjectData,
-    DynamicBlockData, DynamicBlockObject, MaterialColor, MaterialTexture, ObjectType,
-    SolidHistory, SolidHistoryBoolean, SolidHistoryNodeBase, SolidHistoryOperation,
+    AssociativeData, BlockEvaluationEdge, BlockEvaluationGraph, BlockEvaluationNode,
+    DataObjectData, DynamicBlockData, DynamicBlockObject, MaterialColor, MaterialTexture,
+    ObjectType, SolidHistory, SolidHistoryBoolean, SolidHistoryNodeBase, SolidHistoryOperation,
     SolidHistoryTree, XRecordEntry,
 };
 use crate::tables::*;
@@ -4586,6 +4586,100 @@ impl CadDocument {
         }
         self.apply_table_renames(&layers, &line_types, &text_styles);
         renamed
+    }
+
+    /// Rebuild missing polyline vertex ids from geometric constraint edges.
+    ///
+    /// Drawing formats before R2010 cannot store LWPOLYLINE vertex ids, but
+    /// associative edge constraints already persist their endpoints as vertex
+    /// id pairs. A document read from such a format therefore carries
+    /// resolvable constraint references into a polyline that has no ids at
+    /// all, and re-encoding to R2010+ leaves those references dangling. Each
+    /// constrained polyline whose vertices are all unnumbered is renumbered
+    /// along the edge chain described by its constraints; polylines that
+    /// already carry ids, that no constraint references, or whose edge chain
+    /// does not cover every vertex are left untouched. Returns the number of
+    /// renumbered polylines.
+    pub fn restore_constraint_vertex_ids(&mut self) -> usize {
+        use std::collections::BTreeSet;
+
+        // Directed edge endpoints referenced by geometric dependencies, keyed
+        // by the host entity handle.
+        let mut edges: HashMap<u64, Vec<(i32, i32)>> = HashMap::new();
+        for object in self.objects.values() {
+            let ObjectType::Associative(object) = object else {
+                continue;
+            };
+            let AssociativeData::GeomDependency(geom) = &object.data else {
+                continue;
+            };
+            let subent = &geom.persistent_subent;
+            if !subent.class_name.ends_with("EdgePersSubentId") || subent.values.len() < 3 {
+                continue;
+            }
+            edges
+                .entry(geom.dependency.dependent_on.value())
+                .or_default()
+                .push((subent.values[1], subent.values[2]));
+        }
+        if edges.is_empty() {
+            return 0;
+        }
+
+        let mut assigned = 0;
+        for entity in self.entities_mut() {
+            let EntityType::LwPolyline(polyline) = entity else {
+                continue;
+            };
+            if polyline
+                .vertices
+                .iter()
+                .any(|vertex| vertex.vertex_id != 0)
+            {
+                continue;
+            }
+            let Some(edge_list) = edges.get(&polyline.common.handle.value()) else {
+                continue;
+            };
+            let vertex_count = polyline.vertices.len();
+            let mut successor: HashMap<i32, i32> = HashMap::new();
+            let mut indegree: HashMap<i32, usize> = HashMap::new();
+            for &(from, to) in edge_list {
+                successor.insert(from, to);
+                *indegree.entry(to).or_insert(0) += 1;
+            }
+            let mut start = successor
+                .keys()
+                .copied()
+                .filter(|id| indegree.get(id).copied().unwrap_or(0) == 0)
+                .min();
+            if start.is_none() {
+                start = successor.keys().copied().min();
+            }
+            let Some(mut current) = start else {
+                continue;
+            };
+            let mut chain = Vec::with_capacity(vertex_count);
+            let mut seen = BTreeSet::new();
+            loop {
+                if !seen.insert(current) {
+                    break;
+                }
+                chain.push(current);
+                match successor.get(&current) {
+                    Some(&next) if chain.len() < vertex_count => current = next,
+                    _ => break,
+                }
+            }
+            if chain.len() != vertex_count {
+                continue;
+            }
+            for (vertex, id) in polyline.vertices.iter_mut().zip(chain) {
+                vertex.vertex_id = id;
+            }
+            assigned += 1;
+        }
+        assigned
     }
 
     /// Re-point name-based references at the entries `resync_keys` moved.
