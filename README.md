@@ -69,7 +69,7 @@ acadrust = { version = "0.6.5", features = ["serde", "import"] }
 
 | File code | Release era | DXF | DWG |
 |-----------|-----------------|-----|-----|
-| AC1009 | R12 | R/W | R/W |
+| AC1009 | R11/R12 | R/W | R/W |
 | AC1012 | R13 | R/W | R/W |
 | AC1014 | R14 | R/W | R/W |
 | AC1015 | 2000 | R/W | R/W |
@@ -80,9 +80,10 @@ acadrust = { version = "0.6.5", features = ["serde", "import"] }
 | AC1032 | 2018+ | R/W | R/W |
 
 `R/W` means read and write support. Entity availability varies by file version.
-AC1009 DWG fidelity is incomplete; see the
-[R12 support status and remaining work](src/docs/ac1009_support.md).
-DXF export of R12 documents is promoted to R13 or later.
+AC1009 is the shared native DWG format used by AutoCAD Release 11 and Release
+12. See the [R11/R12 support status](src/docs/ac1009_support.md) for native
+fixture coverage and known format limits. DXF export of R11/R12 documents is
+promoted to R13 or later.
 
 ## Examples
 

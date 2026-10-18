@@ -39,6 +39,31 @@ struct Walker {
 }
 
 impl Walker {
+    /// R11/R12 stores compound-owner addresses with the same section marker
+    /// used by JUMP targets (`0x40000000` for BLOCKS and `0x80000000` for the
+    /// extra stream).  The records we expose to the bridge use absolute file
+    /// addresses, so compare both forms when a SEQEND arrives after a JUMP.
+    fn sequence_owner_matches(&self, raw: u32, address: u32) -> bool {
+        if raw == address {
+            return true;
+        }
+        self.sections.iter().enumerate().any(|(section, records)| {
+            let Some(offset) = address.checked_sub(records.base_address) else {
+                return false;
+            };
+            if offset > records.size {
+                return false;
+            }
+            let flag = match section {
+                0 => 0,
+                1 => 0x4000_0000,
+                2 => 0x8000_0000,
+                _ => return false,
+            };
+            raw == flag | offset
+        })
+    }
+
     fn jump_target(&self, raw: u32, owner: Owner) -> Result<Option<Cursor>> {
         let mut offset = raw & 0x00ff_ffff;
         let section = match raw >> 24 {
@@ -154,7 +179,10 @@ impl Walker {
                                 record.address
                             )));
                         };
-                        if record.sequence_owner != Some(open.address) {
+                        if !record
+                            .sequence_owner
+                            .is_some_and(|owner| self.sequence_owner_matches(owner, open.address))
+                        {
                             return Err(invalid(format!(
                                 "AC1009 SEQEND at {:#x} names owner {:?}, expected {:#x}",
                                 record.address, record.sequence_owner, open.address

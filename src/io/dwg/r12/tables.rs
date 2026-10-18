@@ -1,4 +1,4 @@
-//! Fixed-size, byte-aligned symbol-table records in AC1009 drawings.
+//! Fixed-size, byte-aligned symbol-table records in AC1009 (R11/R12) drawings.
 
 use std::collections::HashMap;
 
@@ -137,19 +137,26 @@ fn table_payload(data: &[u8], locator: TableLocator, index: usize) -> Result<&[u
     let end = start
         .checked_add(size)
         .ok_or_else(|| invalid("AC1009 table offset overflow"))?;
-    let begin = start
-        .checked_sub(16)
-        .ok_or_else(|| invalid("AC1009 table begins before file"))?;
-    let end_sentinel = end
-        .checked_add(16)
-        .ok_or_else(|| invalid("AC1009 table offset overflow"))?;
     // BricsCAD and several R12 writers emit table sentinels in a shared
     // stream whose order is independent of the address order in the header.
-    // Validate them when they directly surround this payload, while still
-    // accepting valid records whose sentinels are stored elsewhere in that
-    // stream. Record CRCs below remain mandatory.
-    let _sentinels_match = data.get(begin..start) == Some(TABLE_BEGIN[index].as_slice())
-        && data.get(end..end_sentinel) == Some(TABLE_END[index].as_slice());
+    // Require both markers to occur in that stream; the row CRC remains the
+    // authoritative check for each payload.  A marker need not be adjacent to
+    // the locator when a writer interleaves table sections.
+    let begin_present = data
+        .windows(TABLE_BEGIN[index].len())
+        .any(|window| window == TABLE_BEGIN[index].as_slice());
+    let end_present = data
+        .windows(TABLE_END[index].len())
+        .any(|window| window == TABLE_END[index].as_slice());
+    // VX is the one exception: BricsCAD places the BLOCK begin sentinel at
+    // the end of the VX payload and the section walker validates that shared
+    // marker when it opens the BLOCK stream.
+    if index != 9 && (!begin_present || !end_present) {
+        return Err(invalid(format!(
+            "Invalid AC1009 {} table sentinels",
+            TABLE_NAMES[index]
+        )));
+    }
     data.get(start..end)
         .ok_or_else(|| invalid("AC1009 table exceeds file bounds"))
 }
@@ -191,7 +198,7 @@ pub(crate) fn encode_table(
         let flag = checked_byte(record.integer(70, 0), "table flags")?;
         writer.byte(flag);
         writer.text(record.string(2), 32)?;
-        writer.short(-1);
+        writer.short(record.native_table_usage.unwrap_or(-1));
         encode_fields(
             &mut writer,
             name,
@@ -256,7 +263,7 @@ pub(crate) fn decode_table(
         let flag = reader.byte()?;
         put(&mut record, 2, reader.text(32)?);
         put(&mut record, 70, flag);
-        reader.short()?; // usage counter does not have a DXF counterpart
+        record.native_table_usage = Some(reader.short()?);
         decode_fields(&mut reader, name, &mut record, tables)?;
         if reader.pos != size - 2 {
             return Err(invalid(format!("AC1009 {name} record layout mismatch")));
@@ -355,7 +362,8 @@ fn encode_fields(
                     "AC1009 block offset exceeds 30-bit section address",
                 ));
             }
-            writer.long(offset | 0x40000000);
+            let tag = record.native_block_tag.unwrap_or(0x4000_0000) & 0xff00_0000;
+            writer.long(offset | tag);
             writer.short(checked_short(
                 record.integer(91, record_index as i32),
                 "block entity index",
@@ -517,7 +525,9 @@ fn decode_fields(
 ) -> Result<()> {
     match name {
         "BLOCK" => {
-            put(record, 90, reader.long()?);
+            let offset = reader.long()?;
+            put(record, 90, offset);
+            record.native_block_tag = Some(offset & 0xff00_0000);
             put(record, 91, reader.short()?);
             put(record, 92, reader.short()?);
         }
@@ -785,7 +795,10 @@ mod tests {
     #[test]
     fn all_native_table_layouts_round_trip() {
         let records = [
-            vec![record("BLOCK_RECORD", &[(2, "B1"), (70, "2")])],
+            vec![EntityRecord {
+                native_table_usage: Some(42),
+                ..record("BLOCK_RECORD", &[(2, "B1"), (70, "2")])
+            }],
             vec![record(
                 "LAYER",
                 &[(2, "L1"), (62, "-4"), (6, "DASHED"), (70, "5")],
@@ -862,6 +875,8 @@ mod tests {
         }
         let decoded = decode_tables(&file, &locators, "ANSI_1252").unwrap();
         assert_eq!(decoded[0][0].integer(90, 0) as u32, 0x4000002a);
+        assert_eq!(decoded[0][0].native_block_tag, Some(0x4000_0000));
+        assert_eq!(decoded[0][0].native_table_usage, Some(42));
         assert_eq!(decoded[1][0].integer(62, 0), -4);
         assert_eq!(decoded[1][0].string(6), "DASHED");
         assert_eq!(decoded[2][0].integer(70, 0), 4);
@@ -905,6 +920,18 @@ mod tests {
     }
 
     #[test]
+    fn native_table_usage_word_round_trips_outside_dxf_pairs() {
+        let mut row = record("APPID", &[(2, "ACAD")]);
+        row.native_table_usage = Some(37);
+        let tables = EntityTables::default();
+        let (size, bytes) =
+            encode_table("APPID", &[row], &tables, &HashMap::new(), "ANSI_1252").unwrap();
+        assert_eq!(&bytes[33..35], &37_i16.to_le_bytes());
+        let decoded = decode_table("APPID", &bytes, size, 1, &tables, "ANSI_1252").unwrap();
+        assert_eq!(decoded[0].native_table_usage, Some(37));
+    }
+
+    #[test]
     fn bricscad_layer_and_appid_bytes_match() {
         let tables = EntityTables {
             linetypes: vec!["CONTINUOUS".into()],
@@ -945,5 +972,26 @@ mod tests {
             decode_table("APPID", &bytes, size, 1, &table, "ANSI_1254").unwrap()[0].string(2),
             named.string(2)
         );
+    }
+
+    #[test]
+    fn table_sentinels_are_required() {
+        let table = EntityTables::default();
+        let row = record("APPID", &[(2, "ACAD")]);
+        let (size, payload) =
+            encode_table("APPID", &[row], &table, &HashMap::new(), "ANSI_1252").unwrap();
+        let mut file = Vec::new();
+        let mut locators = [TableLocator::default(); 10];
+        file.extend(TABLE_BEGIN[7]);
+        locators[7] = TableLocator {
+            record_size: size,
+            count: 1,
+            address: file.len() as u32,
+            ..Default::default()
+        };
+        file.extend(&payload);
+        file.extend(TABLE_END[7]);
+        file[locators[7].address as usize - 16] ^= 1;
+        assert!(decode_tables(&file, &locators, "ANSI_1252").is_err());
     }
 }

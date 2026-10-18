@@ -6,7 +6,7 @@
 //! - [`Vector2`] / [`Vector3`] — 2-D and 3-D coordinate types
 //! - [`Color`] — ACI index, true-color RGB, or ByLayer/ByBlock
 //! - [`Handle`] — unique 64-bit object identifier
-//! - [`DxfVersion`] — file version enum (AC1009 … AC1032)
+//! - [`DxfVersion`] — file version enum (AC1009/R11-R12 … AC1032)
 //! - [`LineWeight`] — line thickness
 //! - [`Transform`] / [`Matrix4`] — affine transformation types
 //! - [`BoundingBox2D`] / [`BoundingBox3D`] — axis-aligned bounds
@@ -35,9 +35,9 @@ pub use vector::{Vector2, Vector3};
 pub enum DxfVersion {
     /// Unknown version
     Unknown,
-    /// AutoCAD R12 (AC1009).
+    /// AutoCAD Release 11/12 (AC1009).
     ///
-    /// DWG uses the pre-R13 file layout for this version.
+    /// DWG uses the shared pre-R13 R11/R12 file layout for this version.
     AC1009,
     /// AutoCAD R13 (AC1012)
     AC1012,
@@ -58,6 +58,12 @@ pub enum DxfVersion {
 }
 
 impl DxfVersion {
+    /// Whether this version is the shared AutoCAD Release 11/12 (AC1009)
+    /// format family.
+    pub fn is_r11_r12(&self) -> bool {
+        *self == DxfVersion::AC1009
+    }
+
     /// Get the version string (e.g., "AC1015")
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -158,5 +164,7 @@ mod tests {
     #[test]
     fn test_version_code() {
         assert_eq!(DxfVersion::AC1021.version_code(), 1021);
+        assert!(DxfVersion::AC1009.is_r11_r12());
+        assert!(!DxfVersion::AC1012.is_r11_r12());
     }
 }

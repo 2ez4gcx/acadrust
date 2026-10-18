@@ -24,7 +24,7 @@
 //!
 //! | DWG Version | AutoCAD | File format  |
 //! |-------------|---------|-------------|
-//! | AC1009      | R12     | Pre-R13     |
+//! | AC1009      | R11/R12 | Pre-R13     |
 //! | AC1012      | R13     | Linear      |
 //! | AC1014      | R14     | Linear      |
 //! | AC1015      | R2000   | Linear      |

@@ -1,13 +1,23 @@
-//! Byte-aligned entity records used by AC1009 drawings.
+//! Byte-aligned entity records used by AC1009 (R11/R12) drawings.
 
 use crate::error::{DxfError, Result};
 use crate::io::dwg::crc::crc16;
-use crate::io::dxf::code_page::{encode_legacy_string, encoding_from_code_page};
+use crate::io::dxf::code_page::{
+    decode_legacy_escapes, encode_legacy_string, encoding_from_code_page,
+};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct EntityRecord {
     pub kind: String,
     pub pairs: Vec<(i32, String)>,
+    /// Native AC1009 symbol-table usage word.  It has no DXF group-code
+    /// counterpart, so it is retained out-of-band while records pass through
+    /// the DXF bridge.
+    pub native_table_usage: Option<i16>,
+    /// High-byte section tag from a native BLOCK locator.  The low 24 bits
+    /// are recomputed when the block stream is rebuilt; the tag is retained
+    /// because historical writers use more than the canonical 0x40 marker.
+    pub native_block_tag: Option<u32>,
     pub native_viewport: Option<u16>,
     pub native_address: Option<u32>,
     pub native_shape_style: Option<u8>,
@@ -130,12 +140,12 @@ impl<'a> Reader<'a> {
     fn string(&mut self) -> Result<String> {
         let len = self.ushort()? as usize;
         let bytes = self.take(len)?;
-        Ok(self
-            .encoding
-            .decode_without_bom_handling(bytes)
-            .0
-            .trim_end_matches('\0')
-            .to_owned())
+        Ok(decode_legacy_escapes(
+            self.encoding
+                .decode_without_bom_handling(bytes)
+                .0
+                .trim_end_matches('\0'),
+        ))
     }
     fn point(&mut self, record: &mut EntityRecord, code: i32, is3d: bool, z: f64) -> Result<()> {
         record.put(code, self.double()?);
@@ -848,7 +858,12 @@ pub(crate) fn decode_positioned_entities(
             jump_address: None,
             sequence_owner: None,
         };
-        if header[0] & 128 == 0 {
+        let deleted = header[0] & 128 != 0;
+        // The high type bit marks an entity that was moved into a BLOCK.  A
+        // JUMP can carry the same bit in historical change streams, but it is
+        // still control flow and must be retained so the section walker can
+        // reach its target.
+        if !deleted || is_jump {
             let (mut record, owner) =
                 decode_record_with_owner(&raw[..crc_offset], tables, code_page).map_err(
                     |error| {
@@ -1322,10 +1337,8 @@ fn decode_eed(
             0 => {
                 let len = r.byte()? as usize;
                 let encoding = r.encoding;
-                let value = encoding
-                    .decode_without_bom_handling(r.take(len)?)
-                    .0
-                    .into_owned();
+                let value =
+                    decode_legacy_escapes(&encoding.decode_without_bom_handling(r.take(len)?).0);
                 out.put(1000, value);
             }
             1 => out.put(1001, table_name(&tables.appids, r.short()?)?),

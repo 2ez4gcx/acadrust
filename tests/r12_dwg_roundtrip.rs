@@ -5,8 +5,8 @@ use acadrust::io::dwg::DwgVersion;
 use acadrust::tables::BlockRecord;
 use acadrust::tables::Layer;
 use acadrust::{
-    Arc, CadDocument, Circle, DwgReader, DwgWriter, DxfVersion, EntityType, Line, Point, Text,
-    Vector3,
+    Arc, CadDocument, Circle, DwgReader, DwgWriter, DxfVersion, Ellipse, EntityType, Line,
+    MText, Point, Text, Vector3,
 };
 
 #[test]
@@ -196,4 +196,58 @@ fn ac1009_preserves_custom_layer_names() {
         unreachable!()
     };
     assert_eq!(line.common.layer, "CUT");
+}
+
+#[test]
+fn ac1009_decodes_legacy_entity_string_escapes() {
+    let mut document = CadDocument::with_version(DxfVersion::AC1009);
+    document.header.code_page = "ANSI_1252".into();
+    document
+        .add_entity(EntityType::Text(Text::with_value(
+            r"\U+4E2D\U+6587 \M+5BCFE\M+5BAC5",
+            Vector3::ZERO,
+        )))
+        .unwrap();
+
+    let bytes = DwgWriter::write_to_vec(&document).expect("write escaped R12 text");
+    let restored = DwgReader::from_stream(Cursor::new(bytes))
+        .read()
+        .expect("read escaped R12 text");
+    let EntityType::Text(text) = restored
+        .entities()
+        .find(|entity| matches!(entity, EntityType::Text(_)))
+        .expect("missing text")
+    else {
+        unreachable!();
+    };
+    assert_eq!(text.value, "中文 件号");
+}
+
+#[test]
+fn ac1009_downsaves_convertible_modern_entities() {
+    let mut document = CadDocument::with_version(DxfVersion::AC1009);
+    document
+        .add_entity(EntityType::MText(Box::new(MText::with_value(
+            "legacy text",
+            Vector3::ZERO,
+        ))))
+        .unwrap();
+    document
+        .add_entity(EntityType::Ellipse(Ellipse::from_center_axes(
+            Vector3::ZERO,
+            Vector3::new(5.0, 0.0, 0.0),
+            0.5,
+        )))
+        .unwrap();
+
+    let bytes = DwgWriter::write_to_vec(&document).expect("down-save modern entities");
+    let restored = DwgReader::from_stream(Cursor::new(bytes))
+        .read()
+        .expect("read converted AC1009 drawing");
+    assert!(restored
+        .entities()
+        .any(|entity| matches!(entity, EntityType::Text(_))));
+    assert!(restored
+        .entities()
+        .any(|entity| matches!(entity, EntityType::Polyline2D(_))));
 }

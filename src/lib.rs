@@ -140,7 +140,7 @@
 //!
 //! | Code | AutoCAD | DXF | DWG |
 //! |------|---------|-----|-----|
-//! | AC1009 | R12 | R/W | R/W |
+//! | AC1009 | R11/R12 | R/W | R/W |
 //! | AC1012 | R13 | R/W | R/W |
 //! | AC1014 | R14 | R/W | R/W |
 //! | AC1015 | 2000 | R/W | R/W |
@@ -150,14 +150,14 @@
 //! | AC1027 | 2013 | R/W | R/W |
 //! | AC1032 | 2018+ | R/W | R/W |
 //!
-//! DXF R12 is written as R13 unless requested explicitly with
+//! DXF R11/R12 is written as R13 unless requested explicitly with
 //! [`DxfWriter::with_version`](io::dxf::DxfWriter::with_version), which emits a
 //! genuine R12 file and converts newer entities to R12 entities.
 //!
 //! `R/W` describes the format-level reader and writer paths. Entity
 //! availability varies by file version. See the
-//! [R12 support status](https://github.com/hakanaktt/acadrust/blob/main/src/docs/ac1009_support.md)
-//! for confirmed AC1009 fidelity gaps. DXF export promotes R12 documents to
+//! [R11/R12 support status](https://github.com/hakanaktt/acadrust/blob/main/src/docs/ac1009_support.md)
+//! for confirmed AC1009 fidelity gaps. DXF export promotes R11/R12 documents to
 //! R13 or later. Compatibility results describe tested fixtures and CAD-engine
 //! audits rather than a guarantee for every possible drawing.
 

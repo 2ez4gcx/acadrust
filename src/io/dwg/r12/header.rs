@@ -1,4 +1,4 @@
-//! Fixed-layout AC1009 drawing and table headers.
+//! Fixed-layout AC1009 (AutoCAD R11/R12) drawing and table headers.
 
 use crate::document::{HeaderVariables, LegacyHeaderState};
 use crate::error::{DxfError, Result};
@@ -7,6 +7,9 @@ use crate::types::{Color, Vector2, Vector3};
 
 pub const HEADER_VARIABLES_END: usize = 0x6bd;
 pub const ENTITIES_START: u32 = 0x6cf;
+/// R11 omits the final VISRETAIN variable, shortening the fixed header by two
+/// bytes and moving the first entity section accordingly.
+pub const R11_ENTITIES_START: u32 = ENTITIES_START - 2;
 const MENU_START: usize = 0x194;
 const MENU_PREFIX_LEN: usize = 15;
 const MENU_CONTINUATION_START: usize = 0x1fc;
@@ -267,17 +270,35 @@ pub fn write_header(
     source_raw: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     let mut c = Codec::writing(source_raw);
+    // R11 files use 204 header variables; R12 adds VISRETAIN as the final
+    // variable (205).  The raw fixed-layout header retained by the reader is
+    // exactly the variable span, so its length is an unambiguous source
+    // version marker.  Fresh documents continue to use the R12 layout.
+    let count: u16 = match source_raw.map(|raw| raw.len()) {
+        Some(0x6bb) => 204,
+        _ => 205,
+    };
+    let variables_end = if count == 204 { 0x6bb } else { HEADER_VARIABLES_END };
     c.encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(
         crate::io::dxf::code_page::dwg_code_page_index(&header.code_page),
     );
-    c.data[..6].copy_from_slice(b"AC1009");
+    // AD1009 is the signed/secured spelling used by some legacy writers.  It
+    // has the same pre-R13 layout as AC1009, so retain the source marker when
+    // a document is being saved without a version conversion.  New documents
+    // use the canonical AC1009 marker.
+    let magic = source_raw
+        .and_then(|raw| raw.get(..6))
+        .filter(|magic| matches!(*magic, b"AC1009" | b"AD1009"))
+        .unwrap_or(b"AC1009");
+    c.data[..6].copy_from_slice(magic);
     c.data[6..11].fill(0);
     c.data[0x0b] = maintenance_version;
     c.data[0x0c] = 1;
     c.pos = 0x0d;
     c.short(&mut 3);
     c.short(&mut 5);
-    c.short(&mut 205);
+    let mut count_short = count as i16;
+    c.short(&mut count_short);
     c.byte(&mut 0);
     c.long(&mut layout.entities_start.clone());
     c.long(&mut layout.entities_end.clone());
@@ -288,17 +309,28 @@ pub fn write_header(
     for (table, offset) in tables.iter().zip(TABLE_OFFSETS) {
         c.pos = offset;
         let mut table = *table;
+        // Preserve the source locator's unknown/flags word when callers leave
+        // it at the default.  This field is outside the DXF table model but
+        // is part of the native AC1009 header.
+        if table.flags == 0 {
+            if let Some(raw) = source_raw {
+                if raw.len() >= offset + 6 {
+                    table.flags = u16::from_le_bytes(raw[offset + 4..offset + 6].try_into().unwrap());
+                }
+            }
+        }
         c.locator(&mut table);
     }
     c.pos = 0x5e;
-    variables(&mut c, &mut header.clone(), &mut references.clone(), 205)?;
+    variables(&mut c, &mut header.clone(), &mut references.clone(), count)?;
     if let Some(state) = &header.legacy {
         legacy_state(&mut c, &mut state.clone())?;
     }
-    let checksum = crc::crc16(crc::CRC16_SEED, &c.data);
-    c.data.extend_from_slice(&checksum.to_le_bytes());
-    c.data.extend_from_slice(&ENTITIES_BEGIN);
-    Ok(c.data)
+    let checksum = crc::crc16(crc::CRC16_SEED, &c.data[..variables_end]);
+    let mut output = c.data[..variables_end].to_vec();
+    output.extend_from_slice(&checksum.to_le_bytes());
+    output.extend_from_slice(&ENTITIES_BEGIN);
+    Ok(output)
 }
 
 pub fn write_auxheader(
@@ -843,6 +875,75 @@ mod tests {
         let mut corrupt = encoded;
         corrupt[0x100] ^= 1;
         assert!(read_header(&corrupt).is_err());
+    }
+
+    #[test]
+    fn signed_legacy_marker_is_retained_when_resaving_a_header() {
+        let header = write_header(
+            &HeaderVariables::default(),
+            HeaderLayout::default(),
+            &[TableLocator::default(); 10],
+            HeaderReferences::default(),
+            0,
+            None,
+        )
+        .unwrap();
+        let mut signed_source = header.clone();
+        signed_source[..6].copy_from_slice(b"AD1009");
+        // The source CRC covers the marker, so recompute it before passing the
+        // bytes through the save path.
+        let crc = crc::crc16(crc::CRC16_SEED, &signed_source[..HEADER_VARIABLES_END]);
+        signed_source[HEADER_VARIABLES_END..HEADER_VARIABLES_END + 2]
+            .copy_from_slice(&crc.to_le_bytes());
+        let saved = write_header(
+            &HeaderVariables::default(),
+            HeaderLayout::default(),
+            &[TableLocator::default(); 10],
+            HeaderReferences::default(),
+            0,
+            Some(&signed_source),
+        )
+        .unwrap();
+        assert_eq!(&saved[..6], b"AD1009");
+        assert_eq!(&read_header(&saved).unwrap().raw[..6], b"AD1009");
+    }
+
+    #[test]
+    fn r11_header_count_and_locator_unknown_word_are_preserved() {
+        let baseline = write_header(
+            &HeaderVariables::default(),
+            HeaderLayout {
+                entities_start: R11_ENTITIES_START,
+                entities_end: R11_ENTITIES_START,
+                ..HeaderLayout::default()
+            },
+            &[TableLocator::default(); 10],
+            HeaderReferences::default(),
+            0,
+            None,
+        )
+        .unwrap();
+        let mut source = baseline[..0x6bb].to_vec();
+        source[TABLE_OFFSETS[1] + 4..TABLE_OFFSETS[1] + 6]
+            .copy_from_slice(&0x1234_u16.to_le_bytes());
+        let saved = write_header(
+            &HeaderVariables::default(),
+            HeaderLayout {
+                entities_start: R11_ENTITIES_START,
+                entities_end: R11_ENTITIES_START,
+                ..HeaderLayout::default()
+            },
+            &[TableLocator::default(); 10],
+            HeaderReferences::default(),
+            0,
+            Some(&source),
+        )
+        .unwrap();
+        assert_eq!(saved.len(), R11_ENTITIES_START as usize);
+        let decoded = read_header(&saved).unwrap();
+        assert_eq!(decoded.num_header_variables, 204);
+        assert_eq!(decoded.layout.entities_start, R11_ENTITIES_START);
+        assert_eq!(decoded.tables[1].flags, 0x1234);
     }
 
     #[test]

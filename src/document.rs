@@ -1340,6 +1340,15 @@ pub struct CadDocument {
     /// counterparts in `HeaderVariables` for native R12 saves.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) r12_header_raw: Option<Vec<u8>>,
+    /// Native AC1009 symbol-table usage words keyed by the synthetic handle
+    /// assigned to each imported row.  These words are not represented in
+    /// DXF, but preserving them keeps an R11/R12 read/write cycle lossless.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) r12_table_usage: HashMap<Handle, i16>,
+    /// Native high-byte tags from AC1009 BLOCK table locators, keyed by the
+    /// synthetic handle assigned to each imported row.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub(crate) r12_block_tags: HashMap<Handle, u32>,
     /// Debug aid: every record of the source DWG, verbatim, keyed by handle
     /// (type code, bytes). Only filled when `ACADRUST_RAW_ALL` is set in the
     /// environment; the writer then re-emits these instead of re-serialising
@@ -1537,6 +1546,8 @@ impl CadDocument {
             acis_sab_handles: Vec::new(),
             raw_acds_data: None,
             r12_header_raw: None,
+            r12_table_usage: HashMap::new(),
+            r12_block_tags: HashMap::new(),
             raw_records: HashMap::new(),
             original_objects: HashMap::new(),
             raw_record_owners: HashMap::new(),
