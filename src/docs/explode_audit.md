@@ -21,8 +21,8 @@ in the test suite.
 - Standalone CIRCLE, ARC, ELLIPSE, SPLINE, SOLID and 3DFACE refusal rules;
   HELIX to one SPLINE; and legacy flattening retained for R12 output.
 - LWPOLYLINE/POLYLINE families, MLINE style offsets, patterned HATCH clipping
-  including islands, dashes and double patterns, MLINE square end caps, and
-  WIPEOUT boundaries.
+  including islands, dashes and double patterns, MLINE square/XY-round end
+  caps, and WIPEOUT boundaries.
 - Dimensions with extension lines, arrow solids and MTEXT; LEADER arrows and
   spline/polyline paths; TABLE grid/text graphics.
 - Document-aware DIMSTYLE resolution for dimension EXPLODE: precision,
@@ -149,9 +149,10 @@ detached-result contract or a context-aware cloning API.
 ### P1: Several Compound Families Have No Faithful Decomposition
 
 - `explode_mline` emits document-resolved element offsets, scale, colors,
-  fills, and square end caps. Miter/joint trimming, segment gaps, round caps,
-  inner-arc caps, and linetype-specific output still need native comparison;
-  AutoCAD outputs individual visible LINEs and ARCs for those cases.
+  fills, square caps, and XY-plane round caps. Miter/joint trimming, segment
+  gaps, tilted-plane round caps, inner-arc caps, and linetype-specific output
+  still need native comparison; AutoCAD outputs individual visible LINEs and
+  ARCs for those cases.
 - `explode_dimension` synthesizes the visible lines, arrows and MTEXT. The
   document-aware path now applies the resolved DIMSTYLE's precision, scale,
   text style/height, extension offsets, suppression flags, arrow sizing,
