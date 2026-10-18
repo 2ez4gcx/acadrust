@@ -361,10 +361,10 @@ it must be implemented together with safe cloning of owned children.
 ## Validation
 
 - `cargo test --all-targets` passed on the original baseline.
-- Final `cargo test --all-targets --all-features --quiet`: **2045 passed,
+- Final `cargo test --all-targets --all-features --quiet`: **2050 passed,
   0 failed, 26 ignored**, across 124 test binaries. All 26 ignore markers
   predate this audit.
-- Final `cargo test --all-features --lib explode --quiet`: **90 passed**,
+- Final `cargo test --all-features --lib explode --quiet`: **95 passed**,
   including modeler, MLINE, polyface, formatted MTEXT and document-graph
   regressions.
 - The native runner completed all **47 scenarios**, with no creation or
