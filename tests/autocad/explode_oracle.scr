@@ -1,0 +1,6 @@
+(setq ae:oldsecureload (getvar "SECURELOAD"))
+(setvar "SECURELOAD" 0)
+(load (strcat (getenv "ACADRUST_ORACLE_ROOT") "/tests/autocad/explode_oracle.lsp"))
+(setvar "SECURELOAD" ae:oldsecureload)
+_.quit
+_yes

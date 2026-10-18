@@ -1,0 +1,361 @@
+{
+    "POINT":  {
+                  "sourceSurvives":  true,
+                  "resultTypes":  [
+
+                                  ]
+              },
+    "LINE":  {
+                 "sourceSurvives":  true,
+                 "resultTypes":  [
+
+                                 ]
+             },
+    "CIRCLE":  {
+                   "sourceSurvives":  true,
+                   "resultTypes":  [
+
+                                   ]
+               },
+    "ARC":  {
+                "sourceSurvives":  true,
+                "resultTypes":  [
+
+                                ]
+            },
+    "ELLIPSE":  {
+                    "sourceSurvives":  true,
+                    "resultTypes":  [
+
+                                    ]
+                },
+    "SPLINE":  {
+                   "sourceSurvives":  true,
+                   "resultTypes":  [
+
+                                   ]
+               },
+    "HELIX":  {
+                  "sourceSurvives":  false,
+                  "resultTypes":  [
+                                      "SPLINE"
+                                  ]
+              },
+    "SOLID":  {
+                  "sourceSurvives":  true,
+                  "resultTypes":  [
+
+                                  ]
+              },
+    "3DFACE":  {
+                   "sourceSurvives":  true,
+                   "resultTypes":  [
+
+                                   ]
+               },
+    "TEXT":  {
+                 "sourceSurvives":  true,
+                 "resultTypes":  [
+
+                                 ]
+             },
+    "RAY":  {
+                "sourceSurvives":  true,
+                "resultTypes":  [
+
+                                ]
+            },
+    "XLINE":  {
+                  "sourceSurvives":  true,
+                  "resultTypes":  [
+
+                                  ]
+              },
+    "LWPOLYLINE":  {
+                       "sourceSurvives":  false,
+                       "resultTypes":  [
+                                           "LINE",
+                                           "LINE",
+                                           "LINE",
+                                           "LINE"
+                                       ]
+                   },
+    "POLYLINE2D":  {
+                       "sourceSurvives":  false,
+                       "resultTypes":  [
+                                           "ARC",
+                                           "LINE"
+                                       ]
+                   },
+    "POLYLINE3D":  {
+                       "sourceSurvives":  false,
+                       "resultTypes":  [
+                                           "LINE",
+                                           "LINE"
+                                       ]
+                   },
+    "POLYFACE_POINT":  {
+                           "sourceSurvives":  false,
+                           "resultTypes":  [
+                                               "POINT"
+                                           ]
+                       },
+    "POLYFACE_LINE":  {
+                          "sourceSurvives":  false,
+                          "resultTypes":  [
+                                              "LINE"
+                                          ]
+                      },
+    "POLYFACE_TRIANGLE":  {
+                              "sourceSurvives":  false,
+                              "resultTypes":  [
+                                                  "3DFACE"
+                                              ]
+                          },
+    "POLYFACE_QUAD":  {
+                          "sourceSurvives":  false,
+                          "resultTypes":  [
+                                              "3DFACE"
+                                          ]
+                      },
+    "POLYGONMESH_OPEN":  {
+                             "sourceSurvives":  false,
+                             "resultTypes":  [
+                                                 "3DFACE",
+                                                 "3DFACE",
+                                                 "3DFACE",
+                                                 "3DFACE"
+                                             ]
+                         },
+    "POLYGONMESH_CLOSED_M":  {
+                                 "sourceSurvives":  false,
+                                 "resultTypes":  [
+                                                     "3DFACE",
+                                                     "3DFACE",
+                                                     "3DFACE",
+                                                     "3DFACE",
+                                                     "3DFACE",
+                                                     "3DFACE"
+                                                 ]
+                             },
+    "POLYGONMESH_CLOSED_N":  {
+                                 "sourceSurvives":  false,
+                                 "resultTypes":  [
+                                                     "3DFACE",
+                                                     "3DFACE",
+                                                     "3DFACE",
+                                                     "3DFACE",
+                                                     "3DFACE",
+                                                     "3DFACE"
+                                                 ]
+                             },
+    "POLYGONMESH_CLOSED_MN":  {
+                                  "sourceSurvives":  false,
+                                  "resultTypes":  [
+                                                      "3DFACE",
+                                                      "3DFACE",
+                                                      "3DFACE",
+                                                      "3DFACE",
+                                                      "3DFACE",
+                                                      "3DFACE",
+                                                      "3DFACE",
+                                                      "3DFACE",
+                                                      "3DFACE"
+                                                  ]
+                              },
+    "MTEXT":  {
+                  "sourceSurvives":  false,
+                  "resultTypes":  [
+                                      "TEXT",
+                                      "TEXT"
+                                  ]
+              },
+    "MTEXT_FORMATTED":  {
+                            "sourceSurvives":  false,
+                            "resultTypes":  [
+                                                "TEXT",
+                                                "TEXT",
+                                                "TEXT",
+                                                "TEXT"
+                                            ]
+                        },
+    "HATCH_PATTERN":  {
+                          "sourceSurvives":  false,
+                          "resultTypes":  [
+                                              "LINE",
+                                              "LINE",
+                                              "LINE",
+                                              "LINE",
+                                              "LINE"
+                                          ]
+                      },
+    "HATCH_SOLID":  {
+                        "sourceSurvives":  true,
+                        "resultTypes":  [
+
+                                        ]
+                    },
+    "MLINE":  {
+                  "sourceSurvives":  false,
+                  "resultTypes":  [
+                                      "LINE",
+                                      "LINE"
+                                  ]
+              },
+    "LEADER_STRAIGHT":  {
+                            "sourceSurvives":  false,
+                            "resultTypes":  [
+                                                "SOLID",
+                                                "LWPOLYLINE"
+                                            ]
+                        },
+    "LEADER_SPLINE":  {
+                          "sourceSurvives":  false,
+                          "resultTypes":  [
+                                              "SOLID",
+                                              "SPLINE"
+                                          ]
+                      },
+    "DIM_LINEAR":  {
+                       "sourceSurvives":  false,
+                       "resultTypes":  [
+                                           "LINE",
+                                           "LINE",
+                                           "LINE",
+                                           "LINE",
+                                           "SOLID",
+                                           "SOLID",
+                                           "MTEXT"
+                                       ]
+                   },
+    "DIM_ALIGNED":  {
+                        "sourceSurvives":  false,
+                        "resultTypes":  [
+                                            "LINE",
+                                            "LINE",
+                                            "LINE",
+                                            "LINE",
+                                            "LINE",
+                                            "SOLID",
+                                            "SOLID",
+                                            "MTEXT"
+                                        ]
+                    },
+    "REGION":  {
+                   "sourceSurvives":  false,
+                   "resultTypes":  [
+                                       "LINE",
+                                       "LINE",
+                                       "LINE",
+                                       "LINE"
+                                   ]
+               },
+    "PLANESURFACE":  {
+                         "sourceSurvives":  false,
+                         "resultTypes":  [
+                                             "REGION"
+                                         ]
+                     },
+    "3DSOLID_BOX":  {
+                        "sourceSurvives":  false,
+                        "resultTypes":  [
+                                            "REGION",
+                                            "REGION",
+                                            "REGION",
+                                            "REGION",
+                                            "REGION",
+                                            "REGION"
+                                        ]
+                    },
+    "INSERT_UNIFORM":  {
+                           "sourceSurvives":  false,
+                           "resultTypes":  [
+                                               "CIRCLE",
+                                               "LINE"
+                                           ]
+                       },
+    "INSERT_NONUNIFORM":  {
+                              "sourceSurvives":  false,
+                              "resultTypes":  [
+                                                  "ELLIPSE",
+                                                  "LINE"
+                                              ]
+                          },
+    "MINSERT":  {
+                    "sourceSurvives":  true,
+                    "resultTypes":  [
+
+                                    ]
+                },
+    "INSERT_ATTRIBUTES":  {
+                              "sourceSurvives":  false,
+                              "resultTypes":  [
+                                                  "ATTDEF",
+                                                  "LINE"
+                                              ]
+                          },
+    "XREF":  {
+                 "sourceSurvives":  true,
+                 "resultTypes":  [
+
+                                 ]
+             },
+    "TABLE":  {
+                  "sourceSurvives":  false,
+                  "resultTypes":  [
+                                      "MTEXT",
+                                      "MTEXT",
+                                      "MTEXT",
+                                      "LINE",
+                                      "LINE",
+                                      "LINE",
+                                      "LINE",
+                                      "LINE",
+                                      "LINE",
+                                      "LINE"
+                                  ]
+              },
+    "MESH_QUAD":  {
+                      "sourceSurvives":  false,
+                      "resultTypes":  [
+                                          "3DFACE"
+                                      ]
+                  },
+    "MLEADER_MTEXT":  {
+                          "sourceSurvives":  false,
+                          "resultTypes":  [
+                                              "MTEXT",
+                                              "LINE",
+                                              "LWPOLYLINE"
+                                          ]
+                      },
+    "TOLERANCE":  {
+                      "sourceSurvives":  true,
+                      "resultTypes":  [
+
+                                      ]
+                  },
+    "WIPEOUT":  {
+                    "sourceSurvives":  false,
+                    "resultTypes":  [
+                                        "LINE",
+                                        "LINE",
+                                        "LINE",
+                                        "LINE"
+                                    ]
+                },
+    "INSERT_NONUNIFORM_ACIS_ONLY":  {
+                                        "sourceSurvives":  true,
+                                        "resultTypes":  [
+
+                                                        ]
+                                    },
+    "INSERT_NONUNIFORM_ACIS_MIXED":  {
+                                         "sourceSurvives":  false,
+                                         "resultTypes":  [
+                                                             "INSERT",
+                                                             "LINE"
+                                                         ],
+                                         "resultBlock":  "*E9"
+                                     }
+}
