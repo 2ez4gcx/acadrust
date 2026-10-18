@@ -902,6 +902,35 @@ fn explode_multileader(ml: &MultiLeader) -> Vec<EntityType> {
     result
 }
 
+fn explode_multileader_autocad(ml: &MultiLeader) -> Vec<EntityType> {
+    let landing_points: Vec<Vector3> = ml
+        .context
+        .leader_roots
+        .iter()
+        .map(|root| root.connection_point)
+        .collect();
+    let mut result = Vec::new();
+    for part in explode_multileader(ml) {
+        match part {
+            EntityType::Solid(solid) => {
+                let mut polyline = LwPolyline::new();
+                polyline.common = solid.common.clone();
+                polyline.add_point(Vector2::new(solid.first_corner.x, solid.first_corner.y));
+                polyline.add_point(Vector2::new(solid.second_corner.x, solid.second_corner.y));
+                polyline.add_point(Vector2::new(solid.third_corner.x, solid.third_corner.y));
+                polyline.close();
+                result.push(EntityType::LwPolyline(polyline));
+            }
+            EntityType::Line(line)
+                if landing_points
+                    .iter()
+                    .any(|point| line.start.distance(point) <= 1e-9) => {}
+            other => result.push(other),
+        }
+    }
+    result
+}
+
 fn explode_mline(mline: &MLine) -> Vec<EntityType> {
     // Context-free entities do not carry their MLINESTYLE definition.  Keep
     // Standard's two canonical offsets here; the document-aware API resolves
@@ -1685,7 +1714,7 @@ impl EntityType {
             EntityType::Polyline3D(e) => explode_polyline3d_new(e),
             EntityType::Dimension(e) => explode_dimension(e),
             EntityType::Leader(e) => explode_leader(e),
-            EntityType::MultiLeader(e) => explode_multileader(e),
+            EntityType::MultiLeader(e) => explode_multileader_autocad(e),
             EntityType::MLine(e) => explode_mline(e),
             EntityType::Table(e) => explode_table(e),
             EntityType::Wipeout(e) => explode_wipeout(e),
@@ -2120,6 +2149,18 @@ mod tests {
             lines[1],
             (Vector3::new(10.0, 10.0, 0.0), Vector3::new(15.0, 10.0, 0.0))
         );
+    }
+
+    #[test]
+    fn test_autocad_multileader_text_uses_polyline_arrow_and_shaft() {
+        let mut ml = callout(&[Vector3::ZERO]);
+        ml.context.has_text_contents = true;
+        ml.context.text_string = "NOTE".to_string();
+        let parts = EntityType::MultiLeader(Box::new(ml)).explode();
+        assert_eq!(parts.len(), 3);
+        assert!(parts.iter().any(|part| matches!(part, EntityType::LwPolyline(_))));
+        assert!(parts.iter().any(|part| matches!(part, EntityType::Line(_))));
+        assert!(parts.iter().any(|part| matches!(part, EntityType::MText(_))));
     }
 
     #[test]
