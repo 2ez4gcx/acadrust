@@ -39,6 +39,8 @@ in the test suite.
   planar SURFACE inputs; REGION SAT loops retain straight, analytic ellipse,
   and NURBS edge curves, including coedge orientation and bounded spans.
 - MTEXT formatted runs preserve explicit color, height, font and width data.
+- MTEXT exploded TEXT positions honor tilted normals/DWG X directions and
+  static or dynamic column flow with gutter spacing.
 
 The changes are committed by parity slice so each family can be reviewed and
 reverted independently.
@@ -179,11 +181,11 @@ detached-result contract or a context-aware cloning API.
 ### P2: MTEXT Layout Is Only An Approximation
 
 `explode_mtext` preserves mixed color/height/font/width/oblique runs and emits
-one TEXT per formatted run. It still uses approximate font metrics and does
-not preserve underline/overline/strikeout, stacked fractions, tabs, paragraph
-spacing, columns, exact/at-least spacing semantics, drawing direction, or
-background/frame graphics. Its XY placement cannot represent a tilted plane,
-and it ignores the Z component of `dwg_x_direction`.
+one TEXT per formatted run. It honors tilted normal axes and column gutters,
+but still uses approximate font metrics and does not preserve
+underline/overline/strikeout, stacked fractions, tabs, paragraph spacing,
+exact/at-least spacing semantics, drawing direction, or background/frame
+graphics. Complex dynamic column heights remain approximate.
 
 Runtime example: `A{\C1;RED}B{\H2x;BIG}` becomes four native TEXT runs, with
 color index 1 on RED and double height on BIG; the formatted-run path now
