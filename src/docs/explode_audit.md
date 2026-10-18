@@ -74,24 +74,13 @@ The original findings below are retained as audit provenance. Items listed in
 Implemented Parity Slices have been addressed; the remaining limits are the
 ones that still require either document context or native modeler/font data.
 
-### P1: The Set Of Explodable Objects Is Incorrect
+### P1: The Set Of Explodable Objects Matches The Captured Matrix
 
-In `EntityType::explode`, CIRCLE becomes a full-circle ARC; ELLIPSE becomes an
-approximate SPLINE; SPLINE becomes sampled LINEs; SOLID and 3DFACE become edge
-LINEs. AutoCAD 2027 refuses to explode all five. HELIX should become one SPLINE,
-but is tessellated into LINEs. These are runtime-confirmed mismatches.
-
-The ellipse approximation is also not an exact conversion: points sampled on
-the ellipse are installed as cubic control points, which do not generally
-interpolate those samples. Partial curves crossing parameter zero take the
-wrong interval. SPLINE fit-only geometry is joined by straight segments, and
-sampling uses a fixed 16 subdivisions per knot span without a requested error
-bound. HELIX output inherits `spline.common` instead of its own common data.
-
-Required resolution: define an AutoCAD-compatible explosion contract and retain
-curve tessellation/boundary extraction under an explicitly separate operation.
-Changing the existing API in place requires a compatibility decision because
-its tests and published changelog currently promise the other behavior.
+`EntityType::explode` now refuses standalone CIRCLE, ELLIPSE, SPLINE, SOLID,
+3DFACE and other atomic objects, while HELIX produces one SPLINE. The former
+sampling behavior remains available through `flatten` for R12/export callers.
+The remaining uncertainty is native coverage for unverified object-enabler and
+extended entity variants, not the captured primitive refusal contract.
 
 ### P1: HATCH Pattern Fidelity Is Nearly Complete
 
