@@ -8,10 +8,56 @@
 use std::collections::HashMap;
 
 use super::CadDocument;
-use crate::entities::{EntityType, Insert, Line, MLine};
+use crate::entities::{EntityType, Insert, Line, MLine, MultiLeader};
 use crate::types::{Handle, Transform};
 
 impl CadDocument {
+    /// Expand MULTILEADER block content after resolving the referenced block.
+    /// Text and leader geometry are produced by the detached entity path;
+    /// block content needs the document's block table and base point.
+    pub(crate) fn explode_multileader_with_context(&self, leader: &MultiLeader) -> Vec<EntityType> {
+        let mut parts = EntityType::MultiLeader(Box::new(leader.clone())).explode();
+        if leader.content_type != crate::entities::LeaderContentType::Block {
+            return parts;
+        }
+        let Some(block_handle) = leader
+            .block_content_handle
+            .or(leader.context.block_content_handle)
+        else { return parts };
+        let Some(record) = self
+            .block_records
+            .iter()
+            .find(|record| record.handle == block_handle)
+            .cloned()
+        else { return parts };
+        let base = self
+            .get_entity(record.block_entity_handle)
+            .and_then(|entity| match entity {
+                EntityType::Block(block) => Some(block.base_point),
+                _ => None,
+            })
+            .unwrap_or(record.base_point);
+        let source: Vec<EntityType> = record
+            .entity_handles
+            .iter()
+            .filter_map(|handle| self.get_entity(*handle).cloned())
+            .map(|mut entity| {
+                entity.as_entity_mut().apply_transform(&Transform::from_translation(base * -1.0));
+                entity
+            })
+            .collect();
+        let mut insert = Insert::new(record.name, leader.context.block_content_location)
+            .with_scale(
+                leader.context.block_content_scale.x * leader.scale_factor,
+                leader.context.block_content_scale.y * leader.scale_factor,
+                leader.context.block_content_scale.z * leader.scale_factor,
+            )
+            .with_rotation(leader.context.block_rotation + leader.block_rotation);
+        insert.normal = leader.context.block_content_normal;
+        parts.extend(insert.explode_with_transform(&source, &insert.get_transform(), true));
+        parts
+    }
+
     /// Explode an MLINE after resolving its MLINESTYLE object from the
     /// document. The detached entity API cannot access that table.
     pub(crate) fn explode_mline_with_context(&self, mline: &MLine) -> Vec<EntityType> {
