@@ -22323,7 +22323,7 @@ mod tests {
     /// of an insert at (5, 5): one matrix row per group of four, translation
     /// last. Source: ezdxf `exploration/BlockClipped.dxf`, SPATIAL_FILTER #C1.
     #[test]
-    fn spatial_filter_matrix_reads_autocad_order() {
+    fn spatial_filter_matrix_reads_native_order() {
         let v = [
             1.0, 0.0, 0.0, -5.0, // row 0
             0.0, 1.0, 0.0, -5.0, // row 1
@@ -22350,7 +22350,7 @@ mod tests {
     /// Reads a complete AutoCAD SPATIAL_FILTER object (values from the same
     /// AC1027 file) through the DXF reader.
     #[test]
-    fn spatial_filter_from_autocad_dxf_keeps_its_boundary_area() {
+    fn spatial_filter_from_native_dxf_keeps_its_boundary_area() {
         use crate::objects::ObjectType;
 
         let mut doc = CadDocument::new();

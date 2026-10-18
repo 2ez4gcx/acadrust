@@ -204,4 +204,8 @@ impl Entity for PolygonMesh {
     fn apply_transform(&mut self, transform: &Transform) {
         super::transform::transform_polygon_mesh(self, transform);
     }
+
+    fn apply_mirror(&mut self, transform: &Transform) {
+        super::mirror::mirror_polygon_mesh(self, transform);
+    }
 }

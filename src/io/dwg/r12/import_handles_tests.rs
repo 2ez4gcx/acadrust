@@ -85,7 +85,7 @@ fn fixture_with_references(
 }
 
 #[test]
-fn handleless_text_matches_independent_autocad_imports() {
+fn handleless_text_matches_independent_imports() {
     let mut tables: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
     tables[1] = vec![
         record("LAYER", &[(2, "0"), (62, "7"), (6, "CONTINUOUS")]),

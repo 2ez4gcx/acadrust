@@ -62,7 +62,7 @@ mod tests {
     }
 
     #[test]
-    fn synthesized_layout_settings_match_independent_autocad_imports() {
+    fn synthesized_layout_settings_match_independent_imports() {
         let mut tables: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
         tables[1] = vec![record("LAYER", &[(2, "0")])];
         tables[2] = vec![record("STYLE", &[(2, "STANDARD"), (3, "txt")])];

@@ -17,7 +17,7 @@ fn test_atomic_entities_return_empty() {
 }
 
 #[test]
-fn test_autocad_standalone_refusal_rules() {
+fn test_native_standalone_refusal_rules() {
     assert!(EntityType::Circle(Circle::new()).explode().is_empty());
     assert!(EntityType::Ellipse(Ellipse::new()).explode().is_empty());
     assert!(EntityType::Spline(Spline::new()).explode().is_empty());
@@ -332,7 +332,7 @@ fn test_explode_multileader_single_vertex_line() {
 }
 
 #[test]
-fn test_autocad_multileader_text_uses_polyline_arrow_and_shaft() {
+fn test_native_multileader_text_uses_polyline_arrow_and_shaft() {
     let mut ml = callout(&[Vector3::ZERO]);
     ml.context.has_text_contents = true;
     ml.context.text_string = "NOTE".to_string();
@@ -858,7 +858,7 @@ fn test_explode_curved_cylinder_into_surface_and_planar_regions() {
 }
 
 #[test]
-fn test_autocad_table_graphics_have_grid_and_cell_text() {
+fn test_native_table_graphics_have_grid_and_cell_text() {
     let mut table = Table::new(Vector3::ZERO, 2, 2);
     table.set_cell_text(0, 0, "Title");
     table.set_cell_text(1, 0, "A");

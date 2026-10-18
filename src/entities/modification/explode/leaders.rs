@@ -290,7 +290,7 @@ pub(super) fn explode_multileader(ml: &MultiLeader) -> Vec<EntityType> {
     result
 }
 
-pub(super) fn explode_multileader_autocad(ml: &MultiLeader) -> Vec<EntityType> {
+pub(super) fn explode_multileader_native(ml: &MultiLeader) -> Vec<EntityType> {
     let landing_points: Vec<Vector3> = ml
         .context
         .leader_roots

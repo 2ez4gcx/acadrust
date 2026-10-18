@@ -41,7 +41,7 @@ pub(super) fn explode_mesh(mesh: &Mesh) -> Vec<EntityType> {
 
 /// AutoCAD emits one 3DFACE for each mesh face, retaining quads instead of
 /// introducing a diagonal that was not present in the source mesh.
-pub(super) fn explode_mesh_autocad(mesh: &Mesh) -> Vec<EntityType> {
+pub(super) fn explode_mesh_native(mesh: &Mesh) -> Vec<EntityType> {
     let mut result = Vec::with_capacity(mesh.faces.len());
     for face in &mesh.faces {
         let indices = &face.vertices;
@@ -109,7 +109,7 @@ pub(super) fn explode_polyface_mesh(mesh: &PolyfaceMesh) -> Vec<EntityType> {
     result
 }
 
-pub(super) fn explode_polyface_mesh_autocad(mesh: &PolyfaceMesh) -> Vec<EntityType> {
+pub(super) fn explode_polyface_mesh_native(mesh: &PolyfaceMesh) -> Vec<EntityType> {
     let get_vertex = |index: i16| -> Option<Vector3> {
         let index = index.unsigned_abs() as usize;
         (index > 0 && index <= mesh.vertices.len()).then(|| mesh.vertices[index - 1].location)
@@ -193,7 +193,7 @@ pub(super) fn explode_polygon_mesh(mesh: &PolygonMeshEntity) -> Vec<EntityType> 
     result
 }
 
-pub(super) fn explode_polygon_mesh_autocad(mesh: &PolygonMeshEntity) -> Vec<EntityType> {
+pub(super) fn explode_polygon_mesh_native(mesh: &PolygonMeshEntity) -> Vec<EntityType> {
     let Ok(m) = usize::try_from(mesh.m_vertex_count) else {
         return Vec::new();
     };

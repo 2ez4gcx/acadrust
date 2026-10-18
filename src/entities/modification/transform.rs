@@ -3,8 +3,8 @@
 //! Each entity's transformation logic is defined here as a standalone
 //! function, and [`EntityType`] exposes a convenience dispatch method.
 
-use crate::entities::*;
 use crate::entities::solid3d::AcisData;
+use crate::entities::*;
 use crate::types::{Matrix3, Transform, Vector2, Vector3};
 
 /// Compose `transform` into an ACIS body's placement (the SAT `transform`
@@ -307,11 +307,7 @@ pub(crate) fn rotate_stored_angle(rotation: &mut f64, transform: &Transform) {
 }
 
 /// Update an angle measured in a planar entity's object coordinate system.
-pub(crate) fn rotate_ocs_angle(
-    rotation: &mut f64,
-    old_normal: Vector3,
-    transform: &Transform,
-) {
+pub(crate) fn rotate_ocs_angle(rotation: &mut f64, old_normal: Vector3, transform: &Transform) {
     let old_ocs = Matrix3::arbitrary_axis(old_normal);
     let new_normal = transform.apply_rotation(old_normal).normalize();
     let new_wcs_to_ocs = Matrix3::arbitrary_axis(new_normal).transpose();
@@ -347,7 +343,8 @@ pub(crate) fn mtext_x_direction(e: &MText) -> Vector3 {
         .filter(|direction| {
             let angle = direction.y.atan2(direction.x);
             let delta = (angle - e.rotation + std::f64::consts::PI)
-                .rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+                .rem_euclid(std::f64::consts::TAU)
+                - std::f64::consts::PI;
             // A vertical direction has no defined angle in the XY plane.
             direction.x.hypot(direction.y) <= 1e-12 || delta.abs() < 1e-12
         })
@@ -506,7 +503,12 @@ pub(crate) fn transform_dimension(e: &mut Dimension, transform: &Transform) {
     let horizontal_direction = if keep_text {
         e.base().horizontal_direction
     } else {
-        transform_dimension_angle(old_normal, new_normal, e.base().horizontal_direction, transform)
+        transform_dimension_angle(
+            old_normal,
+            new_normal,
+            e.base().horizontal_direction,
+            transform,
+        )
     };
     let insertion_rotation = transform_dimension_angle(
         old_normal,
@@ -1384,6 +1386,7 @@ pub(crate) fn transform_polygon_mesh(e: &mut PolygonMeshEntity, transform: &Tran
     for v in &mut e.vertices {
         v.location = transform.apply(v.location);
     }
+    e.normal = transform.apply_rotation(e.normal).normalize();
 }
 
 // ── UnknownEntity ────────────────────────────────────────────────────────────

@@ -64,7 +64,7 @@ const NATIVE_MIRROR3D_CASES: &[NativeMirrorCase] = &[
 ];
 
 #[test]
-fn autocad_2027_mirror3d_scenarios() {
+fn native_2027_mirror3d_scenarios() {
     assert_eq!(NATIVE_MIRROR3D_CASES.len(), 9);
     let failures: Vec<_> = NATIVE_MIRROR3D_CASES
         .iter()

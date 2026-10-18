@@ -1,6 +1,285 @@
 use super::*;
 
 #[test]
+fn spline_mirror_covers_rational_periodic_closed_and_fit_data() {
+    let mut spline = Spline::from_control_points(
+        3,
+        vec![
+            Vector3::new(1.0, 2.0, 3.0),
+            Vector3::new(4.0, -1.0, 5.0),
+            Vector3::new(7.0, 3.0, -2.0),
+            Vector3::new(9.0, 8.0, 1.0),
+        ],
+    );
+    spline.flags.closed = true;
+    spline.flags.periodic = true;
+    spline.flags.rational = true;
+    spline.flags.planar = true;
+    spline.weights = vec![1.0, 0.5, 2.0, 1.25];
+    spline.fit_points = vec![Vector3::new(2.0, 3.0, 4.0), Vector3::new(5.0, 6.0, 7.0)];
+    spline.begin_tangent = Vector3::new(1.0, 2.0, 0.0);
+    spline.end_tangent = Vector3::new(-2.0, 1.0, 0.0);
+    spline.normal = Vector3::new(1.0, 2.0, 3.0).normalize();
+    let original = spline.clone();
+    let transform =
+        Transform::from_mirror_plane(Vector3::new(2.0, -3.0, 4.0), Vector3::new(1.0, 3.0, -2.0));
+    spline.mirror_about_plane(Vector3::new(2.0, -3.0, 4.0), Vector3::new(1.0, 3.0, -2.0));
+    for (actual, expected) in spline.control_points.iter().zip(&original.control_points) {
+        close(*actual, transform.apply(*expected));
+    }
+    for (actual, expected) in spline.fit_points.iter().zip(&original.fit_points) {
+        close(*actual, transform.apply(*expected));
+    }
+    close(
+        spline.begin_tangent,
+        transform.apply_rotation(original.begin_tangent),
+    );
+    close(
+        spline.end_tangent,
+        transform.apply_rotation(original.end_tangent),
+    );
+    close(
+        spline.normal,
+        transform.apply_rotation(original.normal).normalize(),
+    );
+    assert_eq!(spline.knots, original.knots);
+    assert_eq!(spline.weights, original.weights);
+    assert_eq!(spline.flags, original.flags);
+    spline.mirror_about_plane(Vector3::new(2.0, -3.0, 4.0), Vector3::new(1.0, 3.0, -2.0));
+    for (actual, expected) in spline.control_points.iter().zip(&original.control_points) {
+        close(*actual, *expected);
+    }
+    for (actual, expected) in spline.fit_points.iter().zip(&original.fit_points) {
+        close(*actual, *expected);
+    }
+}
+
+#[test]
+fn bspline_polyline_mirror_preserves_smoothing_and_vertex_metadata() {
+    let mut polyline = Polyline2D::new();
+    polyline.smooth_surface = SmoothSurfaceType::CubicBSpline;
+    polyline.flags.set_closed(true);
+    polyline.normal = Vector3::new(1.0, 2.0, 3.0).normalize();
+    polyline.elevation = 4.0;
+    for (index, point) in [
+        Vector3::new(1.0, 2.0, 4.0),
+        Vector3::new(4.0, -2.0, 4.0),
+        Vector3::new(7.0, 3.0, 4.0),
+        Vector3::new(9.0, 8.0, 4.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut vertex = Vertex2D::new(point);
+        vertex.bulge = if index % 2 == 0 { 0.25 } else { -0.5 };
+        vertex.curve_tangent = index as f64 * 0.3;
+        vertex.id = index as i32 + 10;
+        polyline.add_vertex(vertex);
+    }
+    let original = polyline.clone();
+    let transform = Transform::from_mirror_plane(Vector3::new(2.0, 4.0, -1.0), Vector3::UNIT_X);
+    polyline.mirror_about_plane(Vector3::new(2.0, 4.0, -1.0), Vector3::UNIT_X);
+    let old_ocs = Matrix3::arbitrary_axis(original.normal);
+    let new_ocs = Matrix3::arbitrary_axis(polyline.normal);
+    for (actual, expected) in polyline.vertices.iter().zip(&original.vertices) {
+        close(
+            new_ocs * actual.location,
+            transform.apply(old_ocs * expected.location),
+        );
+        assert!((actual.bulge + expected.bulge).abs() < 1e-12);
+        assert_eq!(actual.curve_tangent, expected.curve_tangent);
+        assert_eq!(actual.id, expected.id);
+    }
+    assert_eq!(polyline.smooth_surface, original.smooth_surface);
+    assert_eq!(polyline.flags, original.flags);
+}
+
+#[test]
+fn bspline_polygon_mesh_mirror_preserves_grid_smoothing_and_closure() {
+    let mut mesh = PolygonMeshEntity::new();
+    mesh.m_vertex_count = 3;
+    mesh.n_vertex_count = 4;
+    mesh.m_smooth_density = 5;
+    mesh.n_smooth_density = 6;
+    mesh.smooth_type = SurfaceSmoothType::Cubic;
+    mesh.flags
+        .insert(PolygonMeshFlags::CLOSED_M | PolygonMeshFlags::CLOSED_N);
+    mesh.normal = Vector3::new(1.0, -2.0, 3.0).normalize();
+    mesh.elevation = 2.5;
+    for row in 0..mesh.n_vertex_count {
+        for column in 0..mesh.m_vertex_count {
+            mesh.vertices.push(PolygonMeshVertex::at(Vector3::new(
+                column as f64 * 2.0,
+                row as f64 * 3.0,
+                row as f64 + column as f64,
+            )));
+        }
+    }
+    let original = mesh.clone();
+    let transform =
+        Transform::from_mirror_plane(Vector3::new(2.0, 3.0, 4.0), Vector3::new(2.0, 1.0, -3.0));
+    mesh.mirror_about_plane(Vector3::new(2.0, 3.0, 4.0), Vector3::new(2.0, 1.0, -3.0));
+    let m = original.m_vertex_count as usize;
+    for (index, actual) in mesh.vertices.iter().enumerate() {
+        let row = index / m;
+        let column = index % m;
+        let expected = &original.vertices[row * m + (m - 1 - column)];
+        close(actual.location, transform.apply(expected.location));
+    }
+    close(
+        mesh.normal,
+        transform.apply_rotation(original.normal).normalize(),
+    );
+    assert_eq!(mesh.m_vertex_count, original.m_vertex_count);
+    assert_eq!(mesh.n_vertex_count, original.n_vertex_count);
+    assert_eq!(mesh.m_smooth_density, original.m_smooth_density);
+    assert_eq!(mesh.n_smooth_density, original.n_smooth_density);
+    assert_eq!(mesh.smooth_type, original.smooth_type);
+    assert_eq!(mesh.flags, original.flags);
+}
+
+#[test]
+fn subdivision_mesh_mirror_preserves_faces_edges_creases_and_level() {
+    let mut mesh = Mesh::from_quads(
+        vec![
+            Vector3::new(1.0, 2.0, 3.0),
+            Vector3::new(5.0, 2.0, 3.0),
+            Vector3::new(5.0, 6.0, 3.0),
+            Vector3::new(1.0, 6.0, 3.0),
+        ],
+        &[(0, 1, 2, 3)],
+    );
+    mesh.subdivision_level = 3;
+    mesh.blend_crease = false;
+    mesh.edges[0].crease = Some(1.75);
+    let original = mesh.clone();
+    mesh.mirror_x();
+    assert_eq!(mesh.faces, original.faces);
+    assert_eq!(mesh.edges, original.edges);
+    assert_eq!(mesh.subdivision_level, original.subdivision_level);
+    assert_eq!(mesh.blend_crease, original.blend_crease);
+    for (actual, expected) in mesh.vertices.iter().zip(&original.vertices) {
+        assert_eq!(*actual, Vector3::new(-expected.x, expected.y, expected.z));
+    }
+}
+
+#[test]
+fn solid3d_mirror_transforms_acis_placement_and_wireframe_without_losing_topology() {
+    let sat = crate::entities::acis::primitives::build_box([2.0, 3.0, 4.0], 4.0, 6.0, 8.0);
+    let mut solid = Solid3D::from_sat(&sat.to_sat_string());
+    solid.point_of_reference = Vector3::new(2.0, 3.0, 4.0);
+    solid.wires.push(Wire::from_points(vec![
+        Vector3::new(0.0, 0.0, 0.0),
+        Vector3::new(2.0, 3.0, 4.0),
+    ]));
+    let before_topology = solid.parse_sat().unwrap().faces().len();
+    let original_wire = solid.wires[0].points.clone();
+    let mirror =
+        Transform::from_mirror_plane(Vector3::new(1.0, -2.0, 3.0), Vector3::new(2.0, 1.0, -1.0));
+    solid.mirror_about_plane(Vector3::new(1.0, -2.0, 3.0), Vector3::new(2.0, 1.0, -1.0));
+    close(
+        solid.point_of_reference,
+        mirror.apply(Vector3::new(2.0, 3.0, 4.0)),
+    );
+    for (actual, expected) in solid.wires[0].points.iter().zip(original_wire) {
+        close(*actual, mirror.apply(expected));
+    }
+    assert_eq!(solid.parse_sat().unwrap().faces().len(), before_topology);
+}
+
+#[test]
+fn all_acis_solid_family_entities_mirror_without_losing_brep_topology() {
+    let sat = crate::entities::acis::primitives::build_box([0.0, 0.0, 0.0], 4.0, 5.0, 6.0);
+    let topology = sat.faces().len();
+    let mirror =
+        Transform::from_mirror_plane(Vector3::new(3.0, -2.0, 1.0), Vector3::new(2.0, -1.0, 3.0));
+    let wire = || {
+        Wire::from_points(vec![
+            Vector3::new(1.0, 2.0, 3.0),
+            Vector3::new(4.0, 5.0, 6.0),
+        ])
+    };
+    let mut solid = Solid3D::from_sat(&sat.to_sat_string());
+    solid.point_of_reference = Vector3::new(1.0, 2.0, 3.0);
+    solid.wires.push(wire());
+    let mut region = Region::from_sat(&sat.to_sat_string());
+    region.point_of_reference = Vector3::new(1.0, 2.0, 3.0);
+    region.wires.push(wire());
+    let mut body = Body::from_sat(&sat.to_sat_string());
+    body.point_of_reference = Vector3::new(1.0, 2.0, 3.0);
+    body.wires.push(wire());
+    let mut surface = Surface::new(SurfaceKind::Plane);
+    surface.acis_data = AcisData::from_sat(&sat.to_sat_string());
+    surface.point_of_reference = Vector3::new(1.0, 2.0, 3.0);
+    surface.wires.push(wire());
+    let mut entities = vec![
+        EntityType::Solid3D(solid),
+        EntityType::Region(region),
+        EntityType::Body(body),
+        EntityType::Surface(Box::new(surface)),
+    ];
+    for entity in &mut entities {
+        entity.mirror3d(MirrorPlane::PointNormal {
+            point: Vector3::new(3.0, -2.0, 1.0),
+            normal: Vector3::new(2.0, -1.0, 3.0),
+        });
+        let (point, wires, parsed) = match entity {
+            EntityType::Solid3D(value) => {
+                (&value.point_of_reference, &value.wires, value.parse_sat())
+            }
+            EntityType::Region(value) => {
+                (&value.point_of_reference, &value.wires, value.parse_sat())
+            }
+            EntityType::Body(value) => (&value.point_of_reference, &value.wires, value.parse_sat()),
+            EntityType::Surface(value) => {
+                (&value.point_of_reference, &value.wires, value.parse_sat())
+            }
+            _ => unreachable!(),
+        };
+        close(*point, mirror.apply(Vector3::new(1.0, 2.0, 3.0)));
+        assert_eq!(parsed.unwrap().faces().len(), topology);
+        close(
+            wires[0].points[0],
+            mirror.apply(Vector3::new(1.0, 2.0, 3.0)),
+        );
+        close(
+            wires[0].points[1],
+            mirror.apply(Vector3::new(4.0, 5.0, 6.0)),
+        );
+    }
+}
+
+#[test]
+fn solid_and_trace_mirror_preserve_the_entity_family_and_storage_flags() {
+    let corners = [
+        Vector3::new(1.0, 2.0, 0.0),
+        Vector3::new(5.0, 2.0, 0.0),
+        Vector3::new(1.0, 6.0, 0.0),
+        Vector3::new(5.0, 6.0, 0.0),
+    ];
+    let mut solid = Solid::new(corners[0], corners[1], corners[2], corners[3]);
+    solid.is_trace = false;
+    let mut trace = Solid::new(corners[0], corners[1], corners[2], corners[3]);
+    trace.is_trace = true;
+    let mut entities = [EntityType::Solid(solid), EntityType::Solid(trace)];
+    if let EntityType::Solid(value) = &mut entities[0] {
+        value.mirror_x();
+    }
+    if let EntityType::Solid(value) = &mut entities[1] {
+        value.mirror_x();
+    }
+    let EntityType::Solid(solid) = &entities[0] else {
+        unreachable!()
+    };
+    let EntityType::Solid(trace) = &entities[1] else {
+        unreachable!()
+    };
+    assert!(!solid.is_trace);
+    assert!(trace.is_trace);
+    assert_eq!(solid.boundary_corners(), trace.boundary_corners());
+}
+
+#[test]
 fn tilted_mtext_retains_its_world_direction_in_dwg_and_dxf() {
     use std::io::Cursor;
     for mirror_text in [false, true] {
@@ -1376,13 +1655,15 @@ fn canonical_entity_pairs(entity: EntityType) -> Vec<(i32, String)> {
 }
 
 pub(crate) fn assert_native_case(case: NativeMirrorCase) -> Result<(), String> {
-    let mut actual = native_entity(case.source);
+    let mut actual = std::panic::catch_unwind(|| native_entity(case.source))
+        .map_err(|_| format!("{}: source DXF fixture could not be parsed", case.name))?;
     // Avoid a degrees/radians round trip changing the last bit of fixture
     // rotations, which affects the native readability choice at exactly 45 degrees.
     if let (EntityType::Text(text), Some((_, angle))) = (&mut actual, case.name.rsplit_once("_R")) {
         text.rotation = angle.parse().unwrap();
     }
-    let expected = native_entity(case.expected);
+    let expected = std::panic::catch_unwind(|| native_entity(case.expected))
+        .map_err(|_| format!("{}: expected DXF fixture could not be parsed", case.name))?;
     let options = MirrorOptions {
         mirror_text: case.name.contains("_M1_") || case.name.ends_with("_M1"),
         mirror_hatch: case.name == "HATCH_M1",
@@ -1455,6 +1736,11 @@ pub(crate) fn assert_native_case(case: NativeMirrorCase) -> Result<(), String> {
 // Fixtures are semantic DXF records; unstable database identities are omitted.
 
 const NATIVE_MIRROR_CASES: &[NativeMirrorCase] = &[
+    NativeMirrorCase { name: "SPLINE_CONTROL", source: "0\nSPLINE\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbSpline\n70\n0\n71\n3\n72\n9\n73\n5\n74\n0\n42\n1e-9\n43\n1e-10\n40\n0\n40\n0\n40\n0\n40\n0\n40\n0.5\n40\n1\n40\n1\n40\n1\n40\n1\n10\n0\n20\n0\n30\n0\n10\n2\n20\n4\n30\n1\n10\n4\n20\n-2\n30\n3\n10\n7\n20\n5\n30\n-1\n10\n10\n20\n0\n30\n2\n", expected: "0\nSPLINE\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbSpline\n70\n0\n71\n3\n72\n9\n73\n5\n74\n0\n42\n1e-9\n43\n1e-10\n40\n0\n40\n0\n40\n0\n40\n0\n40\n0.5\n40\n1\n40\n1\n40\n1\n40\n1\n10\n0\n20\n0\n30\n0\n10\n-2\n20\n4\n30\n1\n10\n-4\n20\n-2\n30\n3\n10\n-7\n20\n5\n30\n-1\n10\n-10\n20\n0\n30\n2\n" },
+    NativeMirrorCase { name: "SPLINE_RATIONAL_PERIODIC", source: "0\nSPLINE\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbSpline\n70\n0\n71\n2\n72\n7\n73\n4\n74\n0\n42\n1e-9\n43\n1e-10\n40\n0\n40\n0\n40\n0\n40\n0.5\n40\n1\n40\n1\n40\n1\n10\n0\n20\n0\n30\n0\n10\n2\n20\n3\n30\n1\n10\n6\n20\n-1\n30\n2\n10\n9\n20\n4\n30\n0\n", expected: "0\nSPLINE\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbSpline\n70\n0\n71\n2\n72\n7\n73\n4\n74\n0\n42\n1e-9\n43\n1e-10\n40\n0\n40\n0\n40\n0\n40\n0.5\n40\n1\n40\n1\n40\n1\n10\n0\n20\n0\n30\n0\n10\n-2\n20\n3\n30\n1\n10\n-6\n20\n-1\n30\n2\n10\n-9\n20\n4\n30\n0\n" },
+    NativeMirrorCase { name: "SPLINE_FIT", source: "0\nSPLINE\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbSpline\n70\n1056\n71\n3\n72\n11\n73\n7\n74\n5\n42\n1e-9\n43\n1e-10\n44\n0.00001\n12\n1\n22\n0\n32\n0\n13\n-1\n23\n0\n33\n0\n40\n0\n40\n0\n40\n0\n40\n0\n40\n4.58258\n40\n11.2158\n40\n19.8182\n40\n26.3756\n40\n26.3756\n40\n26.3756\n40\n26.3756\n10\n0\n20\n0\n30\n0\n10\n1.52753\n20\n0\n30\n0\n10\n1.82969\n20\n8.73684\n30\n0.884263\n10\n4.75104\n20\n-9.05485\n30\n5.38306\n10\n4.48639\n20\n11.2777\n30\n-4.27965\n10\n12.1858\n20\n0\n30\n2\n10\n10\n20\n0\n30\n2\n11\n0\n21\n0\n31\n0\n11\n2\n21\n4\n31\n1\n11\n4\n21\n-2\n31\n3\n11\n7\n21\n5\n31\n-1\n11\n10\n21\n0\n31\n2\n", expected: "0\nSPLINE\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbSpline\n70\n1056\n71\n3\n72\n11\n73\n7\n74\n5\n42\n1e-9\n43\n1e-10\n44\n0.00001\n12\n-1\n22\n0\n32\n0\n13\n1\n23\n0\n33\n0\n40\n0\n40\n0\n40\n0\n40\n0\n40\n4.58258\n40\n11.2158\n40\n19.8182\n40\n26.3756\n40\n26.3756\n40\n26.3756\n40\n26.3756\n10\n0\n20\n0\n30\n0\n10\n-1.52753\n20\n0\n30\n0\n10\n-1.82969\n20\n8.73684\n30\n0.884263\n10\n-4.75104\n20\n-9.05485\n30\n5.38306\n10\n-4.48639\n20\n11.2777\n30\n-4.27965\n10\n-12.1858\n20\n0\n30\n2\n10\n-10\n20\n0\n30\n2\n11\n0\n21\n0\n31\n0\n11\n-2\n21\n4\n31\n1\n11\n-4\n21\n-2\n31\n3\n11\n-7\n21\n5\n31\n-1\n11\n-10\n21\n0\n31\n2\n" },
+    NativeMirrorCase { name: "POLYLINE_BSPLINE", source: "0\nPOLYLINE\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDb2dPolyline\n66\n1\n10\n0\n20\n0\n30\n0\n70\n0\n40\n0\n41\n0\n210\n0\n220\n0\n230\n1\n71\n0\n72\n0\n73\n0\n74\n0\n75\n6\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDb2dVertex\n10\n0\n20\n0\n30\n0\n40\n0\n41\n0\n42\n0\n91\n0\n70\n0\n50\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDb2dVertex\n10\n3\n20\n1\n30\n0\n40\n0\n41\n0\n42\n0\n91\n0\n70\n0\n50\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDb2dVertex\n10\n6\n20\n-1\n30\n0\n40\n0\n41\n0\n42\n0\n91\n0\n70\n0\n50\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDb2dVertex\n10\n9\n20\n2\n30\n0\n40\n0\n41\n0\n42\n0\n91\n0\n70\n0\n50\n0\n0\nSEQEND\n100\nAcDbEntity\n67\n0\n8\n0\n", expected: "0\nPOLYLINE\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDb2dPolyline\n66\n1\n10\n0\n20\n0\n30\n0\n70\n0\n40\n0\n41\n0\n210\n0\n220\n0\n230\n1\n71\n0\n72\n0\n73\n0\n74\n0\n75\n6\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDb2dVertex\n10\n0\n20\n0\n30\n0\n40\n0\n41\n0\n42\n0\n91\n0\n70\n0\n50\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDb2dVertex\n10\n-3\n20\n1\n30\n0\n40\n0\n41\n0\n42\n0\n91\n0\n70\n0\n50\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDb2dVertex\n10\n-6\n20\n-1\n30\n0\n40\n0\n41\n0\n42\n0\n91\n0\n70\n0\n50\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDb2dVertex\n10\n-9\n20\n2\n30\n0\n40\n0\n41\n0\n42\n0\n91\n0\n70\n0\n50\n0\n0\nSEQEND\n100\nAcDbEntity\n67\n0\n8\n0\n" },
+    NativeMirrorCase { name: "POLYGONMESH_BSPLINE", source: "0\nPOLYLINE\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbPolygonMesh\n66\n1\n10\n0\n20\n0\n30\n0\n70\n16\n40\n0\n41\n0\n210\n0\n220\n0\n230\n1\n71\n3\n72\n3\n73\n2\n74\n2\n75\n6\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n0\n20\n0\n30\n0\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n3\n20\n0\n30\n1\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n6\n20\n0\n30\n0\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n0\n20\n3\n30\n2\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n3\n20\n3\n30\n4\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n6\n20\n3\n30\n2\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n0\n20\n6\n30\n0\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n3\n20\n6\n30\n1\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n6\n20\n6\n30\n0\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nSEQEND\n100\nAcDbEntity\n67\n0\n8\n0\n", expected: "0\nPOLYLINE\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbPolygonMesh\n66\n1\n10\n0\n20\n0\n30\n0\n70\n16\n40\n0\n41\n0\n210\n0\n220\n0\n230\n1\n71\n3\n72\n3\n73\n2\n74\n2\n75\n6\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n-6\n20\n0\n30\n0\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n-3\n20\n0\n30\n1\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n0\n20\n0\n30\n0\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n-6\n20\n3\n30\n2\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n-3\n20\n3\n30\n4\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n0\n20\n3\n30\n2\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n-6\n20\n6\n30\n0\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n-3\n20\n6\n30\n1\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nVERTEX\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbVertex\n100\nAcDbPolygonMeshVertex\n10\n0\n20\n6\n30\n0\n40\n0\n41\n0\n42\n0\n70\n64\n50\n0\n71\n0\n72\n0\n73\n0\n74\n0\n0\nSEQEND\n100\nAcDbEntity\n67\n0\n8\n0\n" },
     NativeMirrorCase { name: "MTEXT_ROT_M0_X_A1_R0.0", source: "0\nMTEXT\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbMText\n10\n3\n20\n5\n30\n0\n40\n2.5\n41\n30\n46\n0\n71\n1\n72\n5\n1\nFirst\\PSecond\n7\nStandard\n210\n0\n220\n0\n230\n1\n11\n1\n21\n0\n31\n0\n42\n14.1667\n43\n6.66667\n50\n0\n73\n1\n44\n1\n", expected: "0\nMTEXT\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbMText\n10\n-3\n20\n5\n30\n0\n40\n2.5\n41\n30\n46\n0\n71\n3\n72\n5\n1\nFirst\\PSecond\n7\nStandard\n210\n0\n220\n0\n230\n1\n11\n1\n21\n0\n31\n0\n42\n14.1667\n43\n6.66667\n50\n0\n73\n1\n44\n1\n" },
     NativeMirrorCase { name: "MTEXT_ROT_M0_X_A1_R1.2", source: "0\nMTEXT\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbMText\n10\n3\n20\n5\n30\n0\n40\n2.5\n41\n30\n46\n0\n71\n1\n72\n5\n1\nFirst\\PSecond\n7\nStandard\n210\n0\n220\n0\n230\n1\n11\n0.362358\n21\n0.932039\n31\n0\n42\n14.1667\n43\n6.66667\n50\n68.75493541569878\n73\n1\n44\n1\n", expected: "0\nMTEXT\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbMText\n10\n-3\n20\n5\n30\n0\n40\n2.5\n41\n30\n46\n0\n71\n3\n72\n5\n1\nFirst\\PSecond\n7\nStandard\n210\n0\n220\n0\n230\n1\n11\n0.362358\n21\n-0.932039\n31\n0\n42\n14.1667\n43\n6.66667\n50\n291.24533346310494\n73\n1\n44\n1\n" },
     NativeMirrorCase { name: "MTEXT_ROT_M0_X_A1_R2.4", source: "0\nMTEXT\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbMText\n10\n3\n20\n5\n30\n0\n40\n2.5\n41\n30\n46\n0\n71\n1\n72\n5\n1\nFirst\\PSecond\n7\nStandard\n210\n0\n220\n0\n230\n1\n11\n-0.737394\n21\n0.675463\n31\n0\n42\n14.1667\n43\n6.66667\n50\n137.50987083139756\n73\n1\n44\n1\n", expected: "0\nMTEXT\n100\nAcDbEntity\n67\n0\n8\n0\n100\nAcDbMText\n10\n-3\n20\n5\n30\n0\n40\n2.5\n41\n30\n46\n0\n71\n3\n72\n5\n1\nFirst\\PSecond\n7\nStandard\n210\n0\n220\n0\n230\n1\n11\n-0.737394\n21\n-0.675463\n31\n0\n42\n14.1667\n43\n6.66667\n50\n222.49039804740613\n73\n1\n44\n1\n" },
@@ -2081,8 +2367,8 @@ const NATIVE_MIRROR_CASES: &[NativeMirrorCase] = &[
 ];
 
 #[test]
-fn autocad_2027_planar_mirror_scenarios() {
-    assert_eq!(NATIVE_MIRROR_CASES.len(), 623);
+fn native_2027_planar_mirror_scenarios() {
+    assert_eq!(NATIVE_MIRROR_CASES.len(), 628);
     let failures: Vec<_> = NATIVE_MIRROR_CASES
         .iter()
         .copied()
@@ -2094,4 +2380,183 @@ fn autocad_2027_planar_mirror_scenarios() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+#[test]
+fn native_geometry_spline_modes_use_the_same_planar_transform() {
+    let control_points = vec![
+        Vector3::new(2.0, 1.0, 1.0),
+        Vector3::new(5.0, 8.0, 2.5),
+        Vector3::new(9.0, -2.0, 4.0),
+        Vector3::new(14.0, 6.0, 5.5),
+    ];
+    let mut closed = Spline::from_control_points(3, control_points.clone());
+    closed.flags.closed = true;
+    let mut periodic = Spline::from_control_points(3, control_points.clone());
+    periodic.flags.periodic = true;
+    let mut rational = Spline::from_control_points(3, control_points.clone());
+    rational.flags.rational = true;
+    rational.weights = vec![1.0, 0.5, 2.0, 1.0];
+    let mut fit = Spline::from_fit_points(vec![
+        Vector3::new(1.0, 1.0, 0.0),
+        Vector3::new(4.0, 8.0, 0.0),
+        Vector3::new(9.0, -1.0, 0.0),
+        Vector3::new(14.0, 6.0, 0.0),
+    ]);
+    fit.degree = 3;
+    let mut linear = Spline::from_control_points(1, control_points.clone());
+    linear.flags.linear = true;
+    let mut splines = vec![
+        Spline::from_control_points(3, control_points),
+        closed,
+        periodic,
+        rational,
+        fit,
+        linear,
+    ];
+    let first = Vector3::new(2.5, -3.0, 0.0);
+    let second = Vector3::new(13.5, 4.0, 0.0);
+    let transform = Transform::from_mirror_line(first, second);
+    for spline in &mut splines {
+        let original = spline.clone();
+        spline.mirror_about_line(first, second);
+        for (actual, expected) in spline.control_points.iter().zip(&original.control_points) {
+            close(*actual, transform.apply(*expected));
+        }
+        for (actual, expected) in spline.fit_points.iter().zip(&original.fit_points) {
+            close(*actual, transform.apply(*expected));
+        }
+        assert_eq!(spline.knots, original.knots);
+        assert_eq!(spline.weights, original.weights);
+        assert_eq!(spline.flags, original.flags);
+    }
+    assert!(splines[1].flags.closed);
+    assert!(splines[2].flags.periodic);
+    assert!(splines[3].flags.rational);
+    assert!(splines[5].flags.linear);
+}
+
+#[test]
+fn native_polygon_mesh_closure_and_surface_fit_modes_survive_mirror() {
+    let modes = [
+        (PolygonMeshFlags::empty(), SurfaceSmoothType::NoSmooth),
+        (PolygonMeshFlags::CLOSED_M, SurfaceSmoothType::NoSmooth),
+        (PolygonMeshFlags::CLOSED_N, SurfaceSmoothType::NoSmooth),
+        (
+            PolygonMeshFlags::CLOSED_M | PolygonMeshFlags::CLOSED_N,
+            SurfaceSmoothType::NoSmooth,
+        ),
+        (PolygonMeshFlags::SPLINE_FIT, SurfaceSmoothType::Quadratic),
+        (PolygonMeshFlags::SPLINE_FIT, SurfaceSmoothType::Cubic),
+        (PolygonMeshFlags::CURVE_FIT, SurfaceSmoothType::Bezier),
+    ];
+    // Native POLYMESH MIRROR cases use the world Y axis as the mirror line;
+    // AutoCAD reverses each stored M row for this reflection.
+    let first = Vector3::ZERO;
+    let second = Vector3::UNIT_Y;
+    let transform = Transform::from_mirror_line(first, second);
+    for (extra_flags, smooth_type) in modes {
+        let mut mesh = PolygonMeshEntity::new();
+        mesh.m_vertex_count = 3;
+        mesh.n_vertex_count = 3;
+        mesh.m_smooth_density = 5;
+        mesh.n_smooth_density = 6;
+        mesh.smooth_type = smooth_type;
+        mesh.flags.insert(extra_flags);
+        mesh.vertices = (0..3)
+            .flat_map(|row| {
+                (0..3).map(move |column| {
+                    PolygonMeshVertex::at(Vector3::new(
+                        2.0 + column as f64 * 6.0,
+                        2.0 + row as f64 * 6.0,
+                        1.0 + row as f64 + column as f64,
+                    ))
+                })
+            })
+            .collect();
+        let original = mesh.clone();
+        mesh.mirror_about_line(first, second);
+        let m = original.m_vertex_count as usize;
+        for (index, actual) in mesh.vertices.iter().enumerate() {
+            let row = index / m;
+            let column = index % m;
+            let expected = &original.vertices[row * m + (m - 1 - column)];
+            close(actual.location, transform.apply(expected.location));
+        }
+        assert_eq!(mesh.flags, original.flags);
+        assert_eq!(mesh.smooth_type, original.smooth_type);
+        assert_eq!(mesh.m_vertex_count, original.m_vertex_count);
+        assert_eq!(mesh.n_vertex_count, original.n_vertex_count);
+        assert_eq!(mesh.m_smooth_density, original.m_smooth_density);
+        assert_eq!(mesh.n_smooth_density, original.n_smooth_density);
+    }
+}
+
+#[test]
+fn native_mirror3d_spline_mesh_and_solid_preserve_world_geometry() {
+    let point = Vector3::new(1.0, -2.0, 3.0);
+    let normal = Vector3::new(2.0, 1.0, -3.0);
+    let transform = Transform::from_mirror_plane(point, normal);
+
+    let mut spline = Spline::from_control_points(
+        3,
+        vec![
+            Vector3::new(2.0, 1.0, 2.0),
+            Vector3::new(5.0, 8.0, 5.0),
+            Vector3::new(9.0, -2.0, 8.0),
+            Vector3::new(14.0, 6.0, 11.0),
+        ],
+    );
+    let spline_original = spline.clone();
+    spline.mirror_about_plane(point, normal);
+    for (actual, expected) in spline
+        .control_points
+        .iter()
+        .zip(&spline_original.control_points)
+    {
+        close(*actual, transform.apply(*expected));
+    }
+
+    let mut mesh = Mesh::from_quads(
+        vec![
+            Vector3::new(2.0, 2.0, 2.0),
+            Vector3::new(14.0, 2.0, 4.0),
+            Vector3::new(14.0, 14.0, 6.0),
+            Vector3::new(2.0, 14.0, 3.0),
+        ],
+        &[(0, 1, 2, 3)],
+    );
+    mesh.subdivision_level = 2;
+    let mesh_original = mesh.clone();
+    mesh.mirror_about_plane(point, normal);
+    for (actual, expected) in mesh.vertices.iter().zip(&mesh_original.vertices) {
+        close(*actual, transform.apply(*expected));
+    }
+    assert_eq!(mesh.faces, mesh_original.faces);
+    assert_eq!(mesh.edges, mesh_original.edges);
+    assert_eq!(mesh.subdivision_level, mesh_original.subdivision_level);
+
+    let sat = crate::entities::acis::primitives::build_box([2.0, 3.0, 4.0], 4.0, 6.0, 8.0);
+    let mut solid = Solid3D::from_sat(&sat.to_sat_string());
+    solid.point_of_reference = Vector3::new(2.0, 3.0, 4.0);
+    let before_faces = solid.parse_sat().unwrap().faces().len();
+    let before_point = solid.point_of_reference;
+    solid.mirror_about_plane(point, normal);
+    close(solid.point_of_reference, transform.apply(before_point));
+    assert_eq!(solid.parse_sat().unwrap().faces().len(), before_faces);
+}
+
+#[test]
+fn native_planar_solid3d_mirror_preserves_sat_topology() {
+    let sat = crate::entities::acis::primitives::build_box([6.0, 4.0, 2.0], 12.0, 7.0, 3.0);
+    let mut solid = Solid3D::from_sat(&sat.to_sat_string());
+    solid.point_of_reference = Vector3::new(6.0, 4.0, 2.0);
+    let original_point = solid.point_of_reference;
+    let before_faces = solid.parse_sat().unwrap().faces().len();
+    let first = Vector3::new(2.5, -3.0, 0.0);
+    let second = Vector3::new(13.5, 4.0, 0.0);
+    let transform = Transform::from_mirror_line(first, second);
+    solid.mirror_about_line(first, second);
+    close(solid.point_of_reference, transform.apply(original_point));
+    assert_eq!(solid.parse_sat().unwrap().faces().len(), before_faces);
 }

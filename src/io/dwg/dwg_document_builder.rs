@@ -7752,7 +7752,7 @@ mod tests {
 
     /// DWG spatial-filter transforms share DXF's 12-value layout.
     #[test]
-    fn spatial_filter_matrix_reads_autocad_order() {
+    fn spatial_filter_matrix_reads_native_order() {
         let v = [
             1.0, 0.0, 0.0, -500.0, //
             0.0, 1.0, 0.0, 0.0, //

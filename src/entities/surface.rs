@@ -377,4 +377,8 @@ impl Entity for Surface {
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_surface(self, transform);
     }
+
+    fn apply_mirror(&mut self, transform: &crate::types::Transform) {
+        super::mirror::mirror_surface(self, transform);
+    }
 }

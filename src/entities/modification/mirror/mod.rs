@@ -9,6 +9,7 @@ use crate::entities::*;
 use crate::types::{Transform, Vector3};
 
 mod blocks;
+mod curves;
 mod hatch;
 mod leaders;
 mod meshes;
@@ -17,6 +18,7 @@ mod primitives;
 mod text;
 
 pub(crate) use blocks::*;
+pub(crate) use curves::*;
 pub(crate) use hatch::*;
 pub(crate) use leaders::*;
 pub(crate) use meshes::*;
@@ -66,10 +68,17 @@ impl EntityType {
             EntityType::LwPolyline(e) => mirror_lwpolyline(e, transform),
             EntityType::Polyline2D(e) => mirror_polyline2d(e, transform),
             EntityType::MLine(e) => mirror_mline(e, transform),
+            EntityType::Spline(e) => mirror_spline(e, transform),
+            EntityType::Helix(e) => mirror_helix(e, transform),
             EntityType::Face3D(e) => mirror_face3d(e, transform),
             EntityType::Solid(e) => mirror_solid(e, transform),
             EntityType::Mesh(e) => mirror_mesh(e, transform),
             EntityType::PolyfaceMesh(e) => mirror_polyface_mesh(e, transform),
+            EntityType::PolygonMesh(e) => mirror_polygon_mesh(e, transform),
+            EntityType::Solid3D(e) => mirror_solid3d(e, transform),
+            EntityType::Region(e) => mirror_region(e, transform),
+            EntityType::Body(e) => mirror_body(e, transform),
+            EntityType::Surface(e) => mirror_surface(e, transform),
             EntityType::Text(e) => mirror_text_with_options(e, transform, options),
             EntityType::MText(e) => mirror_mtext_with_options(e, transform, options),
             EntityType::AttributeDefinition(e) => {
