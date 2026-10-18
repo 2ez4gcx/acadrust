@@ -58,6 +58,12 @@ pub struct Insert {
 }
 
 impl Insert {
+    /// Hard upper bound for detached MINSERT expansion.  AutoCAD's command
+    /// refuses MINSERT references; the context-free helper keeps support for
+    /// ordinary arrays while refusing pathological work that would otherwise
+    /// materialize billions of transforms or entities.
+    const MAX_EXPLODE_ARRAY_INSTANCES: usize = 1_000_000;
+
     /// Create a new insert entity
     pub fn new(block_name: impl Into<String>, insert_point: Vector3) -> Self {
         Self {
@@ -209,6 +215,9 @@ impl Insert {
 
     /// Get all insertion points for array instances
     pub fn array_points(&self) -> Vec<Vector3> {
+        if self.instance_count() > Self::MAX_EXPLODE_ARRAY_INSTANCES {
+            return Vec::new();
+        }
         let mut points = Vec::with_capacity(self.array_capacity_hint());
 
         for row in 0..self.row_count {
@@ -448,6 +457,9 @@ impl Insert {
     fn array_transforms(&self) -> Vec<Transform> {
         if !self.is_minsert() {
             return vec![self.get_transform()];
+        }
+        if self.instance_count() > Self::MAX_EXPLODE_ARRAY_INSTANCES {
+            return Vec::new();
         }
 
         let ocs = Matrix4::from_matrix3(Matrix3::arbitrary_axis(self.normal));
@@ -845,6 +857,8 @@ mod tests {
         insert.column_count = u16::MAX;
         assert_eq!(insert.instance_count(), 65535 * 65535);
         assert!(insert.array_capacity_hint() <= 4096);
+        assert!(insert.array_points().is_empty());
+        assert!(insert.explode(&[EntityType::Line(Line::new())]).is_empty());
     }
 
     /// Helper – approximate equality for f64
