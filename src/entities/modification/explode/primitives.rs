@@ -187,7 +187,9 @@ pub(super) fn explode_solid(solid: &Solid) -> Vec<EntityType> {
 pub(super) fn explode_face3d(face: &Face3D) -> Vec<EntityType> {
     // Explode a 3D face into its edge lines (only visible edges).
     let common = &face.common;
-    let corners = face.corners();
+    // Edge flags belong to the four stored slots, even when a mirrored
+    // triangle repeats its first two corners rather than its last two.
+    let corners = [face.first_corner, face.second_corner, face.third_corner, face.fourth_corner];
     let n = corners.len();
     let mut result = Vec::with_capacity(n);
 
@@ -199,7 +201,7 @@ pub(super) fn explode_face3d(face: &Face3D) -> Vec<EntityType> {
     ];
 
     for i in 0..n {
-        if !invisible[i] {
+        if !invisible[i] && (corners[i] - corners[(i + 1) % n]).length() >= 1e-10 {
             result.push(line_entity(
                 corners[i],
                 corners[(i + 1) % n],

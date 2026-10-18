@@ -772,6 +772,10 @@ impl Entity for MLine {
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_mline(self, transform);
     }
+
+    fn apply_mirror(&mut self, transform: &crate::types::Transform) {
+        super::mirror::mirror_mline(self, transform);
+    }
 }
 
 // ============================================================================

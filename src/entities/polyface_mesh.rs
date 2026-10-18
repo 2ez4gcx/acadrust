@@ -337,14 +337,23 @@ impl PolyfaceFace {
         }
     }
 
-    /// Reverses the winding order of the face.
+    /// Reverses the winding order while keeping visibility on each edge.
     pub fn reverse(&mut self) {
-        if self.is_triangle() {
-            std::mem::swap(&mut self.index1, &mut self.index3);
-        } else {
-            std::mem::swap(&mut self.index1, &mut self.index4);
-            std::mem::swap(&mut self.index2, &mut self.index3);
+        let indices = [self.index1, self.index2, self.index3, self.index4];
+        let count = self.vertex_count();
+        let mut reversed = [0; 4];
+        for (index, value) in reversed.iter_mut().take(count).enumerate() {
+            let old_index = count - 1 - index;
+            // A reversed outgoing edge was the preceding vertex's outgoing
+            // edge before reversal; its visibility follows that edge.
+            let hidden = indices[(old_index + count - 1) % count] < 0;
+            *value = if hidden {
+                -indices[old_index].abs()
+            } else {
+                indices[old_index].abs()
+            };
         }
+        [self.index1, self.index2, self.index3, self.index4] = reversed;
     }
 }
 

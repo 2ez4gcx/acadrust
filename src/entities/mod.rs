@@ -65,8 +65,10 @@ pub mod wipeout;
 pub mod xline;
 
 // Preserve existing module paths for callers of the modification tools.
-pub use modification::{explode, mirror, rotate, rotate3d, transform, translate};
+pub use modification::mirror::MirrorOptions;
+pub use modification::mirror3d::MirrorPlane;
 pub use modification::rotate::RotationAxis;
+pub use modification::{explode, mirror, mirror3d, rotate, rotate3d, transform, translate};
 
 pub use arc::Arc;
 pub use attribute_definition::{
@@ -344,7 +346,14 @@ pub trait Entity {
     /// Override this for entities that need post-processing after mirroring
     /// (e.g., arc angle swaps, bulge negation, face winding reversal).
     fn apply_mirror(&mut self, transform: &Transform) {
-        self.apply_transform(transform);
+        if mirror::valid_transform(transform) {
+            self.apply_transform(transform);
+        }
+    }
+
+    /// Apply a reflection with explicit text and hatch policies.
+    fn apply_mirror_with_options(&mut self, transform: &Transform, _options: MirrorOptions) {
+        self.apply_mirror(transform);
     }
 
     /// Mirror the entity across the YZ plane (negate X coordinates)
@@ -364,12 +373,32 @@ pub trait Entity {
 
     /// Mirror the entity across a line defined by two points (in the XY plane)
     fn mirror_about_line(&mut self, p1: Vector3, p2: Vector3) {
-        self.apply_mirror(&Transform::from_mirror_line(p1, p2));
+        self.mirror(p1, p2);
+    }
+
+    /// Planar MIRROR through the points' XY projections, preserving height.
+    fn mirror(&mut self, first: Vector3, second: Vector3) {
+        self.mirror_with_options(first, second, MirrorOptions::default());
+    }
+
+    /// Planar MIRROR with explicit text and hatch policies.
+    fn mirror_with_options(&mut self, first: Vector3, second: Vector3, options: MirrorOptions) {
+        self.apply_mirror_with_options(&Transform::from_mirror_line(first, second), options);
+    }
+
+    /// MIRROR3D across the selected world-space plane.
+    fn mirror3d(&mut self, plane: MirrorPlane) {
+        self.mirror3d_with_options(plane, MirrorOptions::default());
+    }
+
+    /// MIRROR3D with explicit text and hatch policies.
+    fn mirror3d_with_options(&mut self, plane: MirrorPlane, options: MirrorOptions) {
+        self.apply_mirror_with_options(&plane.transform(), options);
     }
 
     /// Mirror the entity across an arbitrary plane
     fn mirror_about_plane(&mut self, point: Vector3, normal: Vector3) {
-        self.apply_mirror(&Transform::from_mirror_plane(point, normal));
+        self.mirror3d(MirrorPlane::PointNormal { point, normal });
     }
 }
 

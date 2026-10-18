@@ -100,7 +100,8 @@ pub struct Face3D {
     pub second_corner: Vector3,
     /// Third corner point (in WCS)
     pub third_corner: Vector3,
-    /// Fourth corner point (in WCS) - same as third if only 3 corners
+    /// Fourth corner point (in WCS). Triangles repeat an adjacent corner;
+    /// newly created triangles repeat the third corner.
     pub fourth_corner: Vector3,
     /// Invisible edge flags
     pub invisible_edges: InvisibleEdgeFlags,
@@ -132,42 +133,49 @@ impl Face3D {
 
     /// Check if this is a triangle (3 vertices)
     pub fn is_triangle(&self) -> bool {
-        (self.third_corner - self.fourth_corner).length() < 1e-10
+        let corners = [
+            self.first_corner,
+            self.second_corner,
+            self.third_corner,
+            self.fourth_corner,
+        ];
+        (0..4).any(|index| (corners[index] - corners[(index + 1) % 4]).length() < 1e-10)
     }
 
     /// Get all corner points
     pub fn corners(&self) -> Vec<Vector3> {
-        if self.is_triangle() {
-            vec![self.first_corner, self.second_corner, self.third_corner]
-        } else {
-            vec![
-                self.first_corner,
-                self.second_corner,
-                self.third_corner,
-                self.fourth_corner,
-            ]
+        let mut corners: Vec<Vector3> = Vec::with_capacity(4);
+        for corner in [
+            self.first_corner,
+            self.second_corner,
+            self.third_corner,
+            self.fourth_corner,
+        ] {
+            if corners
+                .last()
+                .is_none_or(|previous| (corner - *previous).length() >= 1e-10)
+            {
+                corners.push(corner);
+            }
         }
+        if corners.len() > 1 && (corners[0] - corners[corners.len() - 1]).length() < 1e-10 {
+            corners.pop();
+        }
+        corners
     }
 
     /// Calculate the area of the face
     pub fn area(&self) -> f64 {
-        if self.is_triangle() {
-            // Triangle area using cross product
-            let v1 = self.second_corner - self.first_corner;
-            let v2 = self.third_corner - self.first_corner;
-            v1.cross(&v2).length() * 0.5
-        } else {
-            // Quadrilateral area (sum of two triangles)
-            let v1 = self.second_corner - self.first_corner;
-            let v2 = self.third_corner - self.first_corner;
-            let area1 = v1.cross(&v2).length() * 0.5;
-
-            let v3 = self.third_corner - self.first_corner;
-            let v4 = self.fourth_corner - self.first_corner;
-            let area2 = v3.cross(&v4).length() * 0.5;
-
-            area1 + area2
-        }
+        let corners = self.corners();
+        corners[1..]
+            .windows(2)
+            .map(|pair| {
+                (pair[0] - corners[0])
+                    .cross(&(pair[1] - corners[0]))
+                    .length()
+                    * 0.5
+            })
+            .sum()
     }
 }
 

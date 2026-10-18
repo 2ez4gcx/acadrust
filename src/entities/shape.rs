@@ -258,15 +258,14 @@ impl Shape {
         (self.relative_x_scale - 1.0).abs() > 1e-10
     }
 
-    /// Mirrors the shape horizontally.
+    /// Mirror across the world YZ plane, including the insertion point.
     pub fn mirror_x(&mut self) {
-        self.relative_x_scale = -self.relative_x_scale;
-        self.rotation = std::f64::consts::PI - self.rotation;
+        <Self as Entity>::mirror_x(self);
     }
 
-    /// Mirrors the shape vertically.
+    /// Mirror across the world XZ plane, including the insertion point.
     pub fn mirror_y(&mut self) {
-        self.rotation = -self.rotation;
+        <Self as Entity>::mirror_y(self);
     }
 
     /// Calculates an approximate bounding box.

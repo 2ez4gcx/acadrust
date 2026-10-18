@@ -842,6 +842,14 @@ impl Entity for Insert {
     fn apply_transform(&mut self, transform: &Transform) {
         super::transform::transform_insert(self, transform);
     }
+
+    fn apply_mirror(&mut self, transform: &Transform) {
+        super::mirror::mirror_insert(self, transform);
+    }
+
+    fn apply_mirror_with_options(&mut self, transform: &Transform, options: super::MirrorOptions) {
+        super::mirror::mirror_insert_with_options(self, transform, options);
+    }
 }
 
 #[cfg(test)]

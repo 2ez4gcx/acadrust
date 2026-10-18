@@ -96,6 +96,7 @@ fn ocs_pair(old_normal: Vector3, new_normal: Vector3) -> (Matrix3, Matrix3) {
 }
 
 pub(crate) fn transform_point(e: &mut Point, transform: &Transform) {
+    e.common.raw_record = None;
     let old_normal = e.normal;
     e.location = transform.apply(e.location);
     e.normal = transform.apply_rotation(e.normal).normalize();
@@ -105,6 +106,7 @@ pub(crate) fn transform_point(e: &mut Point, transform: &Transform) {
 // ── Line ─────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_line(e: &mut Line, transform: &Transform) {
+    e.common.raw_record = None;
     e.start = transform.apply(e.start);
     e.end = transform.apply(e.end);
     e.normal = transform.apply_rotation(e.normal).normalize();
@@ -113,6 +115,7 @@ pub(crate) fn transform_line(e: &mut Line, transform: &Transform) {
 // ── Circle ───────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_circle(e: &mut Circle, transform: &Transform) {
+    e.common.raw_record = None;
     // `center` is stored in OCS — transform in world, store back in the new
     // normal's OCS (see `ocs_pair`).
     let new_normal = transform.apply_rotation(e.normal).normalize();
@@ -130,6 +133,7 @@ pub(crate) fn transform_circle(e: &mut Circle, transform: &Transform) {
 // ── Arc ──────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_arc(e: &mut Arc, transform: &Transform) {
+    e.common.raw_record = None;
     // The start/end angles are measured in the arc's plane, so a rotation or
     // reflection must move them too — transform the actual endpoints and
     // recompute the angles in the new plane. (Translating alone leaves the
@@ -176,6 +180,7 @@ pub(crate) fn transform_arc(e: &mut Arc, transform: &Transform) {
 // ── Ellipse ──────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_ellipse(e: &mut Ellipse, transform: &Transform) {
+    e.common.raw_record = None;
     use std::f64::consts::TAU;
     let fallback = |e: &mut Ellipse| {
         e.center = transform.apply(e.center);
@@ -213,6 +218,7 @@ pub(crate) fn transform_ellipse(e: &mut Ellipse, transform: &Transform) {
 // ── Polyline (3D heavy) ──────────────────────────────────────────────────────
 
 pub(crate) fn transform_polyline(e: &mut Polyline, transform: &Transform) {
+    e.common.raw_record = None;
     for vertex in &mut e.vertices {
         vertex.location = transform.apply(vertex.location);
     }
@@ -221,6 +227,7 @@ pub(crate) fn transform_polyline(e: &mut Polyline, transform: &Transform) {
 // ── Polyline2D ───────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_polyline2d(e: &mut Polyline2D, transform: &Transform) {
+    e.common.raw_record = None;
     let flip = is_reflecting(transform);
     // Vertices are stored in OCS — transform in world, store back in the new
     // normal's OCS.
@@ -240,6 +247,7 @@ pub(crate) fn transform_polyline2d(e: &mut Polyline2D, transform: &Transform) {
 // ── Polyline3D ───────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_polyline3d(e: &mut Polyline3D, transform: &Transform) {
+    e.common.raw_record = None;
     for v in &mut e.vertices {
         v.position = transform.apply(v.position);
     }
@@ -248,6 +256,7 @@ pub(crate) fn transform_polyline3d(e: &mut Polyline3D, transform: &Transform) {
 // ── LwPolyline ───────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_lwpolyline(e: &mut LwPolyline, transform: &Transform) {
+    e.common.raw_record = None;
     let flip = is_reflecting(transform);
     // Vertices + elevation are stored in OCS — transform in world, store back
     // in the new normal's OCS.
@@ -314,6 +323,7 @@ pub(crate) fn rotate_ocs_angle(
 }
 
 pub(crate) fn transform_text(e: &mut Text, transform: &Transform) {
+    e.common.raw_record = None;
     // Insertion / alignment points are stored in OCS.
     let old_normal = e.normal;
     let new_normal = transform.apply_rotation(e.normal).normalize();
@@ -332,11 +342,22 @@ pub(crate) fn transform_text(e: &mut Text, transform: &Transform) {
 
 // ── MText ────────────────────────────────────────────────────────────────────
 
+pub(crate) fn mtext_x_direction(e: &MText) -> Vector3 {
+    e.dwg_x_direction
+        .filter(|direction| {
+            let angle = direction.y.atan2(direction.x);
+            let delta = (angle - e.rotation + std::f64::consts::PI)
+                .rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+            // A vertical direction has no defined angle in the XY plane.
+            direction.x.hypot(direction.y) <= 1e-12 || delta.abs() < 1e-12
+        })
+        .unwrap_or_else(|| Vector3::new(e.rotation.cos(), e.rotation.sin(), 0.0))
+}
+
 pub(crate) fn transform_mtext(e: &mut MText, transform: &Transform) {
+    e.common.raw_record = None;
     let old_normal = e.normal;
-    let old_direction = e
-        .dwg_x_direction
-        .unwrap_or_else(|| Vector3::new(e.rotation.cos(), e.rotation.sin(), 0.0));
+    let old_direction = mtext_x_direction(e);
     e.insertion_point = transform.apply(e.insertion_point);
     let unit_x = Vector3::new(1.0, 0.0, 0.0);
     let transformed_unit = transform.apply_rotation(unit_x);
@@ -360,6 +381,7 @@ pub(crate) fn transform_mtext(e: &mut MText, transform: &Transform) {
 // ── Spline ───────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_spline(e: &mut Spline, transform: &Transform) {
+    e.common.raw_record = None;
     for point in &mut e.control_points {
         *point = transform.apply(*point);
     }
@@ -392,6 +414,7 @@ pub(crate) fn transform_spline(e: &mut Spline, transform: &Transform) {
 // ── Helix ────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_helix(e: &mut Helix, transform: &Transform) {
+    e.common.raw_record = None;
     let old_axis = e.axis_vector.normalize();
     let old_base = e.axis_base_point;
     let old_start = e.start_point;
@@ -431,6 +454,7 @@ fn transform_dimension_angle(
 }
 
 pub(crate) fn transform_dimension(e: &mut Dimension, transform: &Transform) {
+    e.base_mut().common.raw_record = None;
     if let Dimension::Ordinate(d) = e {
         let old_normal = d.base.normal;
         let old_basis = Matrix3::arbitrary_axis(old_normal);
@@ -563,6 +587,7 @@ pub(crate) fn transform_dimension(e: &mut Dimension, transform: &Transform) {
 // ── Hatch ────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_hatch(e: &mut Hatch, transform: &Transform) {
+    e.common.raw_record = None;
     let old_normal = e.normal;
     let old_elevation = e.elevation;
 
@@ -825,6 +850,7 @@ pub(crate) fn transform_hatch(e: &mut Hatch, transform: &Transform) {
 // ── Solid ────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_solid(e: &mut Solid, transform: &Transform) {
+    e.common.raw_record = None;
     // Corners are stored in OCS.
     let new_normal = transform.apply_rotation(e.normal).normalize();
     let (ocs, new_t) = ocs_pair(e.normal, new_normal);
@@ -838,6 +864,7 @@ pub(crate) fn transform_solid(e: &mut Solid, transform: &Transform) {
 // ── Face3D ───────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_face3d(e: &mut Face3D, transform: &Transform) {
+    e.common.raw_record = None;
     e.first_corner = transform.apply(e.first_corner);
     e.second_corner = transform.apply(e.second_corner);
     e.third_corner = transform.apply(e.third_corner);
@@ -875,6 +902,7 @@ pub(crate) fn transform_normal(transform: &Transform, normal: Vector3) -> Vector
 }
 
 pub(crate) fn transform_insert(e: &mut Insert, transform: &Transform) {
+    e.common.raw_record = None;
     let new_normal = transform_normal(transform, e.normal);
 
     // `insert_point` is stored in the OCS defined by `normal`, not in world
@@ -945,6 +973,7 @@ pub(crate) fn transform_insert(e: &mut Insert, transform: &Transform) {
 // ── Block ────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_block(e: &mut Block, transform: &Transform) {
+    e.common.raw_record = None;
     e.base_point = transform.apply(e.base_point);
 }
 
@@ -957,6 +986,7 @@ pub(crate) fn transform_block_end(_e: &mut BlockEnd, _transform: &Transform) {
 // ── Ray ──────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_ray(e: &mut Ray, transform: &Transform) {
+    e.common.raw_record = None;
     e.base_point = transform.apply(e.base_point);
     e.direction = transform.apply_rotation(e.direction).normalize();
 }
@@ -964,6 +994,7 @@ pub(crate) fn transform_ray(e: &mut Ray, transform: &Transform) {
 // ── XLine ────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_xline(e: &mut XLine, transform: &Transform) {
+    e.common.raw_record = None;
     e.base_point = transform.apply(e.base_point);
     e.direction = transform.apply_rotation(e.direction).normalize();
 }
@@ -971,6 +1002,7 @@ pub(crate) fn transform_xline(e: &mut XLine, transform: &Transform) {
 // ── Viewport ─────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_viewport(e: &mut Viewport, transform: &Transform) {
+    e.common.raw_record = None;
     e.center = transform.apply(e.center);
 
     let unit_x = Vector3::new(1.0, 0.0, 0.0);
@@ -990,6 +1022,7 @@ pub(crate) fn transform_viewport(e: &mut Viewport, transform: &Transform) {
 // ── AttributeDefinition ──────────────────────────────────────────────────────
 
 pub(crate) fn transform_attribute_definition(e: &mut AttributeDefinition, transform: &Transform) {
+    e.common.raw_record = None;
     // Insertion / alignment points are stored in OCS.
     let old_normal = e.normal;
     let new_normal = transform.apply_rotation(e.normal).normalize();
@@ -1008,6 +1041,7 @@ pub(crate) fn transform_attribute_definition(e: &mut AttributeDefinition, transf
 // ── AttributeEntity ──────────────────────────────────────────────────────────
 
 pub(crate) fn transform_attribute_entity(e: &mut AttributeEntity, transform: &Transform) {
+    e.common.raw_record = None;
     // Insertion / alignment points are stored in OCS.
     let old_normal = e.normal;
     let new_normal = transform.apply_rotation(e.normal).normalize();
@@ -1026,6 +1060,7 @@ pub(crate) fn transform_attribute_entity(e: &mut AttributeEntity, transform: &Tr
 // ── Leader ───────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_leader(e: &mut Leader, transform: &Transform) {
+    e.common.raw_record = None;
     for vertex in &mut e.vertices {
         *vertex = transform.apply(*vertex);
     }
@@ -1038,6 +1073,7 @@ pub(crate) fn transform_leader(e: &mut Leader, transform: &Transform) {
 // ── MultiLeader ──────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_multileader(e: &mut MultiLeader, transform: &Transform) {
+    e.common.raw_record = None;
     e.context.content_base_point = transform.apply(e.context.content_base_point);
     e.context.text_location = transform.apply(e.context.text_location);
     e.context.block_content_location = transform.apply(e.context.block_content_location);
@@ -1092,6 +1128,7 @@ pub(crate) fn transform_multileader(e: &mut MultiLeader, transform: &Transform) 
 // ── MLine ────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_mline(e: &mut MLine, transform: &Transform) {
+    e.common.raw_record = None;
     e.start_point = transform.apply(e.start_point);
     for vertex in &mut e.vertices {
         vertex.position = transform.apply(vertex.position);
@@ -1104,6 +1141,7 @@ pub(crate) fn transform_mline(e: &mut MLine, transform: &Transform) {
 // ── Mesh ─────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_mesh(e: &mut Mesh, transform: &Transform) {
+    e.common.raw_record = None;
     for vertex in &mut e.vertices {
         *vertex = transform.apply(*vertex);
     }
@@ -1112,6 +1150,7 @@ pub(crate) fn transform_mesh(e: &mut Mesh, transform: &Transform) {
 // ── RasterImage ──────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_raster_image(e: &mut RasterImage, transform: &Transform) {
+    e.common.raw_record = None;
     // Same as a wipeout: `u_vector` / `v_vector` carry the pixel size, and the
     // linear part already scales them — a second multiply squared the factor.
     e.insertion_point = transform.apply(e.insertion_point);
@@ -1122,6 +1161,7 @@ pub(crate) fn transform_raster_image(e: &mut RasterImage, transform: &Transform)
 // ── Solid3D ──────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_solid3d(e: &mut Solid3D, transform: &Transform) {
+    e.common.raw_record = None;
     e.point_of_reference = transform.apply(e.point_of_reference);
     compose_acis_placement(&mut e.acis_data, transform);
     for wire in &mut e.wires {
@@ -1146,6 +1186,7 @@ pub(crate) fn transform_solid3d(e: &mut Solid3D, transform: &Transform) {
 // ── Region ───────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_region(e: &mut Region, transform: &Transform) {
+    e.common.raw_record = None;
     e.point_of_reference = transform.apply(e.point_of_reference);
     compose_acis_placement(&mut e.acis_data, transform);
     for wire in &mut e.wires {
@@ -1170,6 +1211,7 @@ pub(crate) fn transform_region(e: &mut Region, transform: &Transform) {
 // ── Body ─────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_body(e: &mut Body, transform: &Transform) {
+    e.common.raw_record = None;
     e.point_of_reference = transform.apply(e.point_of_reference);
     compose_acis_placement(&mut e.acis_data, transform);
     for wire in &mut e.wires {
@@ -1193,6 +1235,7 @@ pub(crate) fn transform_body(e: &mut Body, transform: &Transform) {
 
 /// Keep embedded loft curves in their local frame while moving their placement.
 pub(crate) fn transform_loft_placement(e: &mut crate::entities::Surface, transform: &Transform) {
+    e.common.raw_record = None;
     if let crate::entities::SurfaceData::Lofted { loft_transform, .. } = &mut e.surface_data {
         let previous = *loft_transform;
         *loft_transform = std::array::from_fn(|index| {
@@ -1206,6 +1249,7 @@ pub(crate) fn transform_loft_placement(e: &mut crate::entities::Surface, transfo
 }
 
 pub(crate) fn transform_surface(e: &mut crate::entities::Surface, transform: &Transform) {
+    e.common.raw_record = None;
     transform_loft_placement(e, transform);
     e.point_of_reference = transform.apply(e.point_of_reference);
     compose_acis_placement(&mut e.acis_data, transform);
@@ -1231,6 +1275,7 @@ pub(crate) fn transform_surface(e: &mut crate::entities::Surface, transform: &Tr
 // ── Table ────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_table(e: &mut Table, transform: &Transform) {
+    e.common.raw_record = None;
     e.insertion_point = transform.apply(e.insertion_point);
     e.horizontal_direction = transform.apply_rotation(e.horizontal_direction).normalize();
     e.normal = transform.apply_rotation(e.normal).normalize();
@@ -1249,6 +1294,7 @@ pub(crate) fn transform_table(e: &mut Table, transform: &Transform) {
 // ── Tolerance ────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_tolerance(e: &mut Tolerance, transform: &Transform) {
+    e.common.raw_record = None;
     e.insertion_point = transform.apply(e.insertion_point);
     e.direction = transform.apply_rotation(e.direction).normalize();
     e.normal = transform.apply_rotation(e.normal).normalize();
@@ -1263,6 +1309,7 @@ pub(crate) fn transform_tolerance(e: &mut Tolerance, transform: &Transform) {
 // ── PolyfaceMesh ─────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_polyface_mesh(e: &mut PolyfaceMesh, transform: &Transform) {
+    e.common.raw_record = None;
     for v in &mut e.vertices {
         v.location = transform.apply(v.location);
     }
@@ -1272,6 +1319,7 @@ pub(crate) fn transform_polyface_mesh(e: &mut PolyfaceMesh, transform: &Transfor
 // ── Wipeout ──────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_wipeout(e: &mut Wipeout, transform: &Transform) {
+    e.common.raw_record = None;
     // `u_vector` / `v_vector` carry both the image direction AND its size, so
     // the linear part of the transform (rotation + scale, via `apply_rotation`)
     // already scales them. Multiplying again by the scale factor double-scaled
@@ -1284,6 +1332,7 @@ pub(crate) fn transform_wipeout(e: &mut Wipeout, transform: &Transform) {
 // ── Shape ────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_shape(e: &mut Shape, transform: &Transform) {
+    e.common.raw_record = None;
     // Insertion point is stored in OCS.
     let old_normal = e.normal;
     let new_normal = transform.apply_rotation(e.normal).normalize();
@@ -1300,6 +1349,7 @@ pub(crate) fn transform_shape(e: &mut Shape, transform: &Transform) {
 // ── Underlay ─────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_underlay(e: &mut Underlay, transform: &Transform) {
+    e.common.raw_record = None;
     let old_normal = e.normal;
     e.insertion_point = transform.apply(e.insertion_point);
     e.normal = transform.apply_rotation(e.normal).normalize();
@@ -1322,6 +1372,7 @@ pub(crate) fn transform_seqend(_e: &mut Seqend, _transform: &Transform) {
 // ── Ole2Frame ────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_ole2frame(e: &mut Ole2Frame, transform: &Transform) {
+    e.common.raw_record = None;
     e.upper_left_corner = transform.apply(e.upper_left_corner);
     e.lower_right_corner = transform.apply(e.lower_right_corner);
 }
@@ -1329,6 +1380,7 @@ pub(crate) fn transform_ole2frame(e: &mut Ole2Frame, transform: &Transform) {
 // ── PolygonMesh ──────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_polygon_mesh(e: &mut PolygonMeshEntity, transform: &Transform) {
+    e.common.raw_record = None;
     for v in &mut e.vertices {
         v.location = transform.apply(v.location);
     }
@@ -1340,7 +1392,7 @@ pub(crate) fn transform_unknown(_e: &mut UnknownEntity, _transform: &Transform) 
     // No geometry
 }
 
-fn transform_invalidates_raw_record(entity: &EntityType) -> bool {
+pub(crate) fn transform_invalidates_raw_record(entity: &EntityType) -> bool {
     match entity {
         EntityType::Unknown(_) | EntityType::BlockEnd(_) | EntityType::Seqend(_) => false,
         EntityType::Extended(value) => !matches!(

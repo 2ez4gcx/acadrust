@@ -86,6 +86,7 @@ pub use semantic_inventory::*;
 mod block_graph;
 pub use block_graph::BlockGraph;
 mod explode;
+mod mirror;
 mod dynamic_properties;
 pub use dynamic_properties::DynamicBlockProperty;
 

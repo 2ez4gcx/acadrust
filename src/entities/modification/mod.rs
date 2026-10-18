@@ -6,6 +6,7 @@
 
 pub mod explode;
 pub mod mirror;
+pub mod mirror3d;
 pub mod rotate;
 pub mod rotate3d;
 pub mod transform;
