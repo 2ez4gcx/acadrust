@@ -1789,6 +1789,31 @@ mod tests {
     }
 
     #[test]
+    fn test_autocad_standalone_refusal_rules() {
+        assert!(EntityType::Circle(Circle::new()).explode().is_empty());
+        assert!(EntityType::Ellipse(Ellipse::new()).explode().is_empty());
+        assert!(EntityType::Spline(Spline::new()).explode().is_empty());
+        assert!(EntityType::Solid(Solid::new(
+            Vector3::ZERO,
+            Vector3::UNIT_X,
+            Vector3::UNIT_Y,
+            Vector3::UNIT_Y,
+        ))
+        .explode()
+        .is_empty());
+        assert!(EntityType::Face3D(Face3D::triangle(
+            Vector3::ZERO,
+            Vector3::UNIT_X,
+            Vector3::UNIT_Y,
+        ))
+        .explode()
+        .is_empty());
+        let parts = EntityType::Helix(Box::new(Helix::new())).explode();
+        assert_eq!(parts.len(), 1);
+        assert!(matches!(parts[0], EntityType::Spline(_)));
+    }
+
+    #[test]
     fn test_explode_circle() {
         let circle = Circle::from_center_radius(Vector3::new(5.0, 5.0, 0.0), 10.0);
         let entity = EntityType::Circle(circle);
