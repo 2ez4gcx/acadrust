@@ -137,19 +137,44 @@ fn line_entity(
     })
 }
 
-fn dimension_arrow(tip: Vector3, toward: Vector3, size: f64, common: &EntityCommon, normal: Vector3) -> EntityType {
+fn arrow_solid(
+    tip: Vector3,
+    toward: Vector3,
+    size: f64,
+    half_width: f64,
+    common: &EntityCommon,
+    normal: Vector3,
+) -> EntityType {
     let direction = (toward - tip).normalize();
     if direction.length_squared() <= 1e-20 || size <= 0.0 {
         return EntityType::Solid(Solid::triangle(tip, tip, tip));
     }
-    // AutoCAD's default closed arrow is one third of its length wide.  The
-    // side vector is half that width because Solid stores the two base
-    // corners separately.
-    let side = normal.normalize().cross(&direction).normalize() * (size / 6.0);
+    let side = normal.normalize().cross(&direction).normalize() * half_width;
     let base = tip + direction * size;
     let mut solid = Solid::triangle(tip, base + side, base - side);
     solid.common = inherit_common(common);
     EntityType::Solid(solid)
+}
+
+fn dimension_arrow(
+    tip: Vector3,
+    toward: Vector3,
+    size: f64,
+    common: &EntityCommon,
+    normal: Vector3,
+) -> EntityType {
+    arrow_solid(tip, toward, size, size * 0.28, common, normal)
+}
+
+fn dimension_style_arrow(
+    tip: Vector3,
+    toward: Vector3,
+    size: f64,
+    common: &EntityCommon,
+    normal: Vector3,
+) -> EntityType {
+    // AutoCAD's default closed arrow is one third of its length wide.
+    arrow_solid(tip, toward, size, size / 6.0, common, normal)
 }
 
 fn dimension_attachment(attachment: AttachmentPointType) -> AttachmentPoint {
@@ -1166,7 +1191,161 @@ fn modeler_regions(common: &EntityCommon, sat: Option<crate::entities::acis::Sat
     }).collect()
 }
 
+fn sat_point_entity(
+    doc: &crate::entities::acis::SatDocument,
+    pointer: crate::entities::acis::SatPointer,
+) -> Option<Vector3> {
+    use crate::entities::acis::{SatPoint, SatVertex};
+    let vertex = doc.resolve(pointer).and_then(SatVertex::from_record)?;
+    let point = doc.resolve(vertex.point()).and_then(SatPoint::from_record)?;
+    let (x, y, z) = point.position();
+    let point = Vector3::new(x, y, z);
+    if point.x.is_finite() && point.y.is_finite() && point.z.is_finite() {
+        Some(point)
+    } else {
+        None
+    }
+}
+
+fn sat_edge_entity(
+    doc: &crate::entities::acis::SatDocument,
+    coedge: &crate::entities::acis::SatCoedge<'_>,
+    edge: &crate::entities::acis::SatEdge<'_>,
+    common: &EntityCommon,
+) -> Option<EntityType> {
+    use crate::entities::acis::{SatEllipseCurve, SatIntCurve, SatStraightCurve, Sense};
+    let start = sat_point_entity(doc, edge.start_vertex())?;
+    let end = sat_point_entity(doc, edge.end_vertex())?;
+    let reverse = coedge.sense() == Sense::Reversed;
+    let (start, end) = if reverse { (end, start) } else { (start, end) };
+    let curve = doc.resolve(edge.curve())?;
+
+    if SatStraightCurve::from_record(curve).is_some() {
+        let mut line = Line::from_points(start, end);
+        line.common = inherit_common(common);
+        return Some(EntityType::Line(line));
+    }
+
+    if let Some(curve) = SatEllipseCurve::from_record(curve) {
+        let (cx, cy, cz) = curve.center();
+        let (nx, ny, nz) = curve.normal();
+        let (ax, ay, az) = curve.major_axis();
+        let mut ellipse = Ellipse {
+            common: inherit_common(common),
+            center: Vector3::new(cx, cy, cz),
+            major_axis: Vector3::new(ax, ay, az),
+            minor_axis_ratio: curve.ratio(),
+            start_parameter: edge.start_param(),
+            end_parameter: edge.end_param(),
+            normal: Vector3::new(nx, ny, nz).normalize(),
+        };
+        if reverse {
+            std::mem::swap(&mut ellipse.start_parameter, &mut ellipse.end_parameter);
+        }
+        return Some(EntityType::Ellipse(ellipse));
+    }
+
+    if let Some(curve) = SatIntCurve::from_record(curve) {
+        let (degree, knots, controls) = curve.bspline_in(doc)?;
+        if controls.len() < 2 || knots.len() < 2 {
+            return None;
+        }
+        let full_start = knots.get(degree).copied().unwrap_or(0.0);
+        let full_end = knots
+            .get(knots.len().saturating_sub(degree + 1))
+            .copied()
+            .unwrap_or(full_start);
+        let edge_start = edge.start_param();
+        let edge_end = edge.end_param();
+        if (edge_start - full_start).abs() > 1e-9 || (edge_end - full_end).abs() > 1e-9 {
+            let mut fit_points: Vec<Vector3> = curve
+                .sample_range(edge_start, edge_end, 32)
+                .into_iter()
+                .map(|(x, y, z)| Vector3::new(x, y, z))
+                .collect();
+            if reverse {
+                fit_points.reverse();
+            }
+            if fit_points.len() >= 2 {
+                let mut spline = Spline::from_fit_points(fit_points);
+                spline.common = inherit_common(common);
+                return Some(EntityType::Spline(spline));
+            }
+            return None;
+        }
+        let mut spline = Spline::from_control_points(
+            degree as i32,
+            controls
+                .iter()
+                .map(|p| Vector3::new(p[0], p[1], p[2]))
+                .collect(),
+        );
+        spline.common = inherit_common(common);
+        spline.degree = degree as i32;
+        spline.knots = knots;
+        spline.weights = controls.iter().map(|p| p[3]).collect();
+        spline.flags.rational = spline
+            .weights
+            .iter()
+            .any(|weight| (*weight - 1.0).abs() > 1e-12);
+        if reverse {
+            spline.control_points.reverse();
+            spline.weights.reverse();
+            spline.knots.reverse();
+            if let (Some(first), Some(last)) = (
+                spline.knots.first().copied(),
+                spline.knots.last().copied(),
+            ) {
+                for knot in &mut spline.knots {
+                    *knot = first + last - *knot;
+                }
+            }
+        }
+        return Some(EntityType::Spline(spline));
+    }
+
+    None
+}
+
+fn sat_region_curves(
+    common: &EntityCommon,
+    doc: &crate::entities::acis::SatDocument,
+    face: &crate::entities::acis::SatFace<'_>,
+) -> Vec<EntityType> {
+    use crate::entities::acis::{SatCoedge, SatEdge, SatLoop};
+    let mut result = Vec::new();
+    let mut loop_pointer = face.first_loop();
+    let mut seen_loops = std::collections::HashSet::new();
+    while !loop_pointer.is_null() && seen_loops.insert(loop_pointer) {
+        let Some(loop_record) = doc.resolve(loop_pointer).and_then(SatLoop::from_record) else { break };
+        let mut coedge_pointer = loop_record.first_coedge();
+        let mut seen_coedges = std::collections::HashSet::new();
+        while !coedge_pointer.is_null() && seen_coedges.insert(coedge_pointer) {
+            let Some(coedge) = doc.resolve(coedge_pointer).and_then(SatCoedge::from_record) else { break };
+            if let Some(edge) = doc.resolve(coedge.edge()).and_then(SatEdge::from_record) {
+                if let Some(entity) = sat_edge_entity(doc, &coedge, &edge, common) {
+                    result.push(entity);
+                }
+            }
+            coedge_pointer = coedge.next();
+        }
+        loop_pointer = loop_record.next_loop();
+    }
+    result
+}
+
 fn explode_region(region: &Region) -> Vec<EntityType> {
+    if region.wires.is_empty() {
+        if let Some(doc) = region.parse_sat() {
+            let mut result = Vec::new();
+            for face in doc.faces() {
+                result.extend(sat_region_curves(&region.common, &doc, &face));
+            }
+            if !result.is_empty() {
+                return result;
+            }
+        }
+    }
     let mut result = Vec::new();
     for wire in &region.wires {
         for pair in wire.points.windows(2) {
@@ -1631,7 +1810,7 @@ pub(crate) fn explode_dimension_with_style(
                 || (index == 1 && style.dimblk2_name.eq_ignore_ascii_case("_none"))
         });
         if !arrow_suppressed {
-            result.push(dimension_arrow(tip, toward, arrow_size, common, base.normal));
+            result.push(dimension_style_arrow(tip, toward, arrow_size, common, base.normal));
         }
     }
     if let Some(text_value) = text_value {
@@ -2725,6 +2904,23 @@ mod tests {
         assert!(parts.len() >= 2);
         assert!(parts.iter().any(|p| matches!(p, EntityType::MText(_))));
         assert!(parts.iter().any(|p| matches!(p, EntityType::Line(_))));
+    }
+
+    #[test]
+    fn test_explode_region_preserves_acis_analytic_edges() {
+        let sat = crate::entities::acis::primitives::build_cylinder([0.0, 0.0, 0.0], 2.0, 3.0);
+        let region = Region::from_sat(&sat.to_sat_string());
+        let parts = EntityType::Region(region).explode();
+        let ellipses: Vec<_> = parts
+            .iter()
+            .filter_map(|part| match part {
+                EntityType::Ellipse(ellipse) => Some(ellipse),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ellipses.len(), 4);
+        assert!(ellipses.iter().all(|ellipse| (ellipse.major_axis.length() - 2.0).abs() < 1e-9));
+        assert!(ellipses.iter().all(|ellipse| (ellipse.end_parameter - ellipse.start_parameter).abs() > 6.0));
     }
 
     #[test]
