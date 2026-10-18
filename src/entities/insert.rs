@@ -515,6 +515,22 @@ impl Insert {
     /// A retained bulge would still describe a circular arc after stretching,
     /// while AutoCAD emits an exact elliptical segment.
     fn explode_single_many(&self, entity: &EntityType, transform: &Transform) -> Vec<EntityType> {
+        // Modeler entities are explodable when the block transform is a
+        // rigid transform or uniform scale.  Under those transforms their
+        // native region decomposition remains exact; non-uniform cases are
+        // handled by the document-aware anonymous *E fallback instead.
+        if matches!(entity, EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_))
+            && Self::linear_is_similarity(transform)
+        {
+            return entity
+                .explode()
+                .into_iter()
+                .map(|mut piece| {
+                    piece.as_entity_mut().apply_transform(transform);
+                    piece
+                })
+                .collect();
+        }
         let normal = match entity {
             EntityType::LwPolyline(polyline) => polyline.normal,
             EntityType::Polyline2D(polyline) => polyline.normal,
@@ -554,6 +570,20 @@ impl Insert {
             && ly > SCALE_EPSILON
             && (lx - ly).abs() <= 1e-10 * lx.max(ly)
             && x.dot(&y).abs() <= 1e-10 * lx * ly
+    }
+
+    fn linear_is_similarity(transform: &Transform) -> bool {
+        let x = transform.apply_rotation(Vector3::UNIT_X);
+        let y = transform.apply_rotation(Vector3::UNIT_Y);
+        let z = transform.apply_rotation(Vector3::UNIT_Z);
+        let vectors = [x, y, z];
+        let lengths = vectors.map(|vector| vector.length());
+        lengths.iter().all(|length| *length > SCALE_EPSILON)
+            && (lengths[0] - lengths[1]).abs() <= 1e-10 * lengths[0].max(lengths[1])
+            && (lengths[1] - lengths[2]).abs() <= 1e-10 * lengths[1].max(lengths[2])
+            && x.dot(&y).abs() <= 1e-10 * lengths[0] * lengths[1]
+            && x.dot(&z).abs() <= 1e-10 * lengths[0] * lengths[2]
+            && y.dot(&z).abs() <= 1e-10 * lengths[1] * lengths[2]
     }
 
     /// Whether a linear transform introduces shear relative to an INSERT's
