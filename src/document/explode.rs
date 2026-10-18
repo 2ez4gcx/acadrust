@@ -239,11 +239,61 @@ impl CadDocument {
             line.common = crate::entities::modification::explode::inherit_common(&mline.common);
             Some(EntityType::Line(line))
         };
+        let cap_arc = |at_start: bool| {
+            let Some(flags) = style_flags else { return None };
+            let round = if at_start {
+                flags.start_round_cap
+            } else {
+                flags.end_round_cap
+            };
+            if !round
+                || (at_start && mline.flags.contains(crate::entities::MLineFlags::NO_START_CAPS))
+                || (!at_start && mline.flags.contains(crate::entities::MLineFlags::NO_END_CAPS))
+                || mline.normal.cross(&Vector3::UNIT_Z).length_squared() > 1e-12
+            {
+                return None;
+            }
+            let vertex = if at_start {
+                mline.vertices.first()?
+            } else {
+                mline.vertices.last()?
+            };
+            let miter = vertex.miter.normalize();
+            let radius = offset_values
+                .iter()
+                .copied()
+                .map(f64::abs)
+                .fold(0.0, f64::max);
+            if miter.length_squared() <= 1e-20 || radius <= 1e-12 {
+                return None;
+            }
+            let start_angle = miter.y.atan2(miter.x) + if at_start { 0.0 } else { std::f64::consts::PI };
+            let end_angle = start_angle + std::f64::consts::PI;
+            let mut arc = crate::entities::Arc {
+                common: crate::entities::modification::explode::inherit_common(&mline.common),
+                center: vertex.position,
+                radius,
+                start_angle,
+                end_angle,
+                thickness: 0.0,
+                normal: mline.normal,
+            };
+            arc.common.color = mline.common.color;
+            Some(EntityType::Arc(arc))
+        };
         if let Some(cap) = cap_line(true) {
             parts.push(cap);
         }
         if !mline.is_closed() {
             if let Some(cap) = cap_line(false) {
+                parts.push(cap);
+            }
+        }
+        if let Some(cap) = cap_arc(true) {
+            parts.push(cap);
+        }
+        if !mline.is_closed() {
+            if let Some(cap) = cap_arc(false) {
                 parts.push(cap);
             }
         }
@@ -608,6 +658,44 @@ mod tests {
                 && (line.end.x - 10.0).abs() < 1e-9,
             _ => false,
         }));
+    }
+
+    #[test]
+    fn context_explode_mline_emits_xy_round_style_caps() {
+        let mut document = CadDocument::new();
+        let style_handle = document.allocate_handle();
+        let mut style = MLineStyle::new("ROUND");
+        style.handle = style_handle;
+        style.flags = MLineStyleFlags::round_caps();
+        style.elements = vec![
+            MLineStyleElement::new(1.0),
+            MLineStyleElement::new(-1.0),
+        ];
+        document
+            .objects
+            .insert(style_handle, ObjectType::MLineStyle(style));
+
+        let mut mline = MLine::from_points(&[
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(10.0, 0.0, 0.0),
+        ]);
+        mline.style_name = "ROUND".to_string();
+        mline.style_handle = Some(style_handle);
+        let parts = document.explode_entity(&EntityType::MLine(mline));
+        assert_eq!(
+            parts
+                .iter()
+                .filter(|part| matches!(part, EntityType::Line(_)))
+                .count(),
+            2
+        );
+        assert_eq!(
+            parts
+                .iter()
+                .filter(|part| matches!(part, EntityType::Arc(_)))
+                .count(),
+            2
+        );
     }
 
     #[test]
