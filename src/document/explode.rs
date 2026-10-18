@@ -195,6 +195,58 @@ impl CadDocument {
                 parts.push(EntityType::Solid(solid));
             }
         }
+
+        // MLINESTYLE square caps are represented by a segment spanning the
+        // outermost style elements at each open end.  Round and inner-arc
+        // caps require true plane-aware ARC geometry and remain deferred to a
+        // modeler-specific path; emitting the square cap here preserves the
+        // native LINE result for the common custom-style case.
+        let style_flags = style.map(|style| style.flags);
+        let cap_line = |at_start: bool| {
+            let Some(flags) = style_flags else { return None };
+            let square = if at_start {
+                flags.start_square_cap
+            } else {
+                flags.end_square_cap
+            };
+            if !square {
+                return None;
+            }
+            if at_start && mline.flags.contains(crate::entities::MLineFlags::NO_START_CAPS) {
+                return None;
+            }
+            if !at_start && mline.flags.contains(crate::entities::MLineFlags::NO_END_CAPS) {
+                return None;
+            }
+            let vertex = if at_start {
+                mline.vertices.first()?
+            } else {
+                mline.vertices.last()?
+            };
+            let miter = vertex.miter.normalize();
+            if miter.length_squared() <= 1e-20 {
+                return None;
+            }
+            let low = offset_values.iter().copied().fold(f64::INFINITY, f64::min);
+            let high = offset_values
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max);
+            let mut line = Line::from_points(
+                vertex.position + miter * low,
+                vertex.position + miter * high,
+            );
+            line.common = crate::entities::modification::explode::inherit_common(&mline.common);
+            Some(EntityType::Line(line))
+        };
+        if let Some(cap) = cap_line(true) {
+            parts.push(cap);
+        }
+        if !mline.is_closed() {
+            if let Some(cap) = cap_line(false) {
+                parts.push(cap);
+            }
+        }
         parts
     }
 
@@ -476,8 +528,8 @@ impl CadDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::entities::{Block, Line};
-    use crate::objects::ObjectType;
+    use crate::entities::{Block, Line, MLine};
+    use crate::objects::{MLineStyle, MLineStyleElement, MLineStyleFlags, ObjectType};
     use crate::tables::BlockRecord;
     use crate::types::Vector3;
 
@@ -518,6 +570,44 @@ mod tests {
         assert!(document
             .explode_entity(&EntityType::Insert(insert))
             .is_empty());
+    }
+
+    #[test]
+    fn context_explode_mline_emits_square_style_caps() {
+        let mut document = CadDocument::new();
+        let style_handle = document.allocate_handle();
+        let mut style = MLineStyle::new("CAPS");
+        style.handle = style_handle;
+        style.flags = MLineStyleFlags::simple();
+        style.elements = vec![
+            MLineStyleElement::new(1.0),
+            MLineStyleElement::new(-1.0),
+        ];
+        document
+            .objects
+            .insert(style_handle, ObjectType::MLineStyle(style));
+
+        let mut mline = MLine::from_points(&[
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(10.0, 0.0, 0.0),
+        ]);
+        mline.style_name = "CAPS".to_string();
+        mline.style_handle = Some(style_handle);
+        let parts = document.explode_entity(&EntityType::MLine(mline));
+        let lines: Vec<_> = parts
+            .iter()
+            .filter(|part| matches!(part, EntityType::Line(_)))
+            .collect();
+        assert_eq!(lines.len(), 4);
+        assert!(lines.iter().any(|part| match part {
+            EntityType::Line(line) => line.start.x.abs() < 1e-9 && line.end.x.abs() < 1e-9,
+            _ => false,
+        }));
+        assert!(lines.iter().any(|part| match part {
+            EntityType::Line(line) => (line.start.x - 10.0).abs() < 1e-9
+                && (line.end.x - 10.0).abs() < 1e-9,
+            _ => false,
+        }));
     }
 
     #[test]
