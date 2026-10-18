@@ -1161,14 +1161,18 @@ fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
                 base.normal,
                 common,
             ));
-            // Dimension line between first and second projected points.
-            result.push(line_entity(
-                first_on_line,
-                second_on_line,
-                0.0,
-                base.normal,
-                common,
-            ));
+            // AutoCAD leaves a text gap in the dimension line.  Emit the two
+            // visible portions around the text location.
+            let axis = second_on_line - first_on_line;
+            let t = if axis.length_squared() > 1e-20 {
+                ((base.text_middle_point - first_on_line).dot(&axis) / axis.length_squared())
+                    .clamp(0.0, 1.0)
+            } else {
+                0.5
+            };
+            let split = first_on_line + axis * t;
+            result.push(line_entity(first_on_line, split, 0.0, base.normal, common));
+            result.push(line_entity(split, second_on_line, 0.0, base.normal, common));
             arrows.push((first_on_line, second_on_line));
             arrows.push((second_on_line, first_on_line));
         }
@@ -1193,13 +1197,19 @@ fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
                 base.normal,
                 common,
             ));
-            result.push(line_entity(
-                first_on_line,
-                second_on_line,
-                0.0,
-                base.normal,
-                common,
-            ));
+            // Keep the measured alignment and split the dimension line at
+            // the text location, matching AutoCAD's five LINE result.
+            result.push(line_entity(d.first_point, d.second_point, 0.0, base.normal, common));
+            let axis = second_on_line - first_on_line;
+            let t = if axis.length_squared() > 1e-20 {
+                ((base.text_middle_point - first_on_line).dot(&axis) / axis.length_squared())
+                    .clamp(0.0, 1.0)
+            } else {
+                0.5
+            };
+            let split = first_on_line + axis * t;
+            result.push(line_entity(first_on_line, split, 0.0, base.normal, common));
+            result.push(line_entity(split, second_on_line, 0.0, base.normal, common));
             arrows.push((first_on_line, second_on_line));
             arrows.push((second_on_line, first_on_line));
         }
@@ -2388,14 +2398,12 @@ mod tests {
             DimensionLinear::horizontal(Vector3::new(1.0, 2.0, 0.0), Vector3::new(11.0, 4.0, 0.0));
         dimension.definition_point = Vector3::new(11.0, 8.0, 0.0);
         let parts = EntityType::Dimension(Box::new(Dimension::Linear(dimension))).flatten();
-        assert_eq!(
-            line_ends(&parts),
-            vec![
-                (Vector3::new(1.0, 2.0, 0.0), Vector3::new(1.0, 8.0, 0.0)),
-                (Vector3::new(11.0, 4.0, 0.0), Vector3::new(11.0, 8.0, 0.0)),
-                (Vector3::new(1.0, 8.0, 0.0), Vector3::new(11.0, 8.0, 0.0)),
-            ]
-        );
+        let lines = line_ends(&parts);
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0], (Vector3::new(1.0, 2.0, 0.0), Vector3::new(1.0, 8.0, 0.0)));
+        assert_eq!(lines[1], (Vector3::new(11.0, 4.0, 0.0), Vector3::new(11.0, 8.0, 0.0)));
+        assert_eq!(lines[2].0, Vector3::new(1.0, 8.0, 0.0));
+        assert_eq!(lines[3].1, Vector3::new(11.0, 8.0, 0.0));
     }
 
     #[test]
@@ -2406,7 +2414,8 @@ mod tests {
         let lines = line_ends(&parts);
         assert!(lines[0].1.distance(&Vector3::new(-4.0, 3.0, 0.0)) < 1e-12);
         assert!(lines[1].1.distance(&Vector3::new(-1.0, 7.0, 0.0)) < 1e-12);
-        assert_eq!(lines[2], (lines[0].1, lines[1].1));
+        assert_eq!(lines.len(), 5);
+        assert_eq!(lines[2], (Vector3::ZERO, Vector3::new(3.0, 4.0, 0.0)));
     }
 
     #[test]
