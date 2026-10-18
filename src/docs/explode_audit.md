@@ -361,11 +361,12 @@ it must be implemented together with safe cloning of owned children.
 ## Validation
 
 - `cargo test --all-targets` passed on the original baseline.
-- Final `cargo test --all-targets --all-features --quiet`: **2031 passed,
+- Final `cargo test --all-targets --all-features --quiet`: **2045 passed,
   0 failed, 26 ignored**, across 124 test binaries. All 26 ignore markers
   predate this audit.
-- Final `cargo test --all-features --lib explode --quiet`: **77 passed**,
-  including the four new regression tests.
+- Final `cargo test --all-features --lib explode --quiet`: **90 passed**,
+  including modeler, MLINE, polyface, formatted MTEXT and document-graph
+  regressions.
 - The native runner completed all **47 scenarios**, with no creation or
   command errors. The checked-in JSON matches the freshly generated summary.
   Successful capture is not a successful library conformance result.
