@@ -8,10 +8,64 @@
 use std::collections::HashMap;
 
 use super::CadDocument;
-use crate::entities::{EntityType, Insert};
+use crate::entities::{EntityType, Insert, Line, MLine};
 use crate::types::{Handle, Transform};
 
 impl CadDocument {
+    /// Explode an MLINE after resolving its MLINESTYLE object from the
+    /// document. The detached entity API cannot access that table.
+    pub(crate) fn explode_mline_with_context(&self, mline: &MLine) -> Vec<EntityType> {
+        let style = mline
+            .style_handle
+            .and_then(|handle| self.objects.get(&handle))
+            .and_then(|object| match object {
+                crate::objects::ObjectType::MLineStyle(style) => Some(style),
+                _ => None,
+            })
+            .or_else(|| {
+                self.objects.values().find_map(|object| match object {
+                    crate::objects::ObjectType::MLineStyle(style)
+                        if style.name.eq_ignore_ascii_case(&mline.style_name) => Some(style),
+                    _ => None,
+                })
+            });
+        let offsets: Vec<(f64, crate::types::Color)> = style
+            .map(|style| {
+                style
+                    .elements
+                    .iter()
+                    .map(|element| (element.offset * mline.scale_factor, element.color))
+                    .collect()
+            })
+            .filter(|offsets: &Vec<_>| !offsets.is_empty())
+            .unwrap_or_else(|| vec![(0.0, mline.common.color)]);
+        let mut parts = Vec::new();
+        let segment_count = if mline.is_closed() && mline.vertices.len() > 2 {
+            mline.vertices.len()
+        } else {
+            mline.vertices.len().saturating_sub(1)
+        };
+        for (offset, color) in offsets {
+            for i in 0..segment_count {
+                let a = &mline.vertices[i];
+                let b = &mline.vertices[(i + 1) % mline.vertices.len()];
+                let mut start = a.position + a.miter.normalize() * offset;
+                let mut end = b.position + b.miter.normalize() * offset;
+                if !start.x.is_finite() || !start.y.is_finite() || !start.z.is_finite() {
+                    start = a.position;
+                }
+                if !end.x.is_finite() || !end.y.is_finite() || !end.z.is_finite() {
+                    end = b.position;
+                }
+                let mut line = Line::from_points(start, end);
+                line.common = crate::entities::modification::explode::inherit_common(&mline.common);
+                line.common.color = color;
+                parts.push(EntityType::Line(line));
+            }
+        }
+        parts
+    }
+
     /// Explode an INSERT using this document's block table and object graph.
     ///
     /// A MINSERT, xref, xref-dependent, or non-explodable definition is

@@ -11,7 +11,7 @@
 use std::f64::consts::PI;
 
 use crate::entities::*;
-use crate::types::{Handle, Matrix3, Vector3};
+use crate::types::{Handle, Matrix3, Vector2, Vector3};
 
 // ============================================================================
 // Helpers
@@ -19,7 +19,7 @@ use crate::types::{Handle, Matrix3, Vector3};
 
 /// Create a new [`EntityCommon`] that inherits visual properties from *source*
 /// but has [`Handle::NULL`] (the caller must allocate a real handle later).
-fn inherit_common(source: &EntityCommon) -> EntityCommon {
+pub(crate) fn inherit_common(source: &EntityCommon) -> EntityCommon {
     EntityCommon {
         handle: Handle::NULL,
         layer: source.layer.clone(),
@@ -134,6 +134,30 @@ fn line_entity(
         thickness,
         normal,
     })
+}
+
+fn dimension_arrow(tip: Vector3, toward: Vector3, size: f64, common: &EntityCommon, normal: Vector3) -> EntityType {
+    let direction = (toward - tip).normalize();
+    if direction.length_squared() <= 1e-20 || size <= 0.0 {
+        return EntityType::Solid(Solid::triangle(tip, tip, tip));
+    }
+    let side = normal.normalize().cross(&direction).normalize() * (size * 0.28);
+    let base = tip + direction * size;
+    let mut solid = Solid::triangle(tip, base + side, base - side);
+    solid.common = inherit_common(common);
+    EntityType::Solid(solid)
+}
+
+fn dimension_mtext(base: &DimensionBase, value: String) -> EntityType {
+    let mut text = MText::with_value(value, base.text_middle_point)
+        .with_height(2.5)
+        .with_width(0.0);
+    text.common = inherit_common(&base.common);
+    text.style = base.style_name.clone();
+    text.rotation = base.text_rotation;
+    text.normal = base.normal;
+    text.attachment_point = AttachmentPoint::MiddleCenter;
+    EntityType::MText(Box::new(text))
 }
 
 // ============================================================================
@@ -572,23 +596,53 @@ fn explode_mtext(mtext: &MText) -> Vec<EntityType> {
 }
 
 fn explode_leader(leader: &Leader) -> Vec<EntityType> {
-    // Decompose leader into line segments along the path.
     let n = leader.vertices.len();
     if n < 2 {
         return Vec::new();
     }
-
-    let mut result = Vec::with_capacity(n - 1);
-    for pair in leader.vertices.windows(2) {
-        result.push(line_entity(
-            pair[0],
-            pair[1],
-            0.0,
-            leader.normal,
-            &leader.common,
-        ));
+    let size = if leader.arrow_size > 1e-9 { leader.arrow_size } else { 0.18 };
+    let mut path = leader.vertices.clone();
+    let mut result = Vec::new();
+    if leader.arrow_enabled {
+        let arrow = dimension_arrow(path[0], path[1], size, &leader.common, leader.normal);
+        let direction = (path[1] - path[0]).normalize();
+        if direction.length_squared() > 1e-20 {
+            path[0] = path[0] + direction * size;
+        }
+        result.push(arrow);
+    }
+    if path.len() < 2 {
+        return result;
+    }
+    match leader.path_type {
+        LeaderPathType::Spline if path.len() >= 3 => {
+            let mut spline = Spline::from_control_points(
+                (path.len().min(4) - 1) as i32,
+                path,
+            );
+            spline.common = inherit_common(&leader.common);
+            spline.normal = leader.normal;
+            result.push(EntityType::Spline(spline));
+        }
+        _ => {
+            let mut polyline = LwPolyline::new();
+            polyline.common = inherit_common(&leader.common);
+            polyline.normal = leader.normal;
+            for point in path {
+                polyline.add_point(Vector2::new(point.x, point.y));
+            }
+            result.push(EntityType::LwPolyline(polyline));
+        }
     }
     result
+}
+
+fn flatten_leader(leader: &Leader) -> Vec<EntityType> {
+    leader
+        .vertices
+        .windows(2)
+        .map(|pair| line_entity(pair[0], pair[1], 0.0, leader.normal, &leader.common))
+        .collect()
 }
 
 /// Length-to-half-width ratio of AutoCAD's default `_ClosedFilled` arrowhead:
@@ -794,6 +848,99 @@ fn explode_mline(mline: &MLine) -> Vec<EntityType> {
     result
 }
 
+fn explode_wipeout(wipeout: &Wipeout) -> Vec<EntityType> {
+    let mut points = if wipeout.is_rectangular() {
+        wipeout.corners().to_vec()
+    } else {
+        wipeout.world_boundary_vertices()
+    };
+    if points.len() < 2 {
+        return Vec::new();
+    }
+    let mut result = Vec::with_capacity(points.len());
+    points.push(points[0]);
+    for pair in points.windows(2) {
+        result.push(line_entity(
+            pair[0],
+            pair[1],
+            0.0,
+            Vector3::UNIT_Z,
+            &wipeout.common,
+        ));
+    }
+    result
+}
+
+fn explode_table(table: &Table) -> Vec<EntityType> {
+    if table.rows.is_empty() || table.columns.is_empty() {
+        return Vec::new();
+    }
+    let normal = if table.normal.length_squared() > 1e-20 {
+        table.normal.normalize()
+    } else {
+        Vector3::UNIT_Z
+    };
+    let horizontal = if table.horizontal_direction.length_squared() > 1e-20 {
+        table.horizontal_direction.normalize()
+    } else {
+        Vector3::UNIT_X
+    };
+    let vertical = normal.cross(&horizontal).normalize();
+    let origin = table.insertion_point;
+    let x: Vec<f64> = std::iter::once(0.0)
+        .chain(table.columns.iter().scan(0.0, |sum, column| {
+            *sum += column.width;
+            Some(*sum)
+        }))
+        .collect();
+    let y: Vec<f64> = std::iter::once(0.0)
+        .chain(table.rows.iter().scan(0.0, |sum, row| {
+            *sum += row.height;
+            Some(*sum)
+        }))
+        .collect();
+    let point = |u: f64, v: f64| origin + horizontal * u + vertical * v;
+    let mut result = Vec::new();
+    for u in &x {
+        result.push(line_entity(
+            point(*u, 0.0),
+            point(*u, *y.last().unwrap()),
+            0.0,
+            normal,
+            &table.common,
+        ));
+    }
+    for v in &y {
+        result.push(line_entity(
+            point(0.0, *v),
+            point(*x.last().unwrap(), *v),
+            0.0,
+            normal,
+            &table.common,
+        ));
+    }
+    for (row_index, row) in table.rows.iter().enumerate() {
+        for (column_index, cell) in row.cells.iter().enumerate().take(table.columns.len()) {
+            let value = cell.text_value();
+            if value.is_empty() {
+                continue;
+            }
+            let mut text = MText::with_value(
+                value,
+                point((x[column_index] + x[column_index + 1]) * 0.5,
+                    (y[row_index] + y[row_index + 1]) * 0.5),
+            )
+            .with_height(2.5)
+            .with_width((x[column_index + 1] - x[column_index]).max(0.0));
+            text.common = inherit_common(&table.common);
+            text.normal = normal;
+            text.attachment_point = AttachmentPoint::MiddleCenter;
+            result.push(EntityType::MText(Box::new(text)));
+        }
+    }
+    result
+}
+
 fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
     // Simplified decomposition: produce extension lines, dimension line,
     // and a text entity with the measurement value.
@@ -806,6 +953,7 @@ fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
         .unwrap_or_else(|| format!("{:.4}", dim.measurement()));
 
     let mut result = Vec::new();
+    let mut arrows = Vec::new();
 
     // Dimension geometry is defined by two measured points and a point on the
     // dimension line.  Project each measured point onto that line so the
@@ -851,6 +999,8 @@ fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
                 base.normal,
                 common,
             ));
+            arrows.push((first_on_line, second_on_line));
+            arrows.push((second_on_line, first_on_line));
         }
         Dimension::Aligned(d) => {
             let (first_on_line, second_on_line) = projected_pair(
@@ -880,6 +1030,8 @@ fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
                 base.normal,
                 common,
             ));
+            arrows.push((first_on_line, second_on_line));
+            arrows.push((second_on_line, first_on_line));
         }
         Dimension::Radius(d) => {
             result.push(line_entity(
@@ -982,24 +1134,10 @@ fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
         }
     }
 
-    // Add the dimension text.
-    let text = Text {
-        common: inherit_common(common),
-        value: text_value,
-        insertion_point: base.text_middle_point,
-        alignment_point: None,
-        height: 2.5, // default text height
-        rotation: base.text_rotation,
-        width_factor: 1.0,
-        oblique_angle: 0.0,
-        style: base.style_name.clone(),
-        horizontal_alignment: TextHorizontalAlignment::Center,
-        vertical_alignment: TextVerticalAlignment::Middle,
-        normal: base.normal,
-        thickness: 0.0,
-        generation_flags: 0,
-    };
-    result.push(EntityType::Text(text));
+    for (tip, toward) in arrows {
+        result.push(dimension_arrow(tip, toward, 2.5, common, base.normal));
+    }
+    result.push(dimension_mtext(base, text_value));
 
     result
 }
@@ -1356,6 +1494,8 @@ impl EntityType {
             EntityType::Leader(e) => explode_leader(e),
             EntityType::MultiLeader(e) => explode_multileader(e),
             EntityType::MLine(e) => explode_mline(e),
+            EntityType::Table(e) => explode_table(e),
+            EntityType::Wipeout(e) => explode_wipeout(e),
             EntityType::Hatch(e) => super::explode_hatch::explode_hatch(e),
             EntityType::Mesh(e) => explode_mesh_autocad(e),
             EntityType::PolyfaceMesh(e) => explode_polyface_mesh_autocad(e),
@@ -1383,9 +1523,7 @@ impl EntityType {
             | EntityType::Region(_)
             | EntityType::Body(_)
             | EntityType::Surface(_)
-            | EntityType::Table(_)
             | EntityType::Tolerance(_)
-            | EntityType::Wipeout(_)
             | EntityType::Shape(_)
             | EntityType::Underlay(_)
             | EntityType::Ole2Frame(_)
@@ -1414,7 +1552,7 @@ impl EntityType {
             EntityType::Helix(e) => explode_spline(&e.spline),
             EntityType::MText(e) => explode_mtext(e),
             EntityType::Dimension(e) => explode_dimension(e),
-            EntityType::Leader(e) => explode_leader(e),
+            EntityType::Leader(e) => flatten_leader(e),
             EntityType::MultiLeader(e) => explode_multileader(e),
             EntityType::MLine(e) => explode_mline(e),
             EntityType::Hatch(e) => explode_hatch(e),
@@ -2004,7 +2142,7 @@ mod tests {
         let parts = entity.flatten();
         // Should contain dimension lines + text
         assert!(parts.len() >= 2);
-        assert!(parts.iter().any(|p| matches!(p, EntityType::Text(_))));
+        assert!(parts.iter().any(|p| matches!(p, EntityType::MText(_))));
         assert!(parts.iter().any(|p| matches!(p, EntityType::Line(_))));
     }
 

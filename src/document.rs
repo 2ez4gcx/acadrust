@@ -3508,10 +3508,17 @@ impl CadDocument {
     ///
     /// Returns an empty `Vec` for atomic entities that cannot be decomposed.
     pub fn explode_entity(&mut self, entity: &EntityType) -> Vec<EntityType> {
+        // The document-aware INSERT path already allocates fresh identities and
+        // remaps extension dictionaries. Do not run its results through the
+        // generic handle allocator below, or dictionary owners would point at
+        // the pre-remap handle.
         if let EntityType::Insert(insert) = entity {
             return self.explode_insert_with_context(insert);
         }
-        let mut parts = entity.explode();
+        let mut parts = match entity {
+            EntityType::MLine(mline) => self.explode_mline_with_context(mline),
+            _ => entity.explode(),
+        };
         let owner = entity.common().owner_handle;
         for part in &mut parts {
             let h = self.allocate_handle();
