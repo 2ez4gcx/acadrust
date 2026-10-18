@@ -18,6 +18,61 @@ impl CadDocument {
     /// block content needs the document's block table and base point.
     pub(crate) fn explode_multileader_with_context(&self, leader: &MultiLeader) -> Vec<EntityType> {
         let mut parts = EntityType::MultiLeader(Box::new(leader.clone())).explode();
+        for root in &leader.context.leader_roots {
+            for line in &root.lines {
+                let arrow_handle = if line
+                    .override_flags
+                    .contains(crate::entities::LeaderLinePropertyOverrideFlags::ARROWHEAD)
+                {
+                    line.arrowhead_handle
+                } else {
+                    leader.arrowhead_handle
+                };
+                let Some(arrow_handle) = arrow_handle.filter(|handle| !handle.is_null()) else {
+                    continue;
+                };
+                let Some(tip) = line.points.first().copied() else { continue };
+                let Some(next) = line.points.get(1).copied() else { continue };
+                let Some(record) = self
+                    .block_records
+                    .iter()
+                    .find(|record| record.handle == arrow_handle)
+                    .cloned()
+                else { continue };
+                let base = self
+                    .get_entity(record.block_entity_handle)
+                    .and_then(|entity| match entity {
+                        EntityType::Block(block) => Some(block.base_point),
+                        _ => None,
+                    })
+                    .unwrap_or(record.base_point);
+                let source: Vec<EntityType> = record
+                    .entity_handles
+                    .iter()
+                    .filter_map(|handle| self.get_entity(*handle).cloned())
+                    .map(|mut entity| {
+                        entity
+                            .as_entity_mut()
+                            .apply_transform(&Transform::from_translation(base * -1.0));
+                        entity
+                    })
+                    .collect();
+                let size = if line
+                    .override_flags
+                    .contains(crate::entities::LeaderLinePropertyOverrideFlags::ARROWHEAD_SIZE)
+                {
+                    line.arrowhead_size
+                } else {
+                    leader.context.arrowhead_size
+                };
+                let direction = next - tip;
+                let mut insert = Insert::new(record.name, tip)
+                    .with_uniform_scale(size.max(0.0))
+                    .with_rotation(direction.y.atan2(direction.x));
+                insert.common = leader.common.clone();
+                parts.extend(insert.explode_with_transform(&source, &insert.get_transform(), true));
+            }
+        }
         if leader.content_type != crate::entities::LeaderContentType::Block {
             return parts;
         }
@@ -297,6 +352,17 @@ impl CadDocument {
         marker.common.owner_handle = record_handle;
         self.add_entity(EntityType::Block(marker)).ok()?;
         for mut entity in geometry {
+            let old = entity.common().handle;
+            let fresh = self.allocate_handle();
+            let cloned_dictionary = !old.is_null() && self.clone_extension_graph(old, fresh);
+            entity.common_mut().handle = fresh;
+            entity.common_mut().raw_record = None;
+            entity.common_mut().reactors.clear();
+            if cloned_dictionary {
+                entity.common_mut().xdictionary_handle = self.extension_dictionary_handle(fresh);
+            } else {
+                entity.common_mut().xdictionary_handle = None;
+            }
             entity.common_mut().owner_handle = record_handle;
             self.add_entity(entity).ok()?;
         }

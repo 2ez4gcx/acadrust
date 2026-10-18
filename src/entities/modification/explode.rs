@@ -1039,14 +1039,30 @@ fn explode_table(table: &Table) -> Vec<EntityType> {
             &table.common,
         ));
     }
-    for v in &y {
-        result.push(line_entity(
-            point(0.0, *v),
-            point(*x.last().unwrap(), *v),
-            0.0,
-            normal,
-            &table.common,
-        ));
+    let title_row = table
+        .rows
+        .first()
+        .is_some_and(|row| row.cells.iter().any(|cell| !cell.text_value().is_empty()));
+    for (row_boundary, v) in y.iter().enumerate() {
+        if title_row && row_boundary == 1 {
+            for column in 0..x.len() - 1 {
+                result.push(line_entity(
+                    point(x[column], *v),
+                    point(x[column + 1], *v),
+                    0.0,
+                    normal,
+                    &table.common,
+                ));
+            }
+        } else {
+            result.push(line_entity(
+                point(0.0, *v),
+                point(*x.last().unwrap(), *v),
+                0.0,
+                normal,
+                &table.common,
+            ));
+        }
     }
     for (row_index, row) in table.rows.iter().enumerate() {
         for (column_index, cell) in row.cells.iter().enumerate().take(table.columns.len()) {
@@ -2501,6 +2517,17 @@ mod tests {
         let parts = EntityType::Solid3D(solid).explode();
         assert_eq!(parts.len(), 6);
         assert!(parts.iter().all(|part| matches!(part, EntityType::Region(_))));
+    }
+
+    #[test]
+    fn test_autocad_table_graphics_have_grid_and_cell_text() {
+        let mut table = Table::new(Vector3::ZERO, 2, 2);
+        table.set_cell_text(0, 0, "Title");
+        table.set_cell_text(1, 0, "A");
+        table.set_cell_text(1, 1, "B");
+        let parts = EntityType::Table(Box::new(table)).explode();
+        assert_eq!(parts.iter().filter(|part| matches!(part, EntityType::Line(_))).count(), 7);
+        assert_eq!(parts.iter().filter(|part| matches!(part, EntityType::MText(_))).count(), 3);
     }
 
     #[test]
