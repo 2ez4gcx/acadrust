@@ -128,6 +128,7 @@
 //! |--------|----------|
 //! | [`document`] | [`CadDocument`] — central drawing container |
 //! | [`entities`] | 48 top-level entity variants |
+//! | [`entities::modification`] | Entity explosion, mirroring, transforms, and translation |
 //! | [`tables`] | Table entries such as [`Layer`] and [`LineType`] |
 //! | [`objects`] | Non-graphical objects, dictionaries, layouts, and styles |
 //! | [`types`] | Primitives such as [`Vector3`], [`Color`], and [`DxfVersion`] |

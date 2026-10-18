@@ -5,7 +5,7 @@
 //! here.  Entities without mirror-specific corrections simply delegate to
 //! [`apply_transform`](super::transform).
 
-use super::*;
+use crate::entities::*;
 use crate::types::{Transform, Vector3};
 
 // ── Arc ──────────────────────────────────────────────────────────────────────

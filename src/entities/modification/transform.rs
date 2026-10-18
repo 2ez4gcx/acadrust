@@ -3,7 +3,7 @@
 //! Each entity's transformation logic is defined here as a standalone
 //! function, and [`EntityType`] exposes a convenience dispatch method.
 
-use super::*;
+use crate::entities::*;
 use crate::entities::solid3d::AcisData;
 use crate::types::{Matrix3, Transform, Vector2, Vector3};
 

@@ -3,7 +3,7 @@
 //! Each entity's `translate` logic is defined here as a standalone function,
 //! and [`EntityType`] exposes a convenience dispatch method.
 
-use super::*;
+use crate::entities::*;
 use crate::types::{Matrix3, Transform, Vector3};
 
 // ── Point ────────────────────────────────────────────────────────────────────

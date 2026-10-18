@@ -10,7 +10,7 @@
 
 use std::f64::consts::PI;
 
-use super::*;
+use crate::entities::*;
 use crate::types::{Handle, Vector3};
 
 // ============================================================================
@@ -471,7 +471,7 @@ fn wrap_paragraph(text: &str, width: f64, char_width: f64) -> Vec<String> {
 fn explode_mtext(mtext: &MText) -> Vec<EntityType> {
     // One TEXT per line: formatting codes removed, paragraphs and (approximate)
     // word wrapping at the reference rectangle width, aligned by the attachment point.
-    let plain = super::mtext_format::parse_mtext(&mtext.value, true).to_plain_text();
+    let plain = crate::entities::mtext_format::parse_mtext(&mtext.value, true).to_plain_text();
     let height = if mtext.height > 0.0 { mtext.height } else { 1.0 };
     // average character width of typical CAD fonts
     let char_width = height * 0.6;

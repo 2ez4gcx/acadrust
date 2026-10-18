@@ -22,7 +22,6 @@ pub mod circle;
 pub mod dimension;
 pub mod ellipse;
 pub mod embedded_entity;
-pub mod explode;
 pub mod extended_entity;
 pub mod face3d;
 pub mod hatch;
@@ -33,8 +32,8 @@ pub mod light;
 pub mod line;
 pub mod lwpolyline;
 pub mod mesh;
-pub mod mirror;
 pub mod mline;
+pub mod modification;
 pub mod mtext;
 pub mod mtext_format;
 pub mod multileader;
@@ -58,14 +57,15 @@ pub mod surface;
 pub mod table;
 pub mod text;
 pub mod tolerance;
-pub mod transform;
-pub mod translate;
 pub mod underlay;
 pub mod unknown_entity;
 pub mod view_border;
 pub mod viewport;
 pub mod wipeout;
 pub mod xline;
+
+// Preserve existing module paths for callers of the modification tools.
+pub use modification::{explode, mirror, transform, translate};
 
 pub use arc::Arc;
 pub use attribute_definition::{
