@@ -1055,10 +1055,22 @@ fn modeler_regions(common: &EntityCommon, sat: Option<crate::entities::acis::Sat
     doc.faces().into_iter().filter_map(|face| {
         let points = sat_face_points(&doc, &face);
         (points.len() >= 3).then(|| {
-            let mut region = Region::new();
-            region.common = inherit_common(common);
-            region.wires.push(Wire::from_points(points));
-            EntityType::Region(region)
+            let wire = Wire::from_points(points);
+            let surface_type = doc
+                .resolve(face.surface())
+                .map(|record| record.entity_type.as_str())
+                .unwrap_or("plane-surface");
+            if surface_type.contains("plane") {
+                let mut region = Region::new();
+                region.common = inherit_common(common);
+                region.wires.push(wire);
+                EntityType::Region(region)
+            } else {
+                let mut surface = Surface::new(SurfaceKind::Generic);
+                surface.common = inherit_common(common);
+                surface.wires.push(wire);
+                EntityType::Surface(Box::new(surface))
+            }
         })
     }).collect()
 }
