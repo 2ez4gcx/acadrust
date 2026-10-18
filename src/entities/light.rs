@@ -192,7 +192,11 @@ impl Entity for Light {
         "LIGHT"
     }
     fn apply_transform(&mut self, transform: &Transform) {
+        self.common.raw_record = None;
         self.position = transform.apply(self.position);
         self.target = transform.apply(self.target);
+        if let Some(data) = &mut self.photometric_data {
+            data.web_rotation = transform.apply_rotation(data.web_rotation);
+        }
     }
 }

@@ -65,7 +65,8 @@ pub mod wipeout;
 pub mod xline;
 
 // Preserve existing module paths for callers of the modification tools.
-pub use modification::{explode, mirror, transform, translate};
+pub use modification::{explode, mirror, rotate, rotate3d, transform, translate};
+pub use modification::rotate::RotationAxis;
 
 pub use arc::Arc;
 pub use attribute_definition::{
@@ -214,6 +215,113 @@ pub trait Entity {
     /// Apply rotation around an axis
     fn apply_rotation(&mut self, axis: Vector3, angle: f64) {
         self.apply_transform(&Transform::from_rotation(axis, angle));
+    }
+
+    /// Rotate around `center` in the world XY plane.
+    fn rotate(&mut self, center: Vector3, angle: f64) {
+        self.rotate_about_axis(center, Vector3::UNIT_Z, angle);
+    }
+
+    /// Rotate around the world-space line through `center` parallel to `axis`.
+    fn rotate_about_axis(&mut self, center: Vector3, axis: Vector3, angle: f64) {
+        if !center.x.is_finite()
+            || !center.y.is_finite()
+            || !center.z.is_finite()
+            || !axis.x.is_finite()
+            || !axis.y.is_finite()
+            || !axis.z.is_finite()
+            || !angle.is_finite()
+            || axis.length_squared() <= f64::EPSILON
+            || angle == 0.0
+        {
+            return;
+        }
+        self.apply_transform(&Transform::from_rotation_with_origin(axis, angle, center));
+    }
+
+    /// Rotate around the 3D line passing through `first` and `second`.
+    fn rotate_about_line(&mut self, first: Vector3, second: Vector3, angle: f64) {
+        let axis = second - first;
+        if first.x.is_finite()
+            && first.y.is_finite()
+            && first.z.is_finite()
+            && second.x.is_finite()
+            && second.y.is_finite()
+            && second.z.is_finite()
+            && angle.is_finite()
+            && axis.length_squared() > f64::EPSILON
+        {
+            self.rotate_about_axis(first, axis, angle);
+        }
+    }
+
+    /// Rotate using one of the CAD axis-selection modes.
+    fn rotate_with_axis(
+        &mut self,
+        axis: crate::entities::rotate::RotationAxis,
+        angle: f64,
+    ) {
+        match axis {
+            crate::entities::rotate::RotationAxis::TwoPoint { first, second } => {
+                self.rotate_about_line(first, second, angle)
+            }
+            crate::entities::rotate::RotationAxis::Entity { origin, direction }
+            | crate::entities::rotate::RotationAxis::Last { origin, direction }
+            | crate::entities::rotate::RotationAxis::View { origin, direction } => {
+                self.rotate_about_axis(origin, direction, angle)
+            }
+            crate::entities::rotate::RotationAxis::XAxis { origin } => {
+                self.rotate_about_axis(origin, Vector3::UNIT_X, angle)
+            }
+            crate::entities::rotate::RotationAxis::YAxis { origin } => {
+                self.rotate_about_axis(origin, Vector3::UNIT_Y, angle)
+            }
+            crate::entities::rotate::RotationAxis::ZAxis { origin } => {
+                self.rotate_about_axis(origin, Vector3::UNIT_Z, angle)
+            }
+        }
+    }
+
+    /// Apply the 3D CAD rotation axis selector.
+    fn rotate3d(
+        &mut self,
+        axis: crate::entities::rotate::RotationAxis,
+        angle: f64,
+    ) {
+        self.rotate_with_axis(axis, angle);
+    }
+
+    /// Apply a rotation around `axis` through `origin`.
+    fn apply_rotation_with_origin(&mut self, axis: Vector3, angle: f64, origin: Vector3) {
+        self.rotate_about_axis(origin, axis, angle);
+    }
+
+    /// Rotate from a reference point to a target point around `center` in the
+    /// world XY plane.
+    fn rotate_by_points(&mut self, center: Vector3, reference: Vector3, target: Vector3) {
+        if let Some(angle) = crate::entities::rotate::angle_from_points(
+            center,
+            Vector3::UNIT_Z,
+            reference,
+            target,
+        ) {
+            self.rotate_about_axis(center, Vector3::UNIT_Z, angle);
+        }
+    }
+
+    /// Rotate from a reference point to a target point around an arbitrary axis.
+    fn rotate_about_axis_by_points(
+        &mut self,
+        center: Vector3,
+        axis: Vector3,
+        reference: Vector3,
+        target: Vector3,
+    ) {
+        if let Some(angle) = crate::entities::rotate::angle_from_points(
+            center, axis, reference, target,
+        ) {
+            self.rotate_about_axis(center, axis, angle);
+        }
     }
 
     /// Apply uniform scaling

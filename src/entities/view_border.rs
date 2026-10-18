@@ -119,6 +119,7 @@ impl Entity for ViewBorder {
         "DRAWINGVIEW"
     }
     fn apply_transform(&mut self, transform: &Transform) {
+        self.common.raw_record = None;
         let corners = [
             Vector3::new(self.min[0], self.min[1], 0.0),
             Vector3::new(self.max[0], self.min[1], 0.0),
@@ -138,5 +139,6 @@ impl Entity for ViewBorder {
         self.min = min;
         self.max = max;
         self.center = [center.x, center.y];
+        super::transform::rotate_stored_angle(&mut self.rotation_angle, transform);
     }
 }

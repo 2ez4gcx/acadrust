@@ -412,6 +412,24 @@ impl Transform {
         }
     }
 
+    /// Create a rotation around an axis through `origin`.
+    pub fn from_rotation_with_origin(axis: Vector3, angle: f64, origin: Vector3) -> Self {
+        if !axis.x.is_finite()
+            || !axis.y.is_finite()
+            || !axis.z.is_finite()
+            || !angle.is_finite()
+            || !origin.x.is_finite()
+            || !origin.y.is_finite()
+            || !origin.z.is_finite()
+            || axis.length_squared() <= f64::EPSILON
+        {
+            return Self::identity();
+        }
+        Self::from_translation(-origin)
+            .then(&Self::from_rotation(axis, angle))
+            .then(&Self::from_translation(origin))
+    }
+
     /// Create translation transform
     pub fn from_translation(translation: Vector3) -> Self {
         Self {
@@ -618,6 +636,18 @@ mod tests {
         let result = m.transform_point(v);
         assert!(result.x.abs() < 1e-10);
         assert!((result.y - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_matrix4_rotation_with_origin() {
+        let transform = Transform::from_rotation_with_origin(
+            Vector3::UNIT_Z,
+            PI / 2.0,
+            Vector3::new(10.0, 10.0, 0.0),
+        );
+        let result = transform.apply(Vector3::new(10.0, 0.0, 0.0));
+        assert!((result.x - 20.0).abs() < 1e-10);
+        assert!((result.y - 10.0).abs() < 1e-10);
     }
 
     #[test]

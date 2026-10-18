@@ -5,7 +5,10 @@
 //! enum compact.
 
 use crate::entities::{Entity, EntityCommon, MText};
-use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vector2, Vector3};
+use crate::types::{
+    BoundingBox3D, Color, Handle, LineWeight, Matrix3, Matrix4, Transform, Transparency, Vector2,
+    Vector3,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -428,6 +431,116 @@ impl Entity for ExtendedEntity {
     fn entity_type(&self) -> &'static str {
         "EXTENDED_ENTITY"
     }
+
+    fn apply_transform(&mut self, transform: &Transform) {
+        match &mut self.data {
+            ExtendedEntityData::SectionObject(data) => {
+                for point in data.vertices.iter_mut().chain(&mut data.back_line_vertices) {
+                    *point = transform.apply(*point);
+                }
+                data.vertical_direction = transform
+                    .apply_rotation(data.vertical_direction)
+                    .normalize();
+            }
+            ExtendedEntityData::ArcAlignedText(data) => {
+                let old_ocs = Matrix3::arbitrary_axis(data.normal);
+                let new_normal = transform.apply_rotation(data.normal).normalize();
+                let new_ocs_t = Matrix3::arbitrary_axis(new_normal).transpose();
+                let transformed_angle = |angle: f64| {
+                    let direction = old_ocs * Vector3::new(angle.cos(), angle.sin(), 0.0);
+                    let local = new_ocs_t * transform.apply_rotation(direction);
+                    local.y.atan2(local.x)
+                };
+                data.start_angle = transformed_angle(data.start_angle);
+                data.end_angle = transformed_angle(data.end_angle);
+                if super::transform::is_reflecting(transform) {
+                    std::mem::swap(&mut data.start_angle, &mut data.end_angle);
+                }
+                data.center = transform.apply(data.center);
+                data.normal = new_normal;
+                let scale = transform.apply_rotation(old_ocs * Vector3::UNIT_X).length();
+                data.radius *= scale;
+                data.text_size *= scale;
+                data.character_spacing *= scale;
+                data.offset_from_arc *= scale;
+                data.right_offset *= scale;
+                data.left_offset *= scale;
+            }
+            ExtendedEntityData::RemoteText(data) => {
+                let old_ocs = Matrix3::arbitrary_axis(data.normal);
+                let direction =
+                    old_ocs * Vector3::new(data.rotation.cos(), data.rotation.sin(), 0.0);
+                let new_normal = transform.apply_rotation(data.normal).normalize();
+                let rotated = Matrix3::arbitrary_axis(new_normal).transpose()
+                    * transform.apply_rotation(direction);
+                if rotated.x != 0.0 || rotated.y != 0.0 {
+                    data.rotation = rotated.y.atan2(rotated.x);
+                }
+                data.position = transform.apply(data.position);
+                data.normal = new_normal;
+                data.height *= transform.apply_rotation(direction).length();
+            }
+            ExtendedEntityData::GeoPositionMarker(data) => {
+                data.position = transform.apply(data.position);
+                let scale = transform.apply_rotation(Vector3::UNIT_X).length();
+                data.radius *= scale;
+                data.landing_gap *= scale;
+                if let Some(text) = &mut data.embedded_mtext {
+                    text.apply_transform(transform);
+                }
+            }
+            ExtendedEntityData::CoordinationModel(data) => {
+                let mut placement = Matrix4::zero();
+                for (row, values) in placement.m.iter_mut().enumerate() {
+                    values.copy_from_slice(&data.transform[row * 4..row * 4 + 4]);
+                }
+                let placement = transform.matrix * placement;
+                for (row, values) in placement.m.iter().enumerate() {
+                    data.transform[row * 4..row * 4 + 4].copy_from_slice(values);
+                }
+            }
+            ExtendedEntityData::PointCloud(data) => {
+                data.origin = transform.apply(data.origin);
+                let (min, max) = transformed_extents(data.extents_min, data.extents_max, transform);
+                data.extents_min = min;
+                data.extents_max = max;
+                data.ucs_origin = transform.apply(data.ucs_origin);
+                data.ucs_x_direction = transform.apply_rotation(data.ucs_x_direction);
+                data.ucs_y_direction = transform.apply_rotation(data.ucs_y_direction);
+                data.ucs_z_direction = transform.apply_rotation(data.ucs_z_direction);
+            }
+            ExtendedEntityData::PointCloudEx(data) => {
+                // Extents and crop geometry live in the scan's local frame.
+                data.ucs_origin = transform.apply(data.ucs_origin);
+                data.ucs_x_direction = transform.apply_rotation(data.ucs_x_direction);
+                data.ucs_y_direction = transform.apply_rotation(data.ucs_y_direction);
+                data.ucs_z_direction = transform.apply_rotation(data.ucs_z_direction);
+            }
+            // Cameras refer to VIEW table records. Remaining classes contain
+            // opaque payloads or drawing metadata, with no editable geometry.
+            ExtendedEntityData::Camera { .. }
+            | ExtendedEntityData::Proxy(_)
+            | ExtendedEntityData::OleFrame(_)
+            | ExtendedEntityData::LayoutPrintConfig(_)
+            | ExtendedEntityData::Format(_)
+            | ExtendedEntityData::Legacy(_)
+            | ExtendedEntityData::DynamicBlock(_)
+            | ExtendedEntityData::RegisteredClass(_) => return,
+        }
+        self.common.raw_record = None;
+    }
+}
+
+fn transformed_extents(min: Vector3, max: Vector3, transform: &Transform) -> (Vector3, Vector3) {
+    let corners: [Vector3; 8] = std::array::from_fn(|index| {
+        transform.apply(Vector3::new(
+            if index & 1 == 0 { min.x } else { max.x },
+            if index & 2 == 0 { min.y } else { max.y },
+            if index & 4 == 0 { min.z } else { max.z },
+        ))
+    });
+    let bounds = BoundingBox3D::from_points(&corners).unwrap();
+    (bounds.min, bounds.max)
 }
 
 pub fn point_cloud_ex_to_world(data: &PointCloudExData, p: Vector3) -> Vector3 {

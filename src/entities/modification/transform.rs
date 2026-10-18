@@ -96,8 +96,10 @@ fn ocs_pair(old_normal: Vector3, new_normal: Vector3) -> (Matrix3, Matrix3) {
 }
 
 pub(crate) fn transform_point(e: &mut Point, transform: &Transform) {
+    let old_normal = e.normal;
     e.location = transform.apply(e.location);
     e.normal = transform.apply_rotation(e.normal).normalize();
+    rotate_ocs_angle(&mut e.x_axis_angle, old_normal, transform);
 }
 
 // ── Line ─────────────────────────────────────────────────────────────────────
@@ -295,8 +297,25 @@ pub(crate) fn rotate_stored_angle(rotation: &mut f64, transform: &Transform) {
     }
 }
 
+/// Update an angle measured in a planar entity's object coordinate system.
+pub(crate) fn rotate_ocs_angle(
+    rotation: &mut f64,
+    old_normal: Vector3,
+    transform: &Transform,
+) {
+    let old_ocs = Matrix3::arbitrary_axis(old_normal);
+    let new_normal = transform.apply_rotation(old_normal).normalize();
+    let new_wcs_to_ocs = Matrix3::arbitrary_axis(new_normal).transpose();
+    let direction = old_ocs * Vector3::new(rotation.cos(), rotation.sin(), 0.0);
+    let transformed = new_wcs_to_ocs * transform.apply_rotation(direction);
+    if transformed.x != 0.0 || transformed.y != 0.0 {
+        *rotation = transformed.y.atan2(transformed.x);
+    }
+}
+
 pub(crate) fn transform_text(e: &mut Text, transform: &Transform) {
     // Insertion / alignment points are stored in OCS.
+    let old_normal = e.normal;
     let new_normal = transform.apply_rotation(e.normal).normalize();
     let (ocs, new_t) = ocs_pair(e.normal, new_normal);
     e.insertion_point = new_t * transform.apply(ocs * e.insertion_point);
@@ -308,12 +327,16 @@ pub(crate) fn transform_text(e: &mut Text, transform: &Transform) {
     let scale_factor = transformed_unit.length();
     e.height *= scale_factor;
     e.normal = new_normal;
-    rotate_stored_angle(&mut e.rotation, transform);
+    rotate_ocs_angle(&mut e.rotation, old_normal, transform);
 }
 
 // ── MText ────────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_mtext(e: &mut MText, transform: &Transform) {
+    let old_normal = e.normal;
+    let old_direction = e
+        .dwg_x_direction
+        .unwrap_or_else(|| Vector3::new(e.rotation.cos(), e.rotation.sin(), 0.0));
     e.insertion_point = transform.apply(e.insertion_point);
     let unit_x = Vector3::new(1.0, 0.0, 0.0);
     let transformed_unit = transform.apply_rotation(unit_x);
@@ -323,8 +346,15 @@ pub(crate) fn transform_mtext(e: &mut MText, transform: &Transform) {
     if let Some(ref mut h) = e.rectangle_height {
         *h *= scale_factor;
     }
-    e.normal = transform.apply_rotation(e.normal).normalize();
-    rotate_stored_angle(&mut e.rotation, transform);
+    let new_normal = transform.apply_rotation(old_normal).normalize();
+    let direction = transform.apply_rotation(old_direction);
+    e.normal = new_normal;
+    e.dwg_x_direction = Some(direction);
+    if direction.x.abs() > 1e-12 || direction.y.abs() > 1e-12 {
+        e.rotation = direction.y.atan2(direction.x);
+    } else {
+        e.rotation = 0.0;
+    }
 }
 
 // ── Spline ───────────────────────────────────────────────────────────────────
@@ -946,6 +976,7 @@ pub(crate) fn transform_viewport(e: &mut Viewport, transform: &Transform) {
 
 pub(crate) fn transform_attribute_definition(e: &mut AttributeDefinition, transform: &Transform) {
     // Insertion / alignment points are stored in OCS.
+    let old_normal = e.normal;
     let new_normal = transform.apply_rotation(e.normal).normalize();
     let (ocs, new_t) = ocs_pair(e.normal, new_normal);
     e.insertion_point = new_t * transform.apply(ocs * e.insertion_point);
@@ -956,13 +987,14 @@ pub(crate) fn transform_attribute_definition(e: &mut AttributeDefinition, transf
     let transformed_unit = transform.apply_rotation(unit_x);
     let scale_factor = transformed_unit.length();
     e.height *= scale_factor;
-    rotate_stored_angle(&mut e.rotation, transform);
+    rotate_ocs_angle(&mut e.rotation, old_normal, transform);
 }
 
 // ── AttributeEntity ──────────────────────────────────────────────────────────
 
 pub(crate) fn transform_attribute_entity(e: &mut AttributeEntity, transform: &Transform) {
     // Insertion / alignment points are stored in OCS.
+    let old_normal = e.normal;
     let new_normal = transform.apply_rotation(e.normal).normalize();
     let (ocs, new_t) = ocs_pair(e.normal, new_normal);
     e.insertion_point = new_t * transform.apply(ocs * e.insertion_point);
@@ -973,7 +1005,7 @@ pub(crate) fn transform_attribute_entity(e: &mut AttributeEntity, transform: &Tr
     let transformed_unit = transform.apply_rotation(unit_x);
     let scale_factor = transformed_unit.length();
     e.height *= scale_factor;
-    rotate_stored_angle(&mut e.rotation, transform);
+    rotate_ocs_angle(&mut e.rotation, old_normal, transform);
 }
 
 // ── Leader ───────────────────────────────────────────────────────────────────
@@ -1009,6 +1041,7 @@ pub(crate) fn transform_multileader(e: &mut MultiLeader, transform: &Transform) 
 
     for root in &mut e.context.leader_roots {
         root.connection_point = transform.apply(root.connection_point);
+        root.direction = transform.apply_rotation(root.direction).normalize();
         for bp in &mut root.break_points {
             bp.start_point = transform.apply(bp.start_point);
             bp.end_point = transform.apply(bp.end_point);
@@ -1027,12 +1060,18 @@ pub(crate) fn transform_multileader(e: &mut MultiLeader, transform: &Transform) 
     let unit_x = Vector3::new(1.0, 0.0, 0.0);
     let transformed_unit = transform.apply_rotation(unit_x);
     let scale_factor = transformed_unit.length();
+    for root in &mut e.context.leader_roots {
+        root.landing_distance *= scale_factor;
+    }
     e.arrowhead_size *= scale_factor;
     e.text_height *= scale_factor;
     e.dogleg_length *= scale_factor;
     e.context.arrowhead_size *= scale_factor;
     e.context.text_height *= scale_factor;
     e.context.landing_gap *= scale_factor;
+    rotate_stored_angle(&mut e.context.text_rotation, transform);
+    rotate_stored_angle(&mut e.context.block_rotation, transform);
+    rotate_stored_angle(&mut e.block_rotation, transform);
 }
 
 // ── MLine ────────────────────────────────────────────────────────────────────
@@ -1231,6 +1270,7 @@ pub(crate) fn transform_wipeout(e: &mut Wipeout, transform: &Transform) {
 
 pub(crate) fn transform_shape(e: &mut Shape, transform: &Transform) {
     // Insertion point is stored in OCS.
+    let old_normal = e.normal;
     let new_normal = transform.apply_rotation(e.normal).normalize();
     let (ocs, new_t) = ocs_pair(e.normal, new_normal);
     e.insertion_point = new_t * transform.apply(ocs * e.insertion_point);
@@ -1239,12 +1279,13 @@ pub(crate) fn transform_shape(e: &mut Shape, transform: &Transform) {
     let scale_factor = transformed_unit.length();
     e.size *= scale_factor;
     e.normal = new_normal;
-    rotate_stored_angle(&mut e.rotation, transform);
+    rotate_ocs_angle(&mut e.rotation, old_normal, transform);
 }
 
 // ── Underlay ─────────────────────────────────────────────────────────────────
 
 pub(crate) fn transform_underlay(e: &mut Underlay, transform: &Transform) {
+    let old_normal = e.normal;
     e.insertion_point = transform.apply(e.insertion_point);
     e.normal = transform.apply_rotation(e.normal).normalize();
 
@@ -1254,6 +1295,7 @@ pub(crate) fn transform_underlay(e: &mut Underlay, transform: &Transform) {
     e.x_scale *= scale_factor;
     e.y_scale *= scale_factor;
     e.z_scale *= scale_factor;
+    rotate_ocs_angle(&mut e.rotation, old_normal, transform);
 }
 
 // ── Seqend ───────────────────────────────────────────────────────────────────
@@ -1281,6 +1323,24 @@ pub(crate) fn transform_polygon_mesh(e: &mut PolygonMeshEntity, transform: &Tran
 
 pub(crate) fn transform_unknown(_e: &mut UnknownEntity, _transform: &Transform) {
     // No geometry
+}
+
+fn transform_invalidates_raw_record(entity: &EntityType) -> bool {
+    match entity {
+        EntityType::Unknown(_) | EntityType::BlockEnd(_) | EntityType::Seqend(_) => false,
+        EntityType::Extended(value) => !matches!(
+            &value.data,
+            ExtendedEntityData::Camera { .. }
+                | ExtendedEntityData::Proxy(_)
+                | ExtendedEntityData::OleFrame(_)
+                | ExtendedEntityData::LayoutPrintConfig(_)
+                | ExtendedEntityData::Format(_)
+                | ExtendedEntityData::Legacy(_)
+                | ExtendedEntityData::DynamicBlock(_)
+                | ExtendedEntityData::RegisteredClass(_)
+        ),
+        _ => true,
+    }
 }
 
 // ── EntityType dispatch ──────────────────────────────────────────────────────
@@ -1335,13 +1395,16 @@ impl EntityType {
             EntityType::Seqend(e) => transform_seqend(e, transform),
             EntityType::Ole2Frame(e) => transform_ole2frame(e, transform),
             EntityType::PolygonMesh(e) => transform_polygon_mesh(e, transform),
-            // Lights are glyph-only; the photometric frame is not transformed
-            // (keeps the preserved raw record valid for write-back).
-            EntityType::Light(_) => {}
-            // Anchored to their drawing view (see translate).
-            EntityType::SectionSymbol(_) | EntityType::ViewBorder(_) => {}
-            EntityType::Extended(_) => {}
+            EntityType::Light(e) => e.apply_transform(transform),
+            EntityType::SectionSymbol(e) => e.apply_transform(transform),
+            EntityType::ViewBorder(e) => e.apply_transform(transform),
+            EntityType::Extended(e) => e.apply_transform(transform),
             EntityType::Unknown(e) => transform_unknown(e, transform),
+        }
+        // Applying a semantic transform invalidates verbatim DWG provenance;
+        // unknown entities have no editable geometry and keep their payload.
+        if transform_invalidates_raw_record(self) {
+            self.common_mut().raw_record = None;
         }
     }
 
