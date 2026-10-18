@@ -1,6 +1,6 @@
 ## Changelog
 
-### Unreleased
+### 0.6.5
 
 - **Genuine DXF R12 output** - `DxfWriter::with_version(DxfVersion::AC1009)`
   writes a real R12 file: no handles, CLASSES or OBJECTS, R12 table records,
@@ -12,7 +12,35 @@
 - **Explode fidelity** - SPLINE now explodes along the evaluated NURBS curve
   (rational and non-uniform knots) instead of the control polygon; MTEXT
   explodes to one TEXT per line with formatting codes removed, aligned by its
-  attachment point.
+  attachment point. INSERT restores block definitions and rotated array
+  positions, and resolves inherited ByBlock transparency and linetype.
+- **Audit and recovery** - Adds document audit and repair APIs and DXF/DWG
+  recovery results. Preserves bounded auxiliary DWG records after decode
+  failures and keeps orphaned geometry out of model space.
+- **Plot styles and dynamic blocks** - Adds CTB/STB plot-style table codecs,
+  dynamic-block defaults and saved instance properties, editable classes, and
+  corrected dynamic-block references and visibility serialization.
+- **AC1009 fidelity** - Preserves legacy header settings, table and entity
+  identities, font resolution, encodings, and native mesh data, with regression
+  coverage from CAD-created R12 drawings.
+- **ACIS modeler data** - Preserves binary face and edge colors, adds
+  `SatDocument::split_bodies`, and fixes wireframe data, spline pcurves,
+  optional BODY history handles, and boolean solid-history trees.
+- **Metadata and geometry** - Preserves drawing summary properties,
+  block-record XDATA, spline parameterization and creation flags, dimension,
+  polyline, and MTEXT data, decimal tab alignment, hatch gradients, and color
+  book names. Corrects TEXT/SHAPE angle units and binary numeric/string output.
+- **Viewports and document references** - Preserves viewport on/off, grid, and
+  shading settings, layout owners and back-references, copied block object
+  graphs, table handles, and APPID identities.
+- **DWG decoding and interoperability** - Supports R2010 inline constraint
+  groups, associative geometry dependencies, large sections, and large DGN
+  stroke patterns. Reports malformed header errors and corrects dimension
+  flag mapping, class declarations, and complex linetype mode bits.
+- **Colors, performance, and testing** - Corrects reference ACI palette
+  intensities, exposes the DWG EED decoder, and reduces DXF string allocations.
+  Adds portable regression fixtures and explicitly ignores tests that require
+  unavailable external DWG/SAT files.
 
 ### 0.6.4
 
