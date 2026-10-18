@@ -274,10 +274,10 @@ cannot reliably implement AutoCAD's refusal behavior, or decide when it is
 valid to replace/delete the source. The API returns parts without changing the
 document; this must stay explicit.
 
-MINSERT's capped initial reserve does not cap work. `array_transforms` still
-materializes all rows times columns transforms before visiting the block, even
-for empty input. The public maximum is 65535x65535 cells, over four billion
-transforms. Add checked work/output limits or streaming with cancellation.
+Direct MINSERT expansion now refuses arrays above one million cells before
+materializing transforms or points. Smaller arrays still materialize all
+rows/columns, so a streaming or cancellation-aware API remains preferable for
+callers that need very large but valid arrays.
 
 The R12 writer recursively consumes `EntityType::explode`; unsupported output
 and its depth limit silently return success with no geometry. Any change to
