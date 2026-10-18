@@ -27,6 +27,8 @@ the DWG round-trip regression remains in the test suite.
 - Document-aware DIMSTYLE resolution for dimension EXPLODE: precision,
   measurement factors, prefixes/suffixes, text style/height, extension offsets,
   suppression flags, arrow size/width and blank-text handling.
+- MLEADER straight path break intervals are applied as visible segment gaps;
+  per-line arrow and landing output remains document-aware.
 - Mesh per-face 3DFACEs, closed polygon-mesh seams, polyface POINT/LINE/face
   degeneracies, and per-face color retention.
 - Document-aware INSERT expansion with MINSERT/xref refusal, base-point
@@ -199,8 +201,9 @@ detached-result contract or a context-aware cloning API.
   hooks, style, and the documented output forms are omitted. Native straight
   LEADER produces SOLID plus LWPOLYLINE; the spline example produces SOLID
   plus SPLINE.
-- `explode_multileader` omits block content and custom arrow blocks; ignores
-  path/style/color/weight overrides and break intervals; draws spline paths
+- `explode_multileader` omits some custom arrow/block semantics and ignores
+  several path/style/color/weight overrides; straight break intervals are now
+  honored, while spline break paths
   as straight segments; builds arrow geometry in XY rather than the content
   plane; and hardcodes MTEXT style and attachment. The native simple MTEXT
   example produces MTEXT, LINE and a width-bearing LWPOLYLINE, so even the
