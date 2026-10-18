@@ -89,32 +89,36 @@ impl DwgWriter {
         // the controls, entries and handle map all agree (issue #51/#64
         // class of bug).
         let mut owned;
-        let document: &CadDocument =
-            if document.has_null_table_entries() || document.version < DxfVersion::AC1027 {
-                owned = document.clone();
-                if owned.has_null_table_entries() {
-                    owned.assign_table_entry_handles();
+        let document: &CadDocument = if document.has_null_table_entries()
+            || document.version < DxfVersion::AC1027
+            || has_missing_object_classes(document)
+        {
+            owned = document.clone();
+            if owned.has_null_table_entries() {
+                owned.assign_table_entry_handles();
+            }
+            if owned.version < DxfVersion::AC1027 {
+                // A table read from a file of this version is already valid
+                // for it, and the verbatim records copied from that file
+                // carry its class numbers: leave it as it is.
+                if owned.dwg_source_version != Some(owned.version) {
+                    prepare_legacy_classes(&mut owned);
                 }
-                if owned.version < DxfVersion::AC1027 {
-                    // A table read from a file of this version is already valid
-                    // for it, and the verbatim records copied from that file
-                    // carry its class numbers: leave it as it is.
-                    if owned.dwg_source_version != Some(owned.version) {
-                        prepare_legacy_classes(&mut owned);
-                    }
-                    if owned.version < DxfVersion::AC1018 {
-                        add_missing_object_classes(&mut owned);
-                    }
-                }
-                if owned.version < DxfVersion::AC1027 {
-                    prepare_legacy_document(&mut owned);
-                    crate::objects::store_table_style_roundtrip(&mut owned);
-                    crate::objects::store_visual_style_roundtrip(&mut owned);
-                }
-                &owned
-            } else {
-                document
-            };
+            }
+            // Objects added after reading (an evaluated dynamic block's
+            // AcDbBlockRepresentationData, a drawing variable) need their
+            // class whatever the version; the verbatim table only gains
+            // entries at its end, so the numbers it carries stay valid.
+            add_missing_object_classes(&mut owned);
+            if owned.version < DxfVersion::AC1027 {
+                prepare_legacy_document(&mut owned);
+                crate::objects::store_table_style_roundtrip(&mut owned);
+                crate::objects::store_visual_style_roundtrip(&mut owned);
+            }
+            &owned
+        } else {
+            document
+        };
 
         let result = if uses_ac21_format(version) {
             write_ac21(&mut output, document, version)
@@ -862,18 +866,38 @@ fn prepare_legacy_classes(document: &mut CadDocument) {
     }
 }
 
-/// Declare the class of every object added to a pre-R2004 drawing whose
-/// source file never used that class. Before R2004 such records take their
-/// type code only from the class table; without an entry they fall back to a
-/// later version's fixed code, which strict readers reject.
-fn add_missing_object_classes(document: &mut CadDocument) {
-    let defaults = crate::classes::default_classes();
-    let missing: Vec<_> = objects_in_handle_order(document)
+/// Class names of objects whose class the table lacks.
+fn missing_object_class_names(document: &CadDocument) -> Vec<Vec<std::borrow::Cow<'_, str>>> {
+    objects_in_handle_order(document)
         .into_iter()
         .map(|(_, object)| {
             crate::io::dwg::dwg_stream_writers::object_writer::objects::object_class_names(object)
         })
         .filter(|names| !names.iter().any(|name| document.classes.contains(name)))
+        .collect()
+}
+
+/// True when an object the defaults can declare has no class in the table.
+fn has_missing_object_classes(document: &CadDocument) -> bool {
+    let defaults = crate::classes::default_classes();
+    missing_object_class_names(document).iter().any(|names| {
+        defaults.iter().any(|class| {
+            names
+                .iter()
+                .any(|name| class.dxf_name.eq_ignore_ascii_case(name))
+        })
+    })
+}
+
+/// Declare the class of every object whose source file never used that
+/// class. Such records take their type code from the class table; without an
+/// entry they fall back to a fixed or placeholder code (500 for dynamic block
+/// records), which readers resolve to another class or drop: an evaluated
+/// dynamic block reference then loses its link to the definition.
+fn add_missing_object_classes(document: &mut CadDocument) {
+    let defaults = crate::classes::default_classes();
+    let missing: Vec<_> = missing_object_class_names(document)
+        .into_iter()
         .filter_map(|names| {
             defaults
                 .iter()
@@ -2631,8 +2655,8 @@ mod tests {
     }
 
     #[test]
-    fn object_without_its_class_is_skipped_instead_of_written_as_class_500() {
-        use crate::objects::ObjectType;
+    fn object_without_its_class_gets_it_declared_instead_of_written_as_class_500() {
+        use crate::objects::{ClassObjectData, ObjectType};
 
         let mut document = layer_filter_document();
         document.version = DxfVersion::AC1024;
@@ -2643,8 +2667,12 @@ mod tests {
                 classes.push_preserving(class.clone());
             }
         }
+        let numbers: Vec<_> = classes
+            .iter()
+            .map(|class| (class.dxf_name.clone(), class.class_number))
+            .collect();
         document.classes = classes;
-        let source_objects = document.objects.len() - 1;
+        let source_objects = document.objects.len();
 
         let bytes = DwgWriter::write_to_vec(&document).unwrap();
         let decoded = crate::io::dwg::DwgReader::from_stream(Cursor::new(bytes))
@@ -2652,10 +2680,18 @@ mod tests {
             .unwrap();
 
         assert_eq!(decoded.objects.len(), source_objects);
-        assert!(!decoded
-            .objects
-            .values()
-            .any(|object| matches!(object, ObjectType::ClassObject(_))));
+        assert!(decoded.classes.contains("LAYERFILTER"));
+        for (name, number) in numbers {
+            assert_eq!(
+                decoded.classes.get_by_name(&name).map(|c| c.class_number),
+                Some(number)
+            );
+        }
+        assert!(decoded.objects.values().any(|object| matches!(
+            object,
+            ObjectType::ClassObject(o)
+                if matches!(&o.data, ClassObjectData::LayerFilter(f) if f.names == ["WALLS"])
+        )));
     }
 
     #[test]
