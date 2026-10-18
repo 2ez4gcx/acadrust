@@ -7,9 +7,9 @@ not checked in; the scripts regenerate them under `target/` when CAD validation
 is needed.
 
 ```powershell
-pwsh -NoProfile -File tests/bricscad/create_r12_corpus.ps1
+pwsh -NoProfile -File tests/bcad/create_r12_corpus.ps1
 cargo run --example r12_cad_roundtrip
-pwsh -NoProfile -File tests/bricscad/run_r12_native.ps1 -SkipGenerate -OutputDirectory target/ac1009-cad-created
+pwsh -NoProfile -File tests/bcad/run_r12_native.ps1 -SkipGenerate -OutputDirectory target/ac1009-cad-created
 ```
 
 - `native-geometry`: named compound block, attribute, closed 2D and 3D

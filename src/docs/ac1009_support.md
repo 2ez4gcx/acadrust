@@ -65,7 +65,7 @@ The positive full-drawing fixtures are exported by:
 
 ```powershell
 cargo run --example r12_native_fixtures
-pwsh -NoProfile -File tests/bricscad/run_r12_native.ps1 -SkipGenerate
+pwsh -NoProfile -File tests/bcad/run_r12_native.ps1 -SkipGenerate
 ```
 
 The generator reuses the exact entity-stream builders from the Rust tests.
@@ -110,9 +110,9 @@ All seven source DWGs and all seven acadrust resaves opened cleanly in AutoCAD
 validation run. The scripts and per-case checks are reproducible:
 
 ```powershell
-pwsh -NoProfile -File tests/bricscad/create_r12_corpus.ps1
+pwsh -NoProfile -File tests/bcad/create_r12_corpus.ps1
 cargo run --example r12_cad_roundtrip
-pwsh -NoProfile -File tests/bricscad/run_r12_native.ps1 -SkipGenerate -OutputDirectory target/ac1009-cad-created
+pwsh -NoProfile -File tests/bcad/run_r12_native.ps1 -SkipGenerate -OutputDirectory target/ac1009-cad-created
 ```
 
 ## Remaining Limits

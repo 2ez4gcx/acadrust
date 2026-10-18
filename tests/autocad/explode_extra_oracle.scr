@@ -1,7 +1,0 @@
-(setq ae:oldsecureload (getvar "SECURELOAD"))
-(setvar "SECURELOAD" 0)
-(command "_.netload" (strcat (getenv "ACADRUST_ORACLE_ROOT") "/target/explode-oracle/managed/net8.0-windows/ExplodeOracle.dll"))
-AE_EXTRA_ORACLE
-(setvar "SECURELOAD" ae:oldsecureload)
-_.quit
-_yes
