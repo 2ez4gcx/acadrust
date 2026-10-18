@@ -328,7 +328,7 @@ MLINE caps, MLEADER breaks, and bounded MINSERT work.
 - `cargo test --all-targets` passed on the original baseline.
 - Final `cargo test --all-targets --all-features --quiet`: latest run passed
   across all targets with no failures; ignored tests remain fixture-dependent.
-- Focused `cargo test --all-features --lib explode --quiet`: **100 passed**,
+- Focused `cargo test --all-features --lib explode --quiet`: **104 passed**,
   including DIMSTYLE, modeler, MLINE, polyface, formatted MTEXT, MLEADER
   break, and document-graph regressions.
 - The native runner completed all **47 scenarios**, with no creation or
