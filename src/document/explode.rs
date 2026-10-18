@@ -67,15 +67,15 @@ impl CadDocument {
         for part in parts {
             let old = part.common().handle;
             let fresh = self.allocate_handle();
-            if !old.is_null() {
-                self.clone_extension_graph(old, fresh);
+            let cloned_dictionary = !old.is_null() && self.clone_extension_graph(old, fresh);
+            if cloned_dictionary {
                 part.common_mut().xdictionary_handle = self.extension_dictionary_handle(fresh);
             }
             part.common_mut().handle = fresh;
             part.common_mut().owner_handle = owner;
             part.common_mut().raw_record = None;
             part.common_mut().reactors.clear();
-            if old.is_null() {
+            if !cloned_dictionary {
                 part.common_mut().xdictionary_handle = None;
             }
 
@@ -83,8 +83,9 @@ impl CadDocument {
                 for attribute in &mut nested.attributes {
                     let old_attribute = attribute.common.handle;
                     let fresh_attribute = self.allocate_handle();
-                    if !old_attribute.is_null() {
-                        self.clone_extension_graph(old_attribute, fresh_attribute);
+                    let cloned_dictionary = !old_attribute.is_null()
+                        && self.clone_extension_graph(old_attribute, fresh_attribute);
+                    if cloned_dictionary {
                         attribute.common.xdictionary_handle =
                             self.extension_dictionary_handle(fresh_attribute);
                     }
@@ -92,7 +93,7 @@ impl CadDocument {
                     attribute.common.owner_handle = fresh;
                     attribute.common.raw_record = None;
                     attribute.common.reactors.clear();
-                    if old_attribute.is_null() {
+                    if !cloned_dictionary {
                         attribute.common.xdictionary_handle = None;
                     }
                 }
@@ -107,13 +108,16 @@ impl CadDocument {
     /// handle relationships are represented by the public object model; an
     /// opaque object remains attached to its source and is dropped from the
     /// detached entity rather than producing a dangling reference.
-    fn clone_extension_graph(&mut self, source_owner: Handle, target_owner: Handle) {
+    fn clone_extension_graph(&mut self, source_owner: Handle, target_owner: Handle) -> bool {
         // The block graph remapper already handles every typed object family,
         // ownership chain, XDATA handle and storage provenance.  Reuse it for
         // an entity extension dictionary as well; a source INSERT's xdict is
         // the same hard-owned graph shape as a block record's xdict.
         if let Some(graph) = self.export_block_graph(source_owner) {
             self.import_block_graph(&graph, target_owner, &HashMap::new());
+            true
+        } else {
+            false
         }
     }
 }
