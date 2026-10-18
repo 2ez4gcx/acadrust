@@ -23,13 +23,17 @@ the DWG round-trip regression remains in the test suite.
   including islands, dashes and double patterns, and WIPEOUT boundaries.
 - Dimensions with extension lines, arrow solids and MTEXT; LEADER arrows and
   spline/polyline paths; TABLE grid/text graphics.
+- Document-aware DIMSTYLE resolution for dimension EXPLODE: precision,
+  measurement factors, prefixes/suffixes, text style/height, extension offsets,
+  suppression flags, arrow size/width and blank-text handling.
 - Mesh per-face 3DFACEs, closed polygon-mesh seams, polyface POINT/LINE/face
   degeneracies, and per-face color retention.
 - Document-aware INSERT expansion with MINSERT/xref refusal, base-point
   transforms, correct circle/arc similarity checks, nonuniform bulge handling,
   fresh nested handles and cloned extension dictionaries.
 - ACIS planar face extraction to REGION entities for 3DSOLID/BODY/REGION and
-  planar SURFACE inputs.
+  planar SURFACE inputs; REGION SAT loops retain straight, analytic ellipse,
+  and NURBS edge curves, including coedge orientation and bounded spans.
 - MTEXT formatted runs preserve explicit color, height, font and width data.
 
 The changes are committed by parity slice so each family can be reviewed and
@@ -182,13 +186,13 @@ detached-result contract or a context-aware cloning API.
 - `explode_mline` emits the center path, ignoring element offsets, scale,
   justification, miters, segment gaps, caps, colors, and linetypes. AutoCAD
   outputs the individual visible LINEs and ARCs.
-- `explode_dimension` synthesizes a few lines and a TEXT with fixed height 2.5.
-  It ignores stored anonymous graphics blocks, DIMSTYLE, arrows, extension
-  offsets/overshoot/suppression, oblique extensions, angular dimension arcs,
-  radial/jogged details, tolerances, unit formatting, prefixes, suffixes,
-  placeholders, and the single-space text-suppression convention. It puts the
-  dimension-style name into the TEXT style field. Correct point projection is
-  necessary but does not solve these omissions.
+- `explode_dimension` synthesizes the visible lines, arrows and MTEXT. The
+  document-aware path now applies the resolved DIMSTYLE's precision, scale,
+  text style/height, extension offsets, suppression flags, arrow sizing,
+  prefixes/suffixes and single-space text suppression. Stored anonymous
+  graphics blocks, custom arrow blocks, oblique extensions, angular dimension
+  arcs, radial/jogged details, tolerances and full unit formatting still need
+  broader native differential coverage.
 - `explode_leader` emits only straight vertex chords. Arrowheads, spline paths,
   hooks, style, and the documented output forms are omitted. Native straight
   LEADER produces SOLID plus LWPOLYLINE; the spline example produces SOLID
@@ -199,8 +203,11 @@ detached-result contract or a context-aware cloning API.
   plane; and hardcodes MTEXT style and attachment. The native simple MTEXT
   example produces MTEXT, LINE and a width-bearing LWPOLYLINE, so even the
   default arrow/path entity representation differs.
-- REGION, BODY, and 3DSOLID return empty as though atomic. Autodesk documents
-  all three as explodable; the runtime box produces six REGIONs.
+- REGION, BODY, and 3DSOLID are now decomposed for planar modeler faces; the
+  runtime box produces six REGIONs and standalone REGION SAT loops retain
+  analytic boundary entities. Curved 3DSOLID/BODY faces still use polygonal
+  wires when a face-specific curve model cannot be retained in the detached
+  REGION/SURFACE representation.
 - TABLE returns empty despite its compound graphics. The native 2x2 example
   produces three MTEXT objects and seven LINEs. Its stored block representation
   should be evaluated as a source for faithful graphics.
