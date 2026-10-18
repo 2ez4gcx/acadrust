@@ -11,6 +11,7 @@
 use std::f64::consts::PI;
 
 use crate::entities::*;
+use crate::tables::DimStyle;
 use crate::types::{Handle, Matrix3, Vector2, Vector3};
 
 // ============================================================================
@@ -141,22 +142,58 @@ fn dimension_arrow(tip: Vector3, toward: Vector3, size: f64, common: &EntityComm
     if direction.length_squared() <= 1e-20 || size <= 0.0 {
         return EntityType::Solid(Solid::triangle(tip, tip, tip));
     }
-    let side = normal.normalize().cross(&direction).normalize() * (size * 0.28);
+    // AutoCAD's default closed arrow is one third of its length wide.  The
+    // side vector is half that width because Solid stores the two base
+    // corners separately.
+    let side = normal.normalize().cross(&direction).normalize() * (size / 6.0);
     let base = tip + direction * size;
     let mut solid = Solid::triangle(tip, base + side, base - side);
     solid.common = inherit_common(common);
     EntityType::Solid(solid)
 }
 
-fn dimension_mtext(base: &DimensionBase, value: String) -> EntityType {
+fn dimension_attachment(attachment: AttachmentPointType) -> AttachmentPoint {
+    match attachment {
+        AttachmentPointType::TopLeft => AttachmentPoint::TopLeft,
+        AttachmentPointType::TopCenter => AttachmentPoint::TopCenter,
+        AttachmentPointType::TopRight => AttachmentPoint::TopRight,
+        AttachmentPointType::MiddleLeft => AttachmentPoint::MiddleLeft,
+        AttachmentPointType::MiddleCenter => AttachmentPoint::MiddleCenter,
+        AttachmentPointType::MiddleRight => AttachmentPoint::MiddleRight,
+        AttachmentPointType::BottomLeft => AttachmentPoint::BottomLeft,
+        AttachmentPointType::BottomCenter => AttachmentPoint::BottomCenter,
+        AttachmentPointType::BottomRight => AttachmentPoint::BottomRight,
+    }
+}
+
+fn dimension_mtext(
+    base: &DimensionBase,
+    value: String,
+    style: Option<&DimStyle>,
+) -> EntityType {
+    let height = style
+        .map(|style| (style.dimtxt * style.dimscale).abs())
+        .filter(|height| height.is_finite() && *height > 0.0)
+        .unwrap_or(2.5);
+    let value = if value.starts_with("\\A") {
+        value
+    } else {
+        // DIMENSION EXPLODE writes dimension text as MTEXT with the standard
+        // vertical alignment control code.  Keeping it in the value also
+        // preserves the behavior when this detached entity is written to DXF.
+        format!("\\A1;{value}")
+    };
     let mut text = MText::with_value(value, base.text_middle_point)
-        .with_height(2.5)
+        .with_height(height)
         .with_width(0.0);
     text.common = inherit_common(&base.common);
-    text.style = base.style_name.clone();
+    text.style = style
+        .map(|style| style.dimtxsty.clone())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| base.style_name.clone());
     text.rotation = base.text_rotation;
     text.normal = base.normal;
-    text.attachment_point = AttachmentPoint::MiddleCenter;
+    text.attachment_point = dimension_attachment(base.attachment_point);
     EntityType::MText(Box::new(text))
 }
 
@@ -1165,16 +1202,189 @@ fn explode_surface(surface: &Surface) -> Vec<EntityType> {
     } else { Vec::new() }
 }
 
-fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
+fn format_dimension_value(dim: &Dimension, style: &DimStyle) -> String {
+    let is_angular = dim.base().is_angular();
+    let mut value = dim.measurement();
+    if !is_angular {
+        value *= style.dimlfac;
+    }
+    if style.dimrnd.is_finite() && style.dimrnd > 0.0 {
+        value = (value / style.dimrnd).round() * style.dimrnd;
+    }
+    let decimals = if is_angular {
+        style.dimadec.clamp(0, 12) as usize
+    } else {
+        style.dimdec.clamp(0, 12) as usize
+    };
+    let mut text = format!("{value:.decimals$}");
+    if style.dimdsep == 44 {
+        text = text.replace('.', ",");
+    }
+    let zero_flags = if is_angular { style.dimazin } else { style.dimzin };
+    if zero_flags & 1 != 0 {
+        if let Some(index) = text.find("0.") {
+            if index == 0 {
+                text.remove(0);
+            } else if index == 1 && text.starts_with('-') {
+                text.remove(1);
+            }
+        }
+        if let Some(index) = text.find("0,") {
+            if index == 0 {
+                text.remove(0);
+            } else if index == 1 && text.starts_with('-') {
+                text.remove(1);
+            }
+        }
+    }
+    if zero_flags & 2 != 0 {
+        let separator = if style.dimdsep == 44 { ',' } else { '.' };
+        if let Some(index) = text.find(separator) {
+            let trimmed = text.trim_end_matches('0');
+            text = trimmed.trim_end_matches(separator).to_owned();
+            if text.is_empty() || text == "-" {
+                text = "0".to_owned();
+            } else if index >= text.len() && text.ends_with(separator) {
+                text.pop();
+            }
+        }
+    }
+    let postfix = &style.dimpost;
+    if postfix.is_empty() {
+        return text;
+    }
+    if postfix.contains("<>") {
+        postfix.replace("<>", &text)
+    } else {
+        format!("{text}{postfix}")
+    }
+}
+
+fn dimension_text_value(dim: &Dimension, style: Option<&DimStyle>) -> Option<String> {
+    let base = dim.base();
+    let Some(override_text) = base.text_override() else {
+        return Some(
+            style
+                .map(|style| format_dimension_value(dim, style))
+                .unwrap_or_else(|| format!("{:.4}", dim.measurement())),
+        );
+    };
+    // A single space is AutoCAD's documented text suppression convention.
+    if override_text == " " {
+        return None;
+    }
+    let formatted = style
+        .map(|style| format_dimension_value(dim, style))
+        .unwrap_or_else(|| format!("{:.4}", dim.measurement()));
+    Some(override_text.replace("<>", &formatted))
+}
+
+fn dimension_extension_points(
+    measured: Vector3,
+    projected: Vector3,
+    style: &DimStyle,
+) -> (Vector3, Vector3) {
+    let delta = projected - measured;
+    let direction = if delta.length_squared() > 1.0e-20 {
+        delta.normalize()
+    } else {
+        Vector3::ZERO
+    };
+    let scale = if style.dimscale.is_finite() {
+        style.dimscale.abs()
+    } else {
+        1.0
+    };
+    let start = measured + direction * (style.dimexo.max(0.0) * scale);
+    let end = if style.dimfxlon {
+        start + direction * (style.dimfxl.max(0.0) * scale)
+    } else {
+        projected + direction * (style.dimexe.max(0.0) * scale)
+    };
+    (start, end)
+}
+
+fn styled_dimension_line_segments(
+    first: Vector3,
+    second: Vector3,
+    text_middle: Vector3,
+    arrow_size: f64,
+    gap: f64,
+) -> Vec<(Vector3, Vector3)> {
+    let axis = second - first;
+    let length = axis.length();
+    if length <= 1.0e-20 {
+        return Vec::new();
+    }
+    let direction = axis / length;
+    let projection = (text_middle - first).dot(&direction);
+    let first_limit = first + direction * arrow_size.min(length * 0.5);
+    let second_limit = second - direction * arrow_size.min(length * 0.5);
+    let mut result = Vec::new();
+    if projection > 0.0 && projection < length {
+        let center = first + direction * projection;
+        let half_gap = gap.max(0.0);
+        let left = center - direction * half_gap;
+        let right = center + direction * half_gap;
+        if first_limit.distance(&left) > 1.0e-12 {
+            result.push((first_limit, left));
+        }
+        if right.distance(&second_limit) > 1.0e-12 {
+            result.push((right, second_limit));
+        }
+    } else if projection >= length {
+        if first_limit.distance(&second_limit) > 1.0e-12 {
+            result.push((first_limit, second_limit));
+        }
+        let outside_end = second + direction * arrow_size;
+        if second.distance(&outside_end) > 1.0e-12 {
+            result.push((second, outside_end));
+        }
+    } else {
+        if first_limit.distance(&second_limit) > 1.0e-12 {
+            result.push((first_limit, second_limit));
+        }
+        let outside_start = first - direction * arrow_size;
+        if outside_start.distance(&first) > 1.0e-12 {
+            result.push((outside_start, first));
+        }
+    }
+    result
+}
+
+/// Explode a dimension with an optional DIMSTYLE table entry.
+///
+/// The detached [`EntityType::explode`] API has no document/table context and
+/// therefore retains its historical defaults. [`CadDocument::explode_entity`]
+/// supplies the resolved style through this function so offsets, precision,
+/// suppression flags, and text height follow the drawing's DIMSTYLE.
+pub(crate) fn explode_dimension_with_style(
+    dim: &Dimension,
+    style: Option<&DimStyle>,
+) -> Vec<EntityType> {
     // Simplified decomposition: produce extension lines, dimension line,
     // and a text entity with the measurement value.
     let base = dim.base();
     let common = &base.common;
 
-    let text_value = base
-        .text_override()
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("{:.4}", dim.measurement()));
+    let text_value = dimension_text_value(dim, style);
+    let style_scale = style
+        .map(|style| {
+            if style.dimscale.is_finite() {
+                style.dimscale.abs()
+            } else {
+                1.0
+            }
+        })
+        .unwrap_or(1.0);
+    let arrow_size = style
+        .map(|style| (style.dimasz * style_scale).abs())
+        .filter(|size| size.is_finite() && *size > 0.0)
+        .unwrap_or(2.5);
+    let dimension_gap = style
+        .map(|style| (style.dimgap * style_scale).abs())
+        .filter(|gap| gap.is_finite())
+        .unwrap_or(0.0);
 
     let mut result = Vec::new();
     let mut arrows = Vec::new();
@@ -1201,32 +1411,54 @@ fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
                 * Vector3::new(d.rotation.cos(), d.rotation.sin(), 0.0);
             let (first_on_line, second_on_line) =
                 projected_pair(d.first_point, d.second_point, d.definition_point, direction);
-            result.push(line_entity(
-                d.first_point,
-                first_on_line,
-                0.0,
-                base.normal,
-                common,
-            ));
-            result.push(line_entity(
-                d.second_point,
-                second_on_line,
-                0.0,
-                base.normal,
-                common,
-            ));
-            // AutoCAD leaves a text gap in the dimension line.  Emit the two
-            // visible portions around the text location.
-            let axis = second_on_line - first_on_line;
-            let t = if axis.length_squared() > 1e-20 {
-                ((base.text_middle_point - first_on_line).dot(&axis) / axis.length_squared())
-                    .clamp(0.0, 1.0)
+            if let Some(style) = style {
+                if !style.dimse1 {
+                    let (start, end) = dimension_extension_points(d.first_point, first_on_line, style);
+                    result.push(line_entity(start, end, 0.0, base.normal, common));
+                }
+                if !style.dimse2 {
+                    let (start, end) = dimension_extension_points(d.second_point, second_on_line, style);
+                    result.push(line_entity(start, end, 0.0, base.normal, common));
+                }
+                if !style.dimsd1 || !style.dimsd2 {
+                    for (start, end) in styled_dimension_line_segments(
+                        first_on_line,
+                        second_on_line,
+                        base.text_middle_point,
+                        arrow_size,
+                        dimension_gap,
+                    ) {
+                        result.push(line_entity(start, end, 0.0, base.normal, common));
+                    }
+                }
             } else {
-                0.5
-            };
-            let split = first_on_line + axis * t;
-            result.push(line_entity(first_on_line, split, 0.0, base.normal, common));
-            result.push(line_entity(split, second_on_line, 0.0, base.normal, common));
+                result.push(line_entity(
+                    d.first_point,
+                    first_on_line,
+                    0.0,
+                    base.normal,
+                    common,
+                ));
+                result.push(line_entity(
+                    d.second_point,
+                    second_on_line,
+                    0.0,
+                    base.normal,
+                    common,
+                ));
+                // AutoCAD leaves a text gap in the dimension line.  Emit the two
+                // visible portions around the text location.
+                let axis = second_on_line - first_on_line;
+                let t = if axis.length_squared() > 1e-20 {
+                    ((base.text_middle_point - first_on_line).dot(&axis) / axis.length_squared())
+                        .clamp(0.0, 1.0)
+                } else {
+                    0.5
+                };
+                let split = first_on_line + axis * t;
+                result.push(line_entity(first_on_line, split, 0.0, base.normal, common));
+                result.push(line_entity(split, second_on_line, 0.0, base.normal, common));
+            }
             arrows.push((first_on_line, second_on_line));
             arrows.push((second_on_line, first_on_line));
         }
@@ -1237,33 +1469,55 @@ fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
                 d.definition_point,
                 d.second_point - d.first_point,
             );
-            result.push(line_entity(
-                d.first_point,
-                first_on_line,
-                0.0,
-                base.normal,
-                common,
-            ));
-            result.push(line_entity(
-                d.second_point,
-                second_on_line,
-                0.0,
-                base.normal,
-                common,
-            ));
-            // Keep the measured alignment and split the dimension line at
-            // the text location, matching AutoCAD's five LINE result.
-            result.push(line_entity(d.first_point, d.second_point, 0.0, base.normal, common));
-            let axis = second_on_line - first_on_line;
-            let t = if axis.length_squared() > 1e-20 {
-                ((base.text_middle_point - first_on_line).dot(&axis) / axis.length_squared())
-                    .clamp(0.0, 1.0)
+            if let Some(style) = style {
+                if !style.dimse1 {
+                    let (start, end) = dimension_extension_points(d.first_point, first_on_line, style);
+                    result.push(line_entity(start, end, 0.0, base.normal, common));
+                }
+                if !style.dimse2 {
+                    let (start, end) = dimension_extension_points(d.second_point, second_on_line, style);
+                    result.push(line_entity(start, end, 0.0, base.normal, common));
+                }
+                if !style.dimsd1 || !style.dimsd2 {
+                    for (start, end) in styled_dimension_line_segments(
+                        first_on_line,
+                        second_on_line,
+                        base.text_middle_point,
+                        arrow_size,
+                        dimension_gap,
+                    ) {
+                        result.push(line_entity(start, end, 0.0, base.normal, common));
+                    }
+                }
             } else {
-                0.5
-            };
-            let split = first_on_line + axis * t;
-            result.push(line_entity(first_on_line, split, 0.0, base.normal, common));
-            result.push(line_entity(split, second_on_line, 0.0, base.normal, common));
+                result.push(line_entity(
+                    d.first_point,
+                    first_on_line,
+                    0.0,
+                    base.normal,
+                    common,
+                ));
+                result.push(line_entity(
+                    d.second_point,
+                    second_on_line,
+                    0.0,
+                    base.normal,
+                    common,
+                ));
+                // Keep the measured alignment and split the dimension line at
+                // the text location, matching AutoCAD's five LINE result.
+                result.push(line_entity(d.first_point, d.second_point, 0.0, base.normal, common));
+                let axis = second_on_line - first_on_line;
+                let t = if axis.length_squared() > 1e-20 {
+                    ((base.text_middle_point - first_on_line).dot(&axis) / axis.length_squared())
+                        .clamp(0.0, 1.0)
+                } else {
+                    0.5
+                };
+                let split = first_on_line + axis * t;
+                result.push(line_entity(first_on_line, split, 0.0, base.normal, common));
+                result.push(line_entity(split, second_on_line, 0.0, base.normal, common));
+            }
             arrows.push((first_on_line, second_on_line));
             arrows.push((second_on_line, first_on_line));
         }
@@ -1368,12 +1622,27 @@ fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
         }
     }
 
-    for (tip, toward) in arrows {
-        result.push(dimension_arrow(tip, toward, 2.5, common, base.normal));
+    for (index, (tip, toward)) in arrows.into_iter().enumerate() {
+        // A named _NONE arrow block suppresses the corresponding arrowhead;
+        // custom block geometry still requires document block context and is
+        // handled by the regular default arrow fallback here.
+        let arrow_suppressed = style.is_some_and(|style| {
+            (index == 0 && style.dimblk1_name.eq_ignore_ascii_case("_none"))
+                || (index == 1 && style.dimblk2_name.eq_ignore_ascii_case("_none"))
+        });
+        if !arrow_suppressed {
+            result.push(dimension_arrow(tip, toward, arrow_size, common, base.normal));
+        }
     }
-    result.push(dimension_mtext(base, text_value));
+    if let Some(text_value) = text_value {
+        result.push(dimension_mtext(base, text_value, style));
+    }
 
     result
+}
+
+fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
+    explode_dimension_with_style(dim, None)
 }
 
 fn explode_hatch(hatch: &Hatch) -> Vec<EntityType> {
@@ -2482,6 +2751,95 @@ mod tests {
         assert!(lines[1].1.distance(&Vector3::new(-1.0, 7.0, 0.0)) < 1e-12);
         assert_eq!(lines.len(), 5);
         assert_eq!(lines[2], (Vector3::ZERO, Vector3::new(3.0, 4.0, 0.0)));
+    }
+
+    #[test]
+    fn test_explode_dimension_uses_dimstyle_geometry_and_formatting() {
+        let mut dimension = DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0));
+        dimension.definition_point = Vector3::new(0.0, 5.0, 0.0);
+        dimension.base.text_middle_point = Vector3::new(5.0, 5.0, 0.0);
+        dimension.base.style_name = "CUSTOM".to_owned();
+
+        let mut style = crate::tables::DimStyle::new("CUSTOM");
+        style.dimscale = 1.0;
+        style.dimasz = 1.0;
+        style.dimexo = 1.0;
+        style.dimexe = 2.0;
+        style.dimgap = 0.5;
+        style.dimtxt = 3.0;
+        style.dimlfac = 2.0;
+        style.dimdec = 1;
+        style.dimpost = "<> mm".to_owned();
+
+        let parts = explode_dimension_with_style(
+            &Dimension::Linear(dimension),
+            Some(&style),
+        );
+        let lines = line_ends(&parts);
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0], (Vector3::new(0.0, 1.0, 0.0), Vector3::new(0.0, 7.0, 0.0)));
+        assert_eq!(lines[1], (Vector3::new(10.0, 1.0, 0.0), Vector3::new(10.0, 7.0, 0.0)));
+        assert_eq!(lines[2], (Vector3::new(1.0, 5.0, 0.0), Vector3::new(4.5, 5.0, 0.0)));
+        assert_eq!(lines[3], (Vector3::new(5.5, 5.0, 0.0), Vector3::new(9.0, 5.0, 0.0)));
+
+        let arrows = solids(&parts);
+        assert_eq!(arrows.len(), 2);
+        let arrow_base = (arrows[0].second_corner + arrows[0].third_corner) * 0.5;
+        assert!((arrows[0].first_corner.distance(&arrow_base) - 1.0).abs() < 1e-12);
+        let text = parts
+            .iter()
+            .find_map(|part| match part {
+                EntityType::MText(text) => Some(text),
+                _ => None,
+            })
+            .expect("dimension text");
+        assert_eq!(text.value, "\\A1;20.0 mm");
+        assert_eq!(text.height, 3.0);
+        assert_eq!(text.style, "Standard");
+    }
+
+    #[test]
+    fn test_explode_dimension_dimstyle_suppression_and_text_blank() {
+        let mut dimension = DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(10.0, 0.0, 0.0));
+        dimension.definition_point = Vector3::new(0.0, 5.0, 0.0);
+        dimension.base.text_middle_point = Vector3::new(5.0, 5.0, 0.0);
+        dimension.base.set_text_override(Some(" ".to_owned()));
+        let mut style = crate::tables::DimStyle::new("CUSTOM");
+        style.dimse1 = true;
+        style.dimse2 = true;
+        style.dimsd1 = true;
+        style.dimsd2 = true;
+        let parts = explode_dimension_with_style(&Dimension::Linear(dimension), Some(&style));
+        assert!(line_ends(&parts).is_empty());
+        assert!(solids(&parts).len() == 2);
+        assert!(!parts.iter().any(|part| matches!(part, EntityType::MText(_))));
+    }
+
+    #[test]
+    fn test_document_explode_dimension_resolves_named_dimstyle() {
+        let mut document = crate::document::CadDocument::new();
+        let mut style = crate::tables::DimStyle::new("DOC_STYLE");
+        style.dimtxt = 4.0;
+        style.dimdec = 0;
+        style.dimlfac = 3.0;
+        document.dim_styles.add(style).expect("new style");
+
+        let mut dimension = DimensionLinear::horizontal(Vector3::ZERO, Vector3::new(2.0, 0.0, 0.0));
+        dimension.definition_point = Vector3::new(0.0, 5.0, 0.0);
+        dimension.base.text_middle_point = Vector3::new(1.0, 5.0, 0.0);
+        dimension.base.style_name = "DOC_STYLE".to_owned();
+        let parts = document.explode_entity(&EntityType::Dimension(Box::new(Dimension::Linear(dimension))));
+
+        let text = parts
+            .iter()
+            .find_map(|part| match part {
+                EntityType::MText(text) => Some(text),
+                _ => None,
+            })
+            .expect("dimension text");
+        assert_eq!(text.height, 4.0);
+        assert_eq!(text.value, "\\A1;6");
+        assert!(parts.iter().all(|part| part.common().handle.is_valid()));
     }
 
     #[test]

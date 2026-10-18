@@ -3518,6 +3518,13 @@ impl CadDocument {
         let mut parts = match entity {
             EntityType::MLine(mline) => self.explode_mline_with_context(mline),
             EntityType::MultiLeader(leader) => self.explode_multileader_with_context(leader),
+            EntityType::Dimension(dimension) => {
+                let style = self.dim_styles.get(&dimension.base().style_name);
+                crate::entities::modification::explode::explode_dimension_with_style(
+                    dimension,
+                    style,
+                )
+            }
             _ => entity.explode(),
         };
         let owner = entity.common().owner_handle;
