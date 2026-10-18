@@ -885,6 +885,66 @@ fn landing_line(ml: &MultiLeader, root: &LeaderRoot) -> Option<EntityType> {
     ))
 }
 
+fn emit_broken_leader_segment(
+    start: Vector3,
+    end: Vector3,
+    breaks: &[StartEndPointPair],
+    common: &EntityCommon,
+    result: &mut Vec<EntityType>,
+) {
+    let delta = end - start;
+    let length_squared = delta.length_squared();
+    if length_squared <= 1e-20 {
+        return;
+    }
+    let mut intervals: Vec<(f64, f64)> = breaks
+        .iter()
+        .filter_map(|pair| {
+            let project = |point: Vector3| ((point - start).dot(&delta) / length_squared).clamp(0.0, 1.0);
+            let a = project(pair.start_point);
+            let b = project(pair.end_point);
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            (hi - lo > 1e-12).then_some((lo, hi))
+        })
+        .collect();
+    intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut cursor = 0.0;
+    for (start_break, end_break) in intervals {
+        if start_break > cursor + 1e-12 {
+            result.push(line_entity(
+                start + delta * cursor,
+                start + delta * start_break,
+                0.0,
+                Vector3::UNIT_Z,
+                common,
+            ));
+        }
+        cursor = cursor.max(end_break);
+    }
+    if cursor < 1.0 - 1e-12 {
+        result.push(line_entity(
+            start + delta * cursor,
+            end,
+            0.0,
+            Vector3::UNIT_Z,
+            common,
+        ));
+    }
+}
+
+fn leader_line_breaks(line: &LeaderLine, segment_index: usize) -> Vec<StartEndPointPair> {
+    let mut breaks: Vec<_> = line
+        .break_infos
+        .iter()
+        .filter(|info| info.segment_index == segment_index as i32)
+        .flat_map(|info| info.break_points.iter().copied())
+        .collect();
+    if breaks.is_empty() && segment_index as i32 == line.segment_index {
+        breaks.extend(line.break_points.iter().copied());
+    }
+    breaks
+}
+
 /// Explode one leader line: its arrowhead (default arrowhead only: a custom
 /// block is left to the caller, which knows the document) and its segments.
 fn explode_leader_line(
@@ -913,14 +973,15 @@ fn explode_leader_line(
         spline.common = inherit_common(&ml.common);
         result.push(EntityType::Spline(spline));
     } else {
-        for pair in path.windows(2) {
-            result.push(line_entity(
+        for (segment_index, pair) in path.windows(2).enumerate() {
+            let breaks = leader_line_breaks(line, segment_index);
+            emit_broken_leader_segment(
                 pair[0],
                 pair[1],
-                0.0,
-                Vector3::UNIT_Z,
+                &breaks,
                 &ml.common,
-            ));
+                result,
+            );
         }
     }
 }
@@ -2642,6 +2703,27 @@ mod tests {
             vec![
                 (Vector3::ZERO, Vector3::new(5.0, 0.0, 0.0)),
                 (Vector3::new(5.0, 0.0, 0.0), Vector3::new(10.0, 10.0, 0.0)),
+                (Vector3::new(10.0, 10.0, 0.0), Vector3::new(15.0, 10.0, 0.0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_explode_multileader_applies_segment_breaks() {
+        let mut ml = callout(&[Vector3::ZERO]);
+        ml.context.arrowhead_size = 0.0;
+        ml.context.leader_roots[0].lines[0]
+            .break_points
+            .push(StartEndPointPair::new(
+                Vector3::new(2.0, 2.0, 0.0),
+                Vector3::new(3.0, 3.0, 0.0),
+            ));
+        let lines = line_ends(&EntityType::MultiLeader(Box::new(ml)).flatten());
+        assert_eq!(
+            lines,
+            vec![
+                (Vector3::ZERO, Vector3::new(2.0, 2.0, 0.0)),
+                (Vector3::new(3.0, 3.0, 0.0), Vector3::new(10.0, 10.0, 0.0)),
                 (Vector3::new(10.0, 10.0, 0.0), Vector3::new(15.0, 10.0, 0.0)),
             ]
         );
