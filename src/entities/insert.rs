@@ -340,6 +340,13 @@ impl Insert {
         }
     }
 
+    /// Apply this INSERT's layer/color/linetype inheritance to a detached
+    /// member.  Document-level fallback blocks use this after baking nested
+    /// geometry so inheritance is resolved through every containing INSERT.
+    pub(crate) fn resolve_exploded_properties(&self, common: &mut EntityCommon) {
+        self.resolve_properties(common);
+    }
+
     // ── Explode ─────────────────────────────────────────────────
 
     /// Explode the block reference into individual entities.

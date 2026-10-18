@@ -234,6 +234,7 @@ impl CadDocument {
                 .into_iter()
                 .map(|mut entity| {
                     entity.as_entity_mut().apply_transform(&transform);
+                    insert.resolve_exploded_properties(entity.common_mut());
                     entity
                 })
                 .collect();
@@ -303,9 +304,12 @@ impl CadDocument {
             })
             .collect();
         let composite = Transform::from_matrix(parent_transform.matrix * nested.get_transform().matrix);
-        let geometry = nested.explode_with_transform(&source, &composite, true);
+        let mut geometry = nested.explode_with_transform(&source, &composite, true);
         if geometry.is_empty() {
             return None;
+        }
+        for entity in &mut geometry {
+            parent.resolve_exploded_properties(entity.common_mut());
         }
 
         let mut common = nested.common.clone();
