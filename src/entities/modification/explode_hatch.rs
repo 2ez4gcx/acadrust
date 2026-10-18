@@ -122,58 +122,78 @@ pub(super) fn explode_hatch(hatch: &Hatch) -> Vec<EntityType> {
     };
     let mut result = Vec::new();
     for line in &hatch.pattern.lines {
-        let mut angle = line.angle;
-        // DXF stores the definition-line angle and the HATCH rotation
-        // independently.  `pattern_angle` is therefore applied exactly once
-        // here, after parsing.  Pattern builders that have already folded the
-        // rotation into line.angle leave pattern_angle at zero.
-        angle += hatch.pattern_angle;
-        if !angle.is_finite() {
-            continue;
-        }
-        let dir = Vector2::new(angle.cos(), angle.sin()).normalize();
-        if dir.length_squared() < EPS {
-            continue;
-        }
-        let mut offset = line.offset * scale;
-        if offset.length_squared() < EPS {
-            // A zero offset is legal for a single definition line.  Avoid an
-            // unbounded loop while preserving that one line.
-            offset = Vector2::ZERO;
-        }
-        let origin = line.base_point;
-        let line_count = line_indices(origin, offset, dir, &bounds);
-        for index in line_count {
-            let p = origin + offset * index as f64;
-            let intersections = line_intersections(hatch, p, dir);
-            if intersections.len() < 2 {
+        let dash_lengths: Vec<f64> = line
+            .dash_lengths
+            .iter()
+            .filter(|d| d.is_finite())
+            .map(|d| *d * scale)
+            .collect();
+        // DXF's double-pattern bit requests a second family rotated by 90°.
+        // The second family uses the same dash phase and spacing, rotated
+        // around the recorded hatch pattern origin.
+        let family_count = if hatch.is_double { 2 } else { 1 };
+        for family in 0..family_count {
+            let mut angle = line.angle
+                + if family == 1 {
+                    std::f64::consts::FRAC_PI_2
+                } else {
+                    0.0
+                };
+            // DXF stores the definition-line angle and the HATCH rotation
+            // independently.  `pattern_angle` is therefore applied exactly once
+            // here, after parsing.  Pattern builders that have already folded the
+            // rotation into line.angle leave pattern_angle at zero.
+            angle += hatch.pattern_angle;
+            if !angle.is_finite() {
                 continue;
             }
-            for pair in intersections.windows(2) {
-                let (ta, tb) = (pair[0], pair[1]);
-                if tb - ta <= INTERSECTION_EPS {
+            let dir = Vector2::new(angle.cos(), angle.sin()).normalize();
+            if dir.length_squared() < EPS {
+                continue;
+            }
+            let mut offset = line.offset * scale;
+            if family == 1 {
+                offset = Vector2::new(-offset.y, offset.x);
+            }
+            if offset.length_squared() < EPS {
+                // A zero offset is legal for a single definition line.  Avoid an
+                // unbounded loop while preserving that one line.
+                offset = Vector2::ZERO;
+            }
+            let origin = if family == 1 {
+                let hatch_origin = hatch.pattern_origin();
+                let q = line.base_point - hatch_origin;
+                hatch_origin + Vector2::new(-q.y, q.x)
+            } else {
+                line.base_point
+            };
+            let line_count = line_indices(origin, offset, dir, &bounds);
+            for index in line_count {
+                let p = origin + offset * index as f64;
+                let intersections = line_intersections(hatch, p, dir);
+                if intersections.len() < 2 {
                     continue;
                 }
-                let mid = p + dir * ((ta + tb) * 0.5);
-                if !inside_fill(mid, &loops, hatch.style) {
-                    continue;
-                }
-                let dash_lengths: Vec<f64> = line
-                    .dash_lengths
-                    .iter()
-                    .filter(|d| d.is_finite())
-                    .map(|d| *d * scale)
-                    .collect();
-                if dash_lengths.is_empty() {
-                    emit_line(
-                        &mut result,
-                        p + dir * ta,
-                        p + dir * tb,
-                        hatch,
-                        &normal_basis(hatch.normal),
-                    );
-                } else {
-                    emit_dashes(&mut result, p, dir, ta, tb, &dash_lengths, hatch);
+                for pair in intersections.windows(2) {
+                    let (ta, tb) = (pair[0], pair[1]);
+                    if tb - ta <= INTERSECTION_EPS {
+                        continue;
+                    }
+                    let mid = p + dir * ((ta + tb) * 0.5);
+                    if !inside_fill(mid, &loops, hatch.style) {
+                        continue;
+                    }
+                    if dash_lengths.is_empty() {
+                        emit_line(
+                            &mut result,
+                            p + dir * ta,
+                            p + dir * tb,
+                            hatch,
+                            &normal_basis(hatch.normal),
+                        );
+                    } else {
+                        emit_dashes(&mut result, p, dir, ta, tb, &dash_lengths, hatch);
+                    }
                 }
             }
         }
@@ -220,7 +240,10 @@ fn line_indices(origin: Vector2, offset: Vector2, dir: Vector2, bounds: &Bounds)
     // Keep the unused argument explicit: it documents that direction controls
     // the line while offset controls family spacing.
     let _ = dir;
-    (first..=last).collect()
+    // AutoCAD walks the visible scan lines from the positive offset side
+    // toward the negative side (the order is observable in the generated
+    // entity handles), so preserve that deterministic ordering.
+    (first..=last).rev().collect()
 }
 
 fn emit_line(result: &mut Vec<EntityType>, a: Vector2, b: Vector2, hatch: &Hatch, basis: &Matrix3) {
@@ -830,5 +853,34 @@ mod tests {
         } else {
             panic!("expected a clipped line");
         }
+    }
+
+    #[test]
+    fn double_pattern_adds_the_perpendicular_family() {
+        let mut h = square_hatch();
+        h.is_double = true;
+        h.pattern.lines.push(HatchPatternLine {
+            angle: 0.0,
+            base_point: Vector2::ZERO,
+            offset: Vector2::new(0.0, 2.0),
+            dash_lengths: Vec::new(),
+        });
+        let parts = explode_hatch(&h);
+        assert!(parts.len() >= 8);
+        let horizontal = parts
+            .iter()
+            .filter(|e| match e {
+                EntityType::Line(line) => (line.start.y - line.end.y).abs() < 1e-7,
+                _ => false,
+            })
+            .count();
+        let vertical = parts
+            .iter()
+            .filter(|e| match e {
+                EntityType::Line(line) => (line.start.x - line.end.x).abs() < 1e-7,
+                _ => false,
+            })
+            .count();
+        assert!(horizontal >= 4 && vertical >= 4);
     }
 }

@@ -663,8 +663,20 @@ impl Insert {
         &self,
         document: &crate::document::CadDocument,
     ) -> Vec<EntityType> {
+        // AutoCAD's EXPLODE command refuses array inserts and external
+        // references.  The context-aware document API applies the same rules;
+        // keep this read-only convenience wrapper consistent as well.
+        if self.is_minsert() {
+            return Vec::new();
+        }
         match document.block_records.get(&self.block_name) {
-            Some(br) if br.explodable => {
+            Some(br)
+                if br.explodable
+                    && !br.flags.is_xref
+                    && !br.flags.is_xref_overlay
+                    && !br.flags.is_external
+                    && br.xref_path.is_empty() =>
+            {
                 let base = document
                     .get_entity(br.block_entity_handle)
                     .and_then(|entity| match entity {

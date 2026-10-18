@@ -941,6 +941,64 @@ fn explode_table(table: &Table) -> Vec<EntityType> {
     result
 }
 
+fn sat_face_points(doc: &crate::entities::acis::SatDocument, face: &crate::entities::acis::SatFace<'_>) -> Vec<Vector3> {
+    use crate::entities::acis::{SatCoedge, SatEdge, SatLoop, SatPoint, SatVertex};
+    let Some(loop_record) = doc.resolve(face.first_loop()).and_then(SatLoop::from_record) else { return Vec::new() };
+    let mut points = Vec::new();
+    let mut pointer = loop_record.first_coedge();
+    let mut seen = std::collections::HashSet::new();
+    while !pointer.is_null() && seen.insert(pointer) {
+        let Some(coedge) = doc.resolve(pointer).and_then(SatCoedge::from_record) else { break };
+        let Some(edge) = doc.resolve(coedge.edge()).and_then(SatEdge::from_record) else { break };
+        let Some(vertex) = doc.resolve(edge.start_vertex()).and_then(SatVertex::from_record) else { break };
+        let Some(point) = doc.resolve(vertex.point()).and_then(SatPoint::from_record) else { break };
+        let (x, y, z) = point.position();
+        points.push(Vector3::new(x, y, z));
+        pointer = coedge.next();
+    }
+    points
+}
+
+fn modeler_regions(common: &EntityCommon, sat: Option<crate::entities::acis::SatDocument>) -> Vec<EntityType> {
+    let Some(doc) = sat else { return Vec::new() };
+    doc.faces().into_iter().filter_map(|face| {
+        let points = sat_face_points(&doc, &face);
+        (points.len() >= 3).then(|| {
+            let mut region = Region::new();
+            region.common = inherit_common(common);
+            region.wires.push(Wire::from_points(points));
+            EntityType::Region(region)
+        })
+    }).collect()
+}
+
+fn explode_region(region: &Region) -> Vec<EntityType> {
+    let mut result = Vec::new();
+    for wire in &region.wires {
+        for pair in wire.points.windows(2) {
+            result.push(line_entity(pair[0], pair[1], 0.0, Vector3::UNIT_Z, &region.common));
+        }
+        if wire.points.len() > 2 {
+            result.push(line_entity(*wire.points.last().unwrap(), wire.points[0], 0.0, Vector3::UNIT_Z, &region.common));
+        }
+    }
+    result
+}
+
+fn explode_solid3d(solid: &Solid3D) -> Vec<EntityType> {
+    modeler_regions(&solid.common, solid.parse_sat())
+}
+
+fn explode_body(body: &Body) -> Vec<EntityType> {
+    modeler_regions(&body.common, body.parse_sat())
+}
+
+fn explode_surface(surface: &Surface) -> Vec<EntityType> {
+    if matches!(surface.kind, SurfaceKind::Plane) {
+        modeler_regions(&surface.common, surface.parse_sat())
+    } else { Vec::new() }
+}
+
 fn explode_dimension(dim: &Dimension) -> Vec<EntityType> {
     // Simplified decomposition: produce extension lines, dimension line,
     // and a text entity with the measurement value.
@@ -1500,6 +1558,10 @@ impl EntityType {
             EntityType::Mesh(e) => explode_mesh_autocad(e),
             EntityType::PolyfaceMesh(e) => explode_polyface_mesh_autocad(e),
             EntityType::PolygonMesh(e) => explode_polygon_mesh_autocad(e),
+            EntityType::Region(e) => explode_region(e),
+            EntityType::Solid3D(e) => explode_solid3d(e),
+            EntityType::Body(e) => explode_body(e),
+            EntityType::Surface(e) => explode_surface(e),
             EntityType::Circle(_)
             | EntityType::Arc(_)
             | EntityType::Ellipse(_)
@@ -1519,10 +1581,6 @@ impl EntityType {
             | EntityType::AttributeDefinition(_)
             | EntityType::AttributeEntity(_)
             | EntityType::RasterImage(_)
-            | EntityType::Solid3D(_)
-            | EntityType::Region(_)
-            | EntityType::Body(_)
-            | EntityType::Surface(_)
             | EntityType::Tolerance(_)
             | EntityType::Shape(_)
             | EntityType::Underlay(_)
@@ -2185,6 +2243,15 @@ mod tests {
         let parts = entity.flatten();
         assert_eq!(parts.len(), 1);
         assert!(matches!(&parts[0], EntityType::Face3D(_)));
+    }
+
+    #[test]
+    fn test_explode_box_solid_into_planar_regions() {
+        let sat = crate::entities::acis::primitives::build_box([0.0, 0.0, 0.0], 10.0, 10.0, 10.0);
+        let solid = Solid3D::from_sat(&sat.to_sat_string());
+        let parts = EntityType::Solid3D(solid).explode();
+        assert_eq!(parts.len(), 6);
+        assert!(parts.iter().all(|part| matches!(part, EntityType::Region(_))));
     }
 
     #[test]
