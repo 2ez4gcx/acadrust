@@ -1007,8 +1007,10 @@ pub fn read_dynamic_block_data(
                     code: 302,
                     value: BlockPropertiesTableValue::Text(reader.read_variable_text()),
                 });
-                let handle_count = if column == 0 { 2 } else { 1 };
-                for _ in 0..handle_count {
+                // Each table column stores one parameter handle. The first
+                // column's handle is emitted before its per-column metadata
+                // above; subsequent columns emit their handle here.
+                if column != 0 {
                     fields.push(BlockPropertiesTableField {
                         code: 340,
                         value: BlockPropertiesTableValue::Handle(Handle::from(
