@@ -7153,6 +7153,35 @@ impl<'a> SectionReader<'a> {
             }
         }
 
+        // The layout dictionary is a named role, not the dictionary that
+        // happens to occupy the bootstrap cache handle (0x23). Leave the
+        // cache unset when the source membership is absent or ambiguous;
+        // retain the source entries themselves for callers to inspect.
+        document.header.acad_layout_dict_handle = match document
+            .objects
+            .get(&document.header.named_objects_dict_handle)
+        {
+            Some(ObjectType::Dictionary(root)) => {
+                let mut entries = root
+                    .entries
+                    .iter()
+                    .filter(|(name, _)| name == "ACAD_LAYOUT");
+                match (entries.next(), entries.next()) {
+                    (Some((_, handle)), None)
+                        if !handle.is_null()
+                            && *handle != root.handle
+                            && matches!(document.objects.get(handle), Some(ObjectType::Dictionary(d))
+                                if d.handle == *handle
+                                    && (d.owner.is_null() || d.owner == root.handle)) =>
+                    {
+                        *handle
+                    }
+                    _ => Handle::NULL,
+                }
+            }
+            _ => Handle::NULL,
+        };
+
         Ok(())
     }
 
