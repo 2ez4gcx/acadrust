@@ -879,6 +879,19 @@ impl<'a> DwgObjectWriter<'a> {
                         self.write_constraint_node_common(node);
                         self.write_constraint_node_data(&node.data);
                     }
+                } else if self.version.r2013_plus(self.dxf_version) {
+                    // A group without nodes still carries the registry layout: AutoCAD and
+                    // BricsCAD write the next node id, the root node (id, connections,
+                    // status), the class table and the registry with zero counts. A group
+                    // that ended after the next node id made BricsCAD refuse the drawing
+                    // ("Object improperly read"); a DWG read and written back kept the
+                    // original bytes, so only a group that came through DXF was affected.
+                    self.writer.write_bit_long(value.effective_next_node_id());
+                    self.writer.write_bit_long(0);
+                    self.writer.write_bit_long(0);
+                    self.writer.write_bit(false);
+                    self.writer.write_bit_long(0);
+                    self.writer.write_bit_long(0);
                 } else {
                     self.writer.write_bit_long(0);
                 }
