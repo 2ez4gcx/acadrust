@@ -3870,7 +3870,7 @@ impl CadDocument {
                     if !handle.is_null()
                         && *handle != root
                         && matches!(self.objects.get(handle), Some(ObjectType::Dictionary(d))
-                    if d.handle == *handle && d.owner == root) =>
+                    if d.handle == *handle && (d.owner == root || d.owner.is_null())) =>
                 {
                     Some(*handle)
                 }
@@ -3882,6 +3882,11 @@ impl CadDocument {
                 }
             };
         let dict_handle = if let Some(handle) = dict_handle {
+            // The reader accepts an ownerless member (old files leave it
+            // unset); complete its ownership like a synthesized one.
+            if let Some(ObjectType::Dictionary(dict)) = self.objects.get_mut(&handle) {
+                dict.owner = root;
+            }
             handle
         } else {
             let handle = self.allocate_handle();
