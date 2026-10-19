@@ -3816,12 +3816,75 @@ impl CadDocument {
             return;
         }
 
-        let dict_handle = self.header.acad_layout_dict_handle;
-        let dict_handle = if matches!(self.objects.get(&dict_handle), Some(ObjectType::Dictionary(_))) {
-            dict_handle
+        // A minimal DXF may have no root, or a handle-less empty dictionary
+        // that only received its handle during reference resolution. Resolve
+        // that role before creating anything owned by it.
+        let current_root = self.header.named_objects_dict_handle;
+        let root = if !current_root.is_null()
+            && matches!(self.objects.get(&current_root), Some(ObjectType::Dictionary(d))
+            if d.handle == current_root && d.owner.is_null())
+        {
+            current_root
+        } else {
+            let mut roots = self
+                .objects
+                .iter()
+                .filter_map(|(handle, object)| match object {
+                    ObjectType::Dictionary(d)
+                        if !handle.is_null() && d.handle == *handle && d.owner.is_null() =>
+                    {
+                        Some(*handle)
+                    }
+                    _ => None,
+                });
+            match (roots.next(), roots.next()) {
+                (Some(root), None) => root,
+                (None, None) => {
+                    self.synchronize_handle_allocator();
+                    let handle = self.allocate_handle();
+                    let mut root = crate::objects::Dictionary::new();
+                    root.handle = handle;
+                    self.objects.insert(handle, ObjectType::Dictionary(root));
+                    handle
+                }
+                _ => {
+                    self.notifications.notify(
+                        crate::notification::NotificationType::Warning,
+                        "Model layout not synthesized: named root dictionary is ambiguous",
+                    );
+                    return;
+                }
+            }
+        };
+        self.header.named_objects_dict_handle = root;
+        let Some(ObjectType::Dictionary(root_dictionary)) = self.objects.get(&root) else {
+            unreachable!();
+        };
+        let mut entries = root_dictionary
+            .entries
+            .iter()
+            .filter(|(name, _)| name == "ACAD_LAYOUT");
+        let dict_handle =
+            match (entries.next(), entries.next()) {
+                (Some((_, handle)), None)
+                    if !handle.is_null()
+                        && *handle != root
+                        && matches!(self.objects.get(handle), Some(ObjectType::Dictionary(d))
+                    if d.handle == *handle && d.owner == root) =>
+                {
+                    Some(*handle)
+                }
+                (None, None) => None,
+                _ => {
+                    self.notifications.notify(crate::notification::NotificationType::Warning,
+                    "Model layout not synthesized: ACAD_LAYOUT membership or ownership conflicts");
+                    return;
+                }
+            };
+        let dict_handle = if let Some(handle) = dict_handle {
+            handle
         } else {
             let handle = self.allocate_handle();
-            let root = self.header.named_objects_dict_handle;
             let mut dict = crate::objects::Dictionary::new();
             dict.handle = handle;
             dict.owner = root;
@@ -3829,9 +3892,9 @@ impl CadDocument {
                 root.add_entry("ACAD_LAYOUT", handle);
             }
             self.objects.insert(handle, ObjectType::Dictionary(dict));
-            self.header.acad_layout_dict_handle = handle;
             handle
         };
+        self.header.acad_layout_dict_handle = dict_handle;
 
         let handle = self.allocate_handle();
         let mut layout = crate::objects::Layout::new("Model");
