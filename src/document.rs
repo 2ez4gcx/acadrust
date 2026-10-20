@@ -5877,18 +5877,12 @@ impl CadDocument {
         }
         let model_handle = self.header.model_space_block_handle;
         let paper_handle = self.header.paper_space_block_handle;
-        let paper_handles: std::collections::HashSet<Handle> = self
+        // Only the active layout's `*Paper_Space` has the implicit paper
+        // mode; inactive `*Paper_SpaceN` entities keep an explicit owner (#123).
+        let active_paper = self
             .block_records
-            .iter()
-            .filter_map(|record| {
-                let name = record.name.to_ascii_uppercase();
-                (name == "*PAPER_SPACE"
-                    || (name.starts_with("*PAPER_SPACE")
-                        && name.len() > 12
-                        && name[12..].bytes().all(|b| b.is_ascii_digit())))
-                .then_some(record.handle)
-            })
-            .collect();
+            .get("*Paper_Space")
+            .map_or(paper_handle, |record| record.handle);
 
         // Block record entities — set owner handle on entities looked up from
         // the entity map. This MUST run before the model-space default below:
@@ -5940,7 +5934,7 @@ impl CadDocument {
             }
             common.entity_mode = Some(if common.owner_handle == model_handle {
                 2
-            } else if paper_handles.contains(&common.owner_handle) {
+            } else if common.owner_handle == active_paper {
                 1
             } else {
                 0

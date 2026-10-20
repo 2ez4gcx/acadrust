@@ -44,6 +44,13 @@ fn via_dwg(document: &CadDocument) -> CadDocument {
     DwgReader::from_stream(Cursor::new(bytes)).read().unwrap()
 }
 
+fn line(x: f64) -> EntityType {
+    EntityType::Line(Line::from_points(
+        Vector3::new(x, 0.0, 0.0),
+        Vector3::new(x + 10.0, 5.0, 0.0),
+    ))
+}
+
 /// #119: a paper-space INSERT's ATTRIBs carry the DXF paper flag (67 = 1);
 /// DWG must still write them as owned by their INSERT.
 #[test]
@@ -83,5 +90,31 @@ fn paper_space_insert_attributes_survive_dxf_to_dwg() {
     for handle in [model, paper] {
         let tags: Vec<_> = attributes(&back, handle).into_iter().map(|a| a.tag).collect();
         assert_eq!(tags, ["A", "B"]);
+    }
+}
+
+/// #123: only the active layout's `*Paper_Space` gets the implicit paper
+/// mode; an inactive `*Paper_SpaceN` keeps mode 0 and an explicit owner.
+#[test]
+fn inactive_layout_entities_use_explicit_ownership() {
+    let mut source = CadDocument::new();
+    source.add_layout("Layout2").unwrap();
+    let model = source.add_entity(line(0.0)).unwrap();
+    let active = source.add_entity_to_layout(line(20.0), "Layout1").unwrap();
+    let inactive = source.add_entity_to_layout(line(40.0), "Layout2").unwrap();
+
+    let from_dxf = via_dxf(&source);
+    let back = via_dwg(&from_dxf);
+    for document in [&from_dxf, &back] {
+        let record = |name| document.block_records.get(name).unwrap().handle;
+        for (handle, owner, mode) in [
+            (model, record("*Model_Space"), 2),
+            (active, record("*Paper_Space"), 1),
+            (inactive, record("*Paper_Space0"), 0),
+        ] {
+            let common = document.get_entity(handle).unwrap().common();
+            assert_eq!(common.owner_handle, owner);
+            assert_eq!(common.entity_mode, Some(mode));
+        }
     }
 }

@@ -1104,34 +1104,25 @@ impl<'a> DwgObjectWriter<'a> {
 
     // ── entity-mode helper ──────────────────────────────────────────
     /// Returns the 2-bit entity-mode value (per ODA spec §19.4.4):
-    /// - 0 = owned (owner handle present) — VERTEX, ATTRIB, SEQEND,
-    ///       or entity inside a named block
-    /// - 1 = paper-space entity (BB 01 → any *Paper_Space block)
-    /// - 2 = model-space entity (BB 10 → *Model_Space)
-    ///
-    /// AutoCAD uses entmode=1 for entities in ALL paper-space blocks,
-    /// not just the canonical `*Paper_Space`.  Additional layouts like
-    /// `*Paper_Space0`, `*Paper_Space1`, … also get entmode=1.  The
-    /// correct owner is determined by the BLOCK_HEADER's entity_handles
-    /// list, not by the entity's owner handle (which is omitted for
-    /// entmode != 0).
+    /// - 0 = owned (owner handle present) — VERTEX, ATTRIB, SEQEND, an
+    ///       entity inside a named block or an inactive layout's
+    ///       `*Paper_SpaceN`
+    /// - 1 = entity of the active layout's `*Paper_Space`
+    /// - 2 = model-space entity (`*Model_Space`)
     fn get_entity_mode(&self, owner_handle: &Handle) -> u8 {
-        for br in self.document.block_records.iter() {
-            if br.handle == *owner_handle {
-                let upper = br.name.to_ascii_uppercase();
-                if upper == "*MODEL_SPACE" {
-                    return 2; // model space (BB 10)
-                }
-                // Paper-space mode names the active layout's *Paper_Space;
-                // the other layouts' *Paper_SpaceN records, like named
-                // blocks, store their owner.
-                if upper == "*PAPER_SPACE" {
-                    return 1; // paper space (BB 01)
-                }
-                return 0; // owner handle follows
-            }
+        let owned_by = |name: &str| {
+            self.document
+                .block_records
+                .get(name)
+                .is_some_and(|br| br.handle == *owner_handle)
+        };
+        if owned_by("*Model_Space") {
+            2
+        } else if owned_by("*Paper_Space") {
+            1
+        } else {
+            0
         }
-        0
     }
 }
 
