@@ -13,6 +13,11 @@
   (rational and non-uniform knots) instead of the control polygon; MTEXT
   explodes to one TEXT per line with formatting codes removed, aligned by its
   attachment point.
+- **Upright complex linetype elements (issue #108)** - `LineTypeComplexData`
+  gains `upright` (`U=`, element flag 0x08) beside `absolute_rotation`. It is
+  read from DXF and DWG, written to DWG and DXF R2013+, and becomes relative
+  rotation in older DXF. Struct literals need `upright: false` or
+  `..Default::default()`; Serde input without the field reads as `false`.
 
 ### 0.6.4
 

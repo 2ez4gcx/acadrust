@@ -1122,14 +1122,17 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         for element in &ltype.elements {
             self.writer.write_double(49, element.length)?;
             // DXF LTYPE per-element codes: 74 = element-type FLAGS
-            // (0x01=abs rot, 0x02=text, 0x04=shape; 0 = plain dash),
-            // 75 = shape number. These used to be emitted swapped — AutoCAD
-            // then read every element as complex (OCS#314).
+            // (0x01=abs rot, 0x02=text, 0x04=shape, 0x08=upright from R2013;
+            // 0 = plain dash), 75 = shape number. These used to be emitted
+            // swapped — the reference CAD then read every element as complex (OCS#314).
             if let Some(c) = &element.complex {
                 let mut flags: i16 = c.source_flags as i16;
-                flags &= !(0x01 | 0x02 | 0x04);
+                flags &= !(0x01 | 0x02 | 0x04 | 0x08);
                 if c.is_absolute_rotation() {
                     flags |= 0x01;
+                }
+                if c.is_upright() && self.dxf_version >= DxfVersion::AC1027 {
+                    flags |= 0x08;
                 }
                 if c.is_shape() {
                     flags |= 0x04;

@@ -2788,6 +2788,7 @@ fn dxf_roundtrip_complex_linetype_shape() {
         scale: 2.0,
         rotation: 30.0,
         absolute_rotation: false,
+        upright: true,
         source_flags: 8,
         offset: [1.0, 0.5],
     });
@@ -2809,7 +2810,48 @@ fn dxf_roundtrip_complex_linetype_shape() {
     assert!((c0.scale - 2.0).abs() < 1e-6);
     assert!((c0.rotation - 30.0).abs() < 1e-6);
     assert!(!c0.is_absolute_rotation());
+    assert!(c0.is_upright());
     assert_eq!(c0.source_flags, 12);
+}
+
+/// #108: upright (`U=`, flag 0x08) is its own mode; DXF carries it from R2013,
+/// DWG on every version, and older DXF falls back to relative rotation.
+#[test]
+fn complex_linetype_upright_rotation_roundtrip() {
+    use acadrust::tables::LineTypeComplexData;
+    let gas = |version| {
+        let mut doc = build_minimal_document(version, EntityType::Point(Point::new()));
+        let mut lt = LineType::new("GAS_LINE");
+        lt.handle = Handle::new(0xF0);
+        let mut text = LineTypeElement::space(0.2);
+        text.complex = Some(LineTypeComplexData {
+            content: LineTypeComplexContent::Text {
+                text: "GAS".to_string(),
+            },
+            scale: 0.1,
+            upright: true,
+            offset: [-0.1, -0.05],
+            ..Default::default()
+        });
+        lt.elements.push(LineTypeElement::dash(0.5));
+        lt.elements.push(text);
+        lt.pattern_length = 0.7;
+        doc.line_types.add(lt).ok();
+        doc
+    };
+    let upright = |doc: &CadDocument| {
+        let c = doc.line_types.get("GAS_LINE").expect("linetype lost").elements[1]
+            .complex
+            .clone()
+            .expect("complex lost");
+        assert_eq!(c.text(), Some("GAS"));
+        assert!(!c.is_absolute_rotation());
+        c.is_upright()
+    };
+    assert!(upright(&dxf_roundtrip(gas(DxfVersion::AC1032))));
+    assert!(upright(&dwg_roundtrip(&gas(DxfVersion::AC1032))));
+    assert!(upright(&dwg_roundtrip(&gas(DxfVersion::AC1015))));
+    assert!(!upright(&dxf_roundtrip(gas(DxfVersion::AC1024))));
 }
 
 #[test]
@@ -2827,6 +2869,7 @@ fn dxf_roundtrip_complex_linetype_text() {
         scale: 1.5,
         rotation: 45.0,
         absolute_rotation: true,
+        upright: false,
         source_flags: 1,
         offset: [0.0, 0.25],
     });
@@ -2861,6 +2904,7 @@ fn dwg_roundtrip_complex_linetype_shape() {
         scale: 1.0,
         rotation: 0.0,
         absolute_rotation: false,
+        upright: false,
         source_flags: 0,
         offset: [0.0, 0.0],
     });

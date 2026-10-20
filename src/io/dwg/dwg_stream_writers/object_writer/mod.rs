@@ -1073,9 +1073,12 @@ impl<'a> DwgObjectWriter<'a> {
             let c = seg.complex.as_ref();
             let flags = if let Some(ref cx) = c {
                 let mut f: i16 = cx.source_flags as i16;
-                f &= !(0x01 | 0x02 | 0x04);
+                f &= !(0x01 | 0x02 | 0x04 | 0x08);
                 if cx.is_absolute_rotation() {
                     f |= 0x01;
+                }
+                if cx.is_upright() {
+                    f |= 0x08;
                 }
                 if cx.is_text() {
                     f |= 0x02;

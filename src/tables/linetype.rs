@@ -221,10 +221,16 @@ pub struct LineTypeComplexData {
     /// Shape/text scale factor.
     pub scale: f64,
     /// Rotation angle in radians (DXF code 50 is degrees on disk; converted on
-    /// read/write). Relative to the line tangent unless `rotation_absolute`.
+    /// read/write). Relative to the line tangent unless `absolute_rotation`.
     pub rotation: f64,
     /// Rotation is world-absolute rather than relative to the line tangent.
     pub absolute_rotation: bool,
+    /// Upright (`U=`): relative to the line tangent, but the text or shape is
+    /// flipped so it never reads upside down. Element flag bit 0x08, written
+    /// to DWG and to DXF R2013+ (older DXF drops it to relative). Authored
+    /// linetypes set at most one of `absolute_rotation` and `upright`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub upright: bool,
     /// Raw source element flags, including mode bits not yet modeled by the
     /// public API. Known content/absolute bits are kept synchronized on write.
     #[cfg_attr(feature = "serde", serde(default))]
@@ -242,6 +248,7 @@ impl Default for LineTypeComplexData {
             scale: 1.0,
             rotation: 0.0,
             absolute_rotation: false,
+            upright: false,
             source_flags: 0,
             offset: [0.0, 0.0],
         }
@@ -265,6 +272,12 @@ impl LineTypeComplexData {
     #[inline]
     pub fn is_absolute_rotation(&self) -> bool {
         self.absolute_rotation
+    }
+
+    /// Returns `true` when the element keeps upright along the line (`U=`).
+    #[inline]
+    pub fn is_upright(&self) -> bool {
+        self.upright
     }
 
     /// Shape number, if this is a shape element.
@@ -323,6 +336,7 @@ impl LineTypeComplexData {
     pub(crate) fn apply_dxf_flags(&mut self, flags: i16) {
         self.source_flags = flags as u8;
         self.absolute_rotation = flags & 0x01 != 0;
+        self.upright = flags & 0x08 != 0;
         // DXF: 0x04 = shape, 0x02 = text
         if flags & 0x04 != 0 {
             self.ensure_shape();
@@ -374,6 +388,7 @@ mod tests {
             scale: 2.0,
             rotation: 45.0,
             absolute_rotation: false,
+            upright: false,
             source_flags: 0,
             offset: [1.0, 2.0],
         };
@@ -394,6 +409,7 @@ mod tests {
             scale: 1.0,
             rotation: 0.0,
             absolute_rotation: false,
+            upright: false,
             source_flags: 0,
             offset: [0.0, 0.5],
         };
@@ -412,6 +428,7 @@ mod tests {
             scale: 1.0,
             rotation: 90.0,
             absolute_rotation: true,
+            upright: false,
             source_flags: 1,
             offset: [0.0, 0.0],
         };
@@ -470,6 +487,11 @@ mod tests {
         c.apply_dxf_flags(0x02 | 0x01);
         assert!(c.is_text());
         assert!(c.is_absolute_rotation());
+        assert!(!c.is_upright());
+        c.apply_dxf_flags(0x08 | 0x02);
+        assert!(c.is_text());
+        assert!(c.is_upright());
+        assert!(!c.is_absolute_rotation());
     }
 
     #[test]
