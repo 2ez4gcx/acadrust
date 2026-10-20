@@ -58,6 +58,7 @@ mod parallel;
 pub mod preview;
 pub mod r12;
 pub mod reed_solomon;
+pub(crate) mod size_limits;
 
 pub use dwg_reader::DwgReadOptions;
 pub use dwg_reader::DwgReader;
