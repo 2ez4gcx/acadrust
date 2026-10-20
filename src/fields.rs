@@ -988,8 +988,52 @@ fn area(e: &EntityType) -> Option<f64> {
     use std::f64::consts::PI;
     match e {
         EntityType::Circle(c) => Some(PI * c.radius * c.radius),
-        _ => None,
+        EntityType::Ellipse(el) if el.is_full() => {
+            let major = el.major_axis.length();
+            Some(PI * major * major * el.minor_axis_ratio)
+        }
+        // An open polyline measures as if closed.
+        _ => {
+            let (vertices, _) = bulge_vertices(e)?;
+            let n = vertices.len();
+            let twice: f64 = (0..n)
+                .map(|i| {
+                    let ((x1, y1, b), (x2, y2, _)) = (vertices[i], vertices[(i + 1) % n]);
+                    let (theta, r) = bulge_arc(x1, y1, x2, y2, b);
+                    x1 * y2 - x2 * y1 + r * r * (theta - theta.sin())
+                })
+                .sum();
+            Some(twice.abs() / 2.0)
+        }
     }
+}
+
+/// The `(x, y, bulge)` vertices of a 2-D polyline and whether it is closed.
+fn bulge_vertices(e: &EntityType) -> Option<(Vec<(f64, f64, f64)>, bool)> {
+    let (vertices, closed): (Vec<_>, bool) = match e {
+        EntityType::LwPolyline(p) => (
+            p.vertices.iter().map(|v| (v.location.x, v.location.y, v.bulge)).collect(),
+            p.is_closed,
+        ),
+        EntityType::Polyline2D(p) => (
+            p.vertices.iter().map(|v| (v.location.x, v.location.y, v.bulge)).collect(),
+            p.is_closed(),
+        ),
+        _ => return None,
+    };
+    (vertices.len() >= 2).then_some((vertices, closed))
+}
+
+/// Included angle (signed, counter-clockwise positive) and radius of the arc
+/// a bulge puts between two points; a straight segment has angle 0.
+fn bulge_arc(x1: f64, y1: f64, x2: f64, y2: f64, bulge: f64) -> (f64, f64) {
+    let theta = 4.0 * bulge.atan();
+    let half_sin = (theta / 2.0).sin();
+    if half_sin.abs() < 1e-12 {
+        return (0.0, 0.0);
+    }
+    let chord = ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt();
+    (theta, chord / (2.0 * half_sin.abs()))
 }
 
 fn length(e: &EntityType) -> Option<f64> {
@@ -1011,7 +1055,29 @@ fn length(e: &EntityType) -> Option<f64> {
             }
             Some(a.radius * sweep)
         }
-        _ => None,
+        EntityType::Polyline3D(p) => {
+            let mut points: Vec<_> = p.vertices.iter().map(|v| v.position).collect();
+            if p.is_closed() {
+                points.extend(points.first().copied());
+            }
+            Some(points.windows(2).map(|w| (w[1] - w[0]).length()).sum())
+        }
+        _ => {
+            let (vertices, closed) = bulge_vertices(e)?;
+            let n = vertices.len();
+            let segments = if closed { n } else { n - 1 };
+            Some(
+                (0..segments)
+                    .map(|i| {
+                        let ((x1, y1, b), (x2, y2, _)) = (vertices[i], vertices[(i + 1) % n]);
+                        match bulge_arc(x1, y1, x2, y2, b) {
+                            (theta, r) if r > 0.0 => theta.abs() * r,
+                            _ => ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt(),
+                        }
+                    })
+                    .sum(),
+            )
+        }
     }
 }
 
