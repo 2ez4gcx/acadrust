@@ -127,6 +127,12 @@ impl SectionReader {
             SectionReaderInner::MergedReader(r) => r.read_bit_short(),
         }
     }
+    fn try_read_bit_short(&mut self) -> Option<i16> {
+        match &mut self.inner {
+            SectionReaderInner::BitReader(r) => r.try_read_bit_short(),
+            SectionReaderInner::MergedReader(r) => r.try_read_bit_short(),
+        }
+    }
     fn read_bit_long(&mut self) -> i32 {
         match &mut self.inner {
             SectionReaderInner::BitReader(r) => r.read_bit_long(),
@@ -853,11 +859,22 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
     }
 
     // ── R14+ trailing fields ──
+    // IntelliCAD's AC1014 writer can omit the final undocumented BS value.
+    // Keep the values that are present, but treat a partial/missing AC1014
+    // tail as valid so the preceding header fields remain usable. Later
+    // versions retain the strict four-value layout.
     if v >= DxfVersion::AC1014 {
-        let _ = r.read_bit_short(); // -1
-        let _ = r.read_bit_short(); // -1
-        let _ = r.read_bit_short(); // -1
-        let _ = r.read_bit_short(); // -1
+        if v == DxfVersion::AC1014 {
+            for _ in 0..4 {
+                if r.try_read_bit_short().is_none() {
+                    break;
+                }
+            }
+        } else {
+            for _ in 0..4 {
+                let _ = r.read_bit_short();
+            }
+        }
 
         if r2004_plus(v) {
             let _ = r.read_bit_long();
@@ -891,6 +908,21 @@ mod tests {
         assert!((read.text_height - original.text_height).abs() < 1e-10);
         assert!((read.dim_scale - original.dim_scale).abs() < 1e-10);
         assert!((read.dim_arrow_size - original.dim_arrow_size).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_r14_accepts_optional_trailer_with_only_three_values() {
+        let mut truncated =
+            header_writer::write_header(DxfVersion::AC1014, &HeaderVariables::default(), 0);
+        let section_size = i32::from_le_bytes(truncated[16..20].try_into().unwrap());
+
+        // The four undocumented R14 BS values occupy nine bytes in the
+        // default stream. Removing two bytes leaves three complete values and
+        // the two-bit prefix of the fourth, matching IntelliCAD's AC1014
+        // trailer. The reader must preserve the valid header prefix.
+        let truncated_size = section_size - 2;
+        truncated[16..20].copy_from_slice(&truncated_size.to_le_bytes());
+        assert!(read_header(&truncated, DxfVersion::AC1014, 0).is_ok());
     }
 
     #[test]
