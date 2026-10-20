@@ -30,3 +30,58 @@ fn a_second_layouts_block_marker_and_entities_keep_their_record() {
     assert_eq!(loaded.get_entity(line).unwrap().common().owner_handle, extra.handle);
     assert!(extra.entity_handles.contains(&line));
 }
+
+fn via_dxf(document: &CadDocument) -> CadDocument {
+    let bytes = acadrust::DxfWriter::new(document).write_to_vec().unwrap();
+    acadrust::DxfReader::from_reader(Cursor::new(bytes))
+        .unwrap()
+        .read()
+        .unwrap()
+}
+
+fn via_dwg(document: &CadDocument) -> CadDocument {
+    let bytes = DwgWriter::write_to_vec(document).unwrap();
+    DwgReader::from_stream(Cursor::new(bytes)).read().unwrap()
+}
+
+/// #119: a paper-space INSERT's ATTRIBs carry the DXF paper flag (67 = 1);
+/// DWG must still write them as owned by their INSERT.
+#[test]
+fn paper_space_insert_attributes_survive_dxf_to_dwg() {
+    use acadrust::entities::{AttributeEntity, Insert};
+    use acadrust::tables::BlockRecord;
+
+    let mut source = CadDocument::new();
+    let mut record = BlockRecord::new("K");
+    record.handle = source.allocate_handle();
+    record.block_entity_handle = source.allocate_handle();
+    record.block_end_handle = source.allocate_handle();
+    source.block_records.add(record).unwrap();
+
+    let mut insert = Insert::new("K", Vector3::new(5.0, 5.0, 0.0));
+    insert.attributes = vec![
+        AttributeEntity::new("A".into(), "one".into()),
+        AttributeEntity::new("B".into(), "two".into()),
+    ];
+    let model = source.add_entity(EntityType::Insert(insert.clone())).unwrap();
+    let paper = source
+        .add_entity_to_layout(EntityType::Insert(insert), "Layout1")
+        .unwrap();
+
+    let from_dxf = via_dxf(&source);
+    let attributes = |document: &CadDocument, handle| match document.get_entity(handle) {
+        Some(EntityType::Insert(insert)) => insert.attributes.clone(),
+        other => panic!("INSERT missing: {other:?}"),
+    };
+    let paper_attributes = attributes(&from_dxf, paper);
+    assert!(
+        paper_attributes.iter().all(|a| a.common.entity_mode == Some(1)),
+        "the DXF repro must carry the paper flag on its ATTRIBs"
+    );
+
+    let back = via_dwg(&from_dxf);
+    for handle in [model, paper] {
+        let tags: Vec<_> = attributes(&back, handle).into_iter().map(|a| a.tag).collect();
+        assert_eq!(tags, ["A", "B"]);
+    }
+}
