@@ -804,7 +804,11 @@ fn is_plain_geometrical_constraint(class_name: &str) -> bool {
 
 /// Owner id, implied, active. A version-0 group stores no active flag.
 fn read_geometrical_constraint(reader: &mut DwgMergedReader, legacy: bool) -> (i32, bool, bool) {
-    (reader.read_bit_long(), reader.read_bit(), legacy || reader.read_bit())
+    (
+        reader.read_bit_long(),
+        reader.read_bit(),
+        legacy || reader.read_bit(),
+    )
 }
 
 fn read_explicit_constraint(
@@ -856,7 +860,11 @@ fn read_constraint_node_data(
             radius: reader.read_bit_double(),
             start_parameter: reader.read_bit_double(),
             end_parameter: reader.read_bit_double(),
-            reserved: if legacy { 0.0 } else { reader.read_bit_double() },
+            reserved: if legacy {
+                0.0
+            } else {
+                reader.read_bit_double()
+            },
         },
         "ACCONSTRAINEDARC" => AssocConstraintNodeData::Arc {
             geometry_dependency: handle(reader),
@@ -867,7 +875,11 @@ fn read_constraint_node_data(
             radius: reader.read_bit_double(),
             start_parameter: reader.read_bit_double(),
             end_parameter: reader.read_bit_double(),
-            reserved: if legacy { 0.0 } else { reader.read_bit_double() },
+            reserved: if legacy {
+                0.0
+            } else {
+                reader.read_bit_double()
+            },
             start_point: reader.read_3bit_double(),
             end_point: reader.read_3bit_double(),
         },

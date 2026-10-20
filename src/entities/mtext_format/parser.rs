@@ -1052,9 +1052,7 @@ impl MTextParser {
                             let rest = &part[1..];
                             if rest.is_empty()
                                 && part_index + 1 < parts.len()
-                                && parts[part_index + 1]
-                                    .parse::<f64>()
-                                    .is_ok()
+                                && parts[part_index + 1].parse::<f64>().is_ok()
                             {
                                 part_index += 1;
                                 (b',', parts[part_index])
@@ -1982,7 +1980,10 @@ mod tests {
         assert!(comma.to_mtext_string().contains(",tD,2"));
 
         let legacy = parse_mtext("{\\ptD2;Dot}", false);
-        assert_eq!(legacy.paragraphs[0].properties.tab_stops, vec![TabStop::Decimal(2.0)]);
+        assert_eq!(
+            legacy.paragraphs[0].properties.tab_stops,
+            vec![TabStop::Decimal(2.0)]
+        );
         assert!(legacy.to_mtext_string().contains(",tD2"));
     }
 

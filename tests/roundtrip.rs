@@ -1713,7 +1713,10 @@ dwg_entity_roundtrip!(
         "{\\Fgdt;p}%%v0.5"
     ))
 );
-dwg_entity_roundtrip!(dwg_rt_viewport, EntityType::Viewport(Box::new(Viewport::new())));
+dwg_entity_roundtrip!(
+    dwg_rt_viewport,
+    EntityType::Viewport(Box::new(Viewport::new()))
+);
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  CROSS-FORMAT ROUNDTRIP TESTS
@@ -2184,7 +2187,10 @@ fn dwg_version_matrix_mtext() {
     for &(version, label) in DWG_VERSIONS {
         let doc = build_minimal_document(
             version,
-            EntityType::MText(Box::new(MText::with_value("Multi", Vector3::new(0.0, 0.0, 0.0)))),
+            EntityType::MText(Box::new(MText::with_value(
+                "Multi",
+                Vector3::new(0.0, 0.0, 0.0),
+            ))),
         );
         let rt = dwg_roundtrip(&doc);
         assert_eq!(
@@ -3044,8 +3050,7 @@ fn dwg_roundtrip_edge_action_param_line() {
     };
     let mut doc = CadDocument::new();
     let handle = doc.allocate_handle();
-    let mut object =
-        AssociativeObject::new("ACDBASSOCEDGEACTIONPARAM", "AcDbAssocEdgeActionParam");
+    let mut object = AssociativeObject::new("ACDBASSOCEDGEACTIONPARAM", "AcDbAssocEdgeActionParam");
     object.handle = handle;
     object.owner = doc.header.named_objects_dict_handle;
     let curve = vec![

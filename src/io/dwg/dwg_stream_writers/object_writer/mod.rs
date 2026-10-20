@@ -279,17 +279,27 @@ impl<'a> DwgObjectWriter<'a> {
     }
 
     fn build_block_users(document: &CadDocument) -> std::collections::HashMap<Handle, Vec<Handle>> {
-        let mut users: std::collections::HashMap<Handle, Vec<Handle>> = std::collections::HashMap::new();
+        let mut users: std::collections::HashMap<Handle, Vec<Handle>> =
+            std::collections::HashMap::new();
         for entity in document.entities() {
             let record = match entity {
-                EntityType::Insert(insert) => document.block_records.get(&insert.block_name).map(|r| r.handle),
-                EntityType::Table(table) => table
-                    .block_record_handle
-                    .or_else(|| document.block_records.get(&table.block_name).map(|r| r.handle)),
+                EntityType::Insert(insert) => document
+                    .block_records
+                    .get(&insert.block_name)
+                    .map(|r| r.handle),
+                EntityType::Table(table) => table.block_record_handle.or_else(|| {
+                    document
+                        .block_records
+                        .get(&table.block_name)
+                        .map(|r| r.handle)
+                }),
                 _ => None,
             };
             if let Some(record) = record.filter(|h| !h.is_null()) {
-                users.entry(record).or_default().push(entity.common().handle);
+                users
+                    .entry(record)
+                    .or_default()
+                    .push(entity.common().handle);
             }
         }
         for list in users.values_mut() {
@@ -400,7 +410,6 @@ impl<'a> DwgObjectWriter<'a> {
     ) {
         // Compute model space extents for VPort view adjustment
         self.model_space_extents = self.compute_model_space_extents();
-
 
         // R2004+: 0x0DCA marker at the start
         if self.version.r2004_plus() {
@@ -790,9 +799,9 @@ impl<'a> DwgObjectWriter<'a> {
         let had_transparency_eed = self
             .existing_xdata_values(layer.handle, "AcCmTransparency")
             .is_some_and(|values| {
-                values.iter().any(|value| {
-                    matches!(value, crate::xdata::XDataValue::Integer32(_))
-                })
+                values
+                    .iter()
+                    .any(|value| matches!(value, crate::xdata::XDataValue::Integer32(_)))
             });
         let transparency_eed = transparency_app.and_then(|app| {
             (!layer.transparency.is_opaque() || had_transparency_eed).then(|| {
@@ -811,11 +820,16 @@ impl<'a> DwgObjectWriter<'a> {
             .get(crate::tables::layer::LAYER_DESCRIPTION_APP)
             .and_then(|app| {
                 let had_description = self
-                    .existing_xdata_values(layer.handle, crate::tables::layer::LAYER_DESCRIPTION_APP)
+                    .existing_xdata_values(
+                        layer.handle,
+                        crate::tables::layer::LAYER_DESCRIPTION_APP,
+                    )
                     .is_some_and(|values| {
-                        values.iter().filter(|value| {
-                            matches!(value, crate::xdata::XDataValue::String(_))
-                        }).count() >= 2
+                        values
+                            .iter()
+                            .filter(|value| matches!(value, crate::xdata::XDataValue::String(_)))
+                            .count()
+                            >= 2
                     });
                 (!layer.description.is_empty() || had_description).then(|| {
                     let code_page = crate::io::dxf::code_page::dwg_code_page_index(
@@ -947,8 +961,10 @@ impl<'a> DwgObjectWriter<'a> {
     }
 
     fn write_text_style(&mut self, style: &crate::tables::TextStyle) {
-        let mut eed: Vec<(u64, Vec<u8>)> =
-            self.annotative_eed_block_for_handle(style.handle, style.annotative).into_iter().collect();
+        let mut eed: Vec<(u64, Vec<u8>)> = self
+            .annotative_eed_block_for_handle(style.handle, style.annotative)
+            .into_iter()
+            .collect();
         // The TrueType typeface goes in `ACAD` EED; the record has no field.
         if !style.true_type_font.trim().is_empty() {
             if let Some(app) = self.document.app_ids.get("ACAD") {
@@ -989,7 +1005,8 @@ impl<'a> DwgObjectWriter<'a> {
         // Oblique angle
         self.writer.write_bit_double(style.oblique_angle);
         // Generation (mirror flags: 2 = backward, 4 = upside down)
-        let generation = (if style.flags.backward { 2u8 } else { 0 }) | (if style.flags.upside_down { 4u8 } else { 0 });
+        let generation = (if style.flags.backward { 2u8 } else { 0 })
+            | (if style.flags.upside_down { 4u8 } else { 0 });
         self.writer.write_byte(generation);
         // Last height (must be > 0; use effective_last_height)
         self.writer.write_bit_double(style.effective_last_height());
@@ -2151,7 +2168,8 @@ impl<'a> DwgObjectWriter<'a> {
                 Some(EntityType::AttributeDefinition(_))
             )
         });
-        self.writer.write_bit(record.flags.has_attributes || has_attributes);
+        self.writer
+            .write_bit(record.flags.has_attributes || has_attributes);
         // Is xref
         self.writer.write_bit(record.flags.is_xref);
         // Is xref overlay
@@ -2194,7 +2212,12 @@ impl<'a> DwgObjectWriter<'a> {
             // Insert count bytes: one non-zero byte per insert handle written
             // below, then a zero terminator.
             for (i, _) in self.block_insert_handles(record).iter().enumerate() {
-                let b = record.insert_count_bytes.get(i).copied().filter(|b| *b != 0).unwrap_or(1);
+                let b = record
+                    .insert_count_bytes
+                    .get(i)
+                    .copied()
+                    .filter(|b| *b != 0)
+                    .unwrap_or(1);
                 self.writer.write_byte(b);
             }
             self.writer.write_byte(0);
@@ -2450,8 +2473,9 @@ impl<'a> DwgObjectWriter<'a> {
             let code_str = type_code.to_string();
             // Category tokens: TABLES (symbol tables + controls + block headers),
             // ENTITIES, OBJECTS (everything else).
-            let is_table =
-                crate::io::dwg::dwg_stream_readers::object_reader::common::is_table_type(*type_code);
+            let is_table = crate::io::dwg::dwg_stream_readers::object_reader::common::is_table_type(
+                *type_code,
+            );
             let is_entity = if *type_code >= 500 {
                 self.document
                     .classes
@@ -2460,7 +2484,9 @@ impl<'a> DwgObjectWriter<'a> {
                     .map(|c| c.is_an_entity)
                     .unwrap_or(false)
             } else {
-                crate::io::dwg::dwg_stream_readers::object_reader::common::is_entity_type(*type_code)
+                crate::io::dwg::dwg_stream_readers::object_reader::common::is_entity_type(
+                    *type_code,
+                )
             };
             let category = if is_table {
                 "TABLES"

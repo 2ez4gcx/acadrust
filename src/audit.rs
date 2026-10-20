@@ -330,15 +330,34 @@ fn invalidate_object_passthrough(object: &mut ObjectType) {
 }
 
 fn migrate_object_side_data(document: &mut CadDocument, old: Handle, new: Handle) {
-    if let Some(value) = document.eed_by_handle.remove(&old) { document.eed_by_handle.insert(new, value); }
-    if let Some(value) = document.object_xdata.remove(&old) { document.object_xdata.insert(new, value); }
-    if let Some(value) = document.xdic_by_handle.remove(&old) { document.xdic_by_handle.insert(new, value); }
-    if let Some(value) = document.reactors_by_handle.remove(&old) { document.reactors_by_handle.insert(new, value); }
-    if let Some(value) = document.block_visibility_params.remove(&old) { document.block_visibility_params.insert(new, value); }
-    if let Some(value) = document.context_scales.remove(&old) { document.context_scales.insert(new, value); }
-    if let Some(value) = document.block_representations.remove(&old) { document.block_representations.insert(new, value); }
-    if let Some(mut value) = document.fields.remove(&old) { value.handle = new; document.fields.insert(new, value); }
-    document.raw_records.retain(|handle, _| *handle != old.value());
+    if let Some(value) = document.eed_by_handle.remove(&old) {
+        document.eed_by_handle.insert(new, value);
+    }
+    if let Some(value) = document.object_xdata.remove(&old) {
+        document.object_xdata.insert(new, value);
+    }
+    if let Some(value) = document.xdic_by_handle.remove(&old) {
+        document.xdic_by_handle.insert(new, value);
+    }
+    if let Some(value) = document.reactors_by_handle.remove(&old) {
+        document.reactors_by_handle.insert(new, value);
+    }
+    if let Some(value) = document.block_visibility_params.remove(&old) {
+        document.block_visibility_params.insert(new, value);
+    }
+    if let Some(value) = document.context_scales.remove(&old) {
+        document.context_scales.insert(new, value);
+    }
+    if let Some(value) = document.block_representations.remove(&old) {
+        document.block_representations.insert(new, value);
+    }
+    if let Some(mut value) = document.fields.remove(&old) {
+        value.handle = new;
+        document.fields.insert(new, value);
+    }
+    document
+        .raw_records
+        .retain(|handle, _| *handle != old.value());
     document.original_objects.remove(&old);
 }
 
@@ -369,7 +388,12 @@ impl CadDocument {
                     .map(|attribute| attribute.common.handle)
                     .chain(insert.seqend_handle);
                 for handle in nested.filter(|handle| !handle.is_null()) {
-                    add_handle(&mut handles, &mut report, handle, AuditLocation::Entity { handle });
+                    add_handle(
+                        &mut handles,
+                        &mut report,
+                        handle,
+                        AuditLocation::Entity { handle },
+                    );
                 }
             }
         }
@@ -425,25 +449,49 @@ impl CadDocument {
         for key in self.objects.keys().copied() {
             if let Some(owner) = self.object_owner(key) {
                 if !known_reference(&known, owner) {
-                    report.issue(AuditIssueCode::DanglingReference, AuditSeverity::Error,
-                        AuditLocation::Reference { owner: key, target: owner }, Some(owner),
-                        "object owner handle is dangling", false);
+                    report.issue(
+                        AuditIssueCode::DanglingReference,
+                        AuditSeverity::Error,
+                        AuditLocation::Reference {
+                            owner: key,
+                            target: owner,
+                        },
+                        Some(owner),
+                        "object owner handle is dangling",
+                        false,
+                    );
                 }
             }
         }
         for (owner, target) in &self.xdic_by_handle {
             if !known_reference(&known, *target) {
-                report.issue(AuditIssueCode::DanglingReference, AuditSeverity::Error,
-                    AuditLocation::Reference { owner: *owner, target: *target }, Some(*target),
-                    "object extension dictionary is dangling", false);
+                report.issue(
+                    AuditIssueCode::DanglingReference,
+                    AuditSeverity::Error,
+                    AuditLocation::Reference {
+                        owner: *owner,
+                        target: *target,
+                    },
+                    Some(*target),
+                    "object extension dictionary is dangling",
+                    false,
+                );
             }
         }
         for (owner, targets) in &self.reactors_by_handle {
             for target in targets {
                 if !known_reference(&known, *target) {
-                    report.issue(AuditIssueCode::DanglingReference, AuditSeverity::Warning,
-                        AuditLocation::Reference { owner: *owner, target: *target }, Some(*target),
-                        "object reactor handle is dangling", false);
+                    report.issue(
+                        AuditIssueCode::DanglingReference,
+                        AuditSeverity::Warning,
+                        AuditLocation::Reference {
+                            owner: *owner,
+                            target: *target,
+                        },
+                        Some(*target),
+                        "object reactor handle is dangling",
+                        false,
+                    );
                 }
             }
         }
@@ -456,7 +504,10 @@ impl CadDocument {
         let mut block_membership: HashMap<Handle, Vec<Handle>> = HashMap::new();
         for block in self.block_records.iter() {
             for child in &block.entity_handles {
-                block_membership.entry(*child).or_default().push(block.handle);
+                block_membership
+                    .entry(*child)
+                    .or_default()
+                    .push(block.handle);
                 if !known_reference(&known, *child) {
                     report.issue(
                         AuditIssueCode::DanglingReference,
@@ -506,17 +557,34 @@ impl CadDocument {
             }
             let common = entity.common();
             if !common.layer.is_empty() && !self.layers.contains(&common.layer) {
-                report.issue(AuditIssueCode::DanglingReference, AuditSeverity::Error,
-                    AuditLocation::Reference { owner: common.handle, target: common.layer_handle.unwrap_or(Handle::NULL) },
-                    common.layer_handle, "entity layer name does not resolve to a layer table record", false);
+                report.issue(
+                    AuditIssueCode::DanglingReference,
+                    AuditSeverity::Error,
+                    AuditLocation::Reference {
+                        owner: common.handle,
+                        target: common.layer_handle.unwrap_or(Handle::NULL),
+                    },
+                    common.layer_handle,
+                    "entity layer name does not resolve to a layer table record",
+                    false,
+                );
             }
-            if !common.linetype.is_empty() && !common.linetype.eq_ignore_ascii_case("BYLAYER")
+            if !common.linetype.is_empty()
+                && !common.linetype.eq_ignore_ascii_case("BYLAYER")
                 && !common.linetype.eq_ignore_ascii_case("BYBLOCK")
                 && !self.line_types.contains(&common.linetype)
             {
-                report.issue(AuditIssueCode::DanglingReference, AuditSeverity::Error,
-                    AuditLocation::Reference { owner: common.handle, target: common.linetype_handle.unwrap_or(Handle::NULL) },
-                    common.linetype_handle, "entity linetype name does not resolve to a linetype table record", false);
+                report.issue(
+                    AuditIssueCode::DanglingReference,
+                    AuditSeverity::Error,
+                    AuditLocation::Reference {
+                        owner: common.handle,
+                        target: common.linetype_handle.unwrap_or(Handle::NULL),
+                    },
+                    common.linetype_handle,
+                    "entity linetype name does not resolve to a linetype table record",
+                    false,
+                );
             }
             if !known_reference(&known, common.owner_handle) {
                 report.issue(
@@ -535,7 +603,9 @@ impl CadDocument {
                 report.issue(
                     AuditIssueCode::OwnerMismatch,
                     AuditSeverity::Warning,
-                    AuditLocation::Entity { handle: common.handle },
+                    AuditLocation::Entity {
+                        handle: common.handle,
+                    },
                     Some(common.owner_handle),
                     "entity owner is not a block record",
                     false,
@@ -546,7 +616,9 @@ impl CadDocument {
                     report.issue(
                         AuditIssueCode::OwnerMismatch,
                         AuditSeverity::Error,
-                        AuditLocation::Entity { handle: common.handle },
+                        AuditLocation::Entity {
+                            handle: common.handle,
+                        },
                         Some(common.handle),
                         "entity is listed by multiple block records",
                         false,
@@ -556,7 +628,9 @@ impl CadDocument {
                         report.issue(
                             AuditIssueCode::OwnerMismatch,
                             AuditSeverity::Error,
-                            AuditLocation::Entity { handle: common.handle },
+                            AuditLocation::Entity {
+                                handle: common.handle,
+                            },
                             Some(common.owner_handle),
                             "entity owner differs from its block membership",
                             false,
@@ -745,11 +819,18 @@ impl CadDocument {
                 let (owner, old_member) = {
                     let common = self.entities[index].common();
                     let owner = common.owner_handle;
-                    let old_member = self.block_records.iter().find(|b| b.handle == owner).and_then(|b| {
-                        b.entity_handles.iter().copied().find(|candidate| {
-                            !self.entities.iter().any(|e| e.common().handle == *candidate)
-                        })
-                    });
+                    let old_member = self
+                        .block_records
+                        .iter()
+                        .find(|b| b.handle == owner)
+                        .and_then(|b| {
+                            b.entity_handles.iter().copied().find(|candidate| {
+                                !self
+                                    .entities
+                                    .iter()
+                                    .any(|e| e.common().handle == *candidate)
+                            })
+                        });
                     (owner, old_member)
                 };
                 let common = std::sync::Arc::make_mut(&mut self.entities[index]).common_mut();
@@ -757,7 +838,9 @@ impl CadDocument {
                 common.raw_record = None;
                 if let Some(old_member) = old_member {
                     if let Some(block) = self.block_records.iter_mut().find(|b| b.handle == owner) {
-                        if let Some(member) = block.entity_handles.iter_mut().find(|m| **m == old_member) {
+                        if let Some(member) =
+                            block.entity_handles.iter_mut().find(|m| **m == old_member)
+                        {
                             *member = handle;
                         }
                     }
@@ -779,8 +862,12 @@ impl CadDocument {
                     object.set_handle(old);
                     invalidate_object_passthrough(object);
                     true
-                } else { false }
-            } else { false };
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
             if repaired {
                 migrate_object_side_data(self, old, old);
             }
@@ -910,13 +997,23 @@ mod tests {
     #[test]
     fn duplicates_are_reported_without_reassigning_handles() {
         let mut document = CadDocument::new();
-        let first = document.add_entity(EntityType::Line(Line::new())).expect("first");
-        let second = document.add_entity(EntityType::Line(Line::new())).expect("second");
-        document.get_entity_mut(second).expect("second lookup").common_mut().handle = first;
+        let first = document
+            .add_entity(EntityType::Line(Line::new()))
+            .expect("first");
+        let second = document
+            .add_entity(EntityType::Line(Line::new()))
+            .expect("second");
+        document
+            .get_entity_mut(second)
+            .expect("second lookup")
+            .common_mut()
+            .handle = first;
         assert!(document.audit().count(AuditIssueCode::DuplicateHandle) > 0);
         let report = document.repair();
         assert!(report.after.count(AuditIssueCode::DuplicateHandle) > 0);
-        assert!(document.entities().all(|entity| entity.common().handle == first));
+        assert!(document
+            .entities()
+            .all(|entity| entity.common().handle == first));
     }
 
     #[test]
@@ -937,9 +1034,13 @@ mod tests {
         let mut dictionary = crate::objects::Dictionary::new();
         dictionary.handle = handle;
         dictionary.add_entry("Missing", Handle::new(0xFFFF));
-        document.objects.insert(handle, ObjectType::Dictionary(dictionary));
+        document
+            .objects
+            .insert(handle, ObjectType::Dictionary(dictionary));
         let report = document.repair();
         assert!(report.after.count(AuditIssueCode::DanglingReference) > 0);
-        assert!(matches!(document.objects.get(&handle), Some(ObjectType::Dictionary(value)) if value.get("Missing") == Some(Handle::new(0xFFFF))));
+        assert!(
+            matches!(document.objects.get(&handle), Some(ObjectType::Dictionary(value)) if value.get("Missing") == Some(Handle::new(0xFFFF)))
+        );
     }
 }

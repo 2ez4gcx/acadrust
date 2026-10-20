@@ -4,7 +4,7 @@
 //! `dwg_stream_writers/object_writer/entities.rs`. They read entity-specific
 //! fields after common entity data has already been parsed.
 
-use super::{safe_count, MAX_MESH_FACES, MAX_MESH_FACE_INDICES};
+use super::safe_count;
 use crate::entities::multileader::*;
 use crate::entities::solid3d::{AcisMaterial, AcisRevision, Silhouette, Wire, WireType};
 use crate::entities::table::{
@@ -22,6 +22,7 @@ use crate::entities::{
 };
 use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use crate::io::dwg::dwg_version::DwgVersion;
+use crate::io::dwg::mesh_budget::MeshFaceBudget;
 use crate::types::{Color, DxfVersion, Handle, LineWeight, Vector2, Vector3};
 
 // ════════════════════════════════════════════════════════════════════════
@@ -747,7 +748,9 @@ pub fn read_point_cloud_ex(reader: &mut DwgMergedReader) -> ExtendedEntityData {
         });
     }
     let scan_count = safe_count(reader.read_bit_long(), reader) as usize;
-    let hidden_scans = (0..scan_count).map(|_| reader.read_variable_text()).collect();
+    let hidden_scans = (0..scan_count)
+        .map(|_| reader.read_variable_text())
+        .collect();
     let region_count = safe_count(reader.read_bit_long(), reader) as usize;
     let hidden_regions = (0..region_count).map(|_| reader.read_bit_long()).collect();
     let stylization_type = reader.read_bit_short();
@@ -1212,7 +1215,11 @@ fn read_lwpolyline_impl(
     };
 
     let raw_num_pts = reader.read_bit_long();
-    let point_bits = if raw_points || version.r13_14_only() { 128 } else { 4 };
+    let point_bits = if raw_points || version.r13_14_only() {
+        128
+    } else {
+        4
+    };
     let num_pts = reader.checked_main_count(i64::from(raw_num_pts), point_bits) as i32;
     let num_bulges = if has_bulges {
         safe_count(reader.read_bit_long(), reader)
@@ -1233,16 +1240,24 @@ fn read_lwpolyline_impl(
 
     // The first compressed vertex is two raw doubles; later vertices need at
     // least two DD selectors. Include all optional arrays before allocating.
-    let required_bits = if num_pts == 0 { 0 } else if point_bits == 128 {
+    let required_bits = if num_pts == 0 {
+        0
+    } else if point_bits == 128 {
         i64::from(num_pts) * 128
     } else {
         128 + i64::from(num_pts - 1) * 4
-    } + i64::from(num_bulges) * 2 + i64::from(num_vertex_ids) * 2 + i64::from(num_widths) * 4;
+    } + i64::from(num_bulges) * 2
+        + i64::from(num_vertex_ids) * 2
+        + i64::from(num_widths) * 4;
     reader.checked_main_count(required_bits, 1);
     if num_bulges > num_pts || num_vertex_ids > num_pts || num_widths > num_pts {
         reader.invalidate("LWPOLYLINE optional array exceeds vertex count");
     }
-    let num_pts = if reader.check_error().is_ok() { num_pts } else { 0 };
+    let num_pts = if reader.check_error().is_ok() {
+        num_pts
+    } else {
+        0
+    };
 
     // Read vertex positions
     let mut xs = Vec::with_capacity(num_pts as usize);
@@ -2025,12 +2040,7 @@ pub struct HatchData {
     pub gradient_shift: f64,
     pub gradient_single_color: bool,
     pub gradient_tint: f64,
-    pub gradient_colors: Vec<(
-        f64,
-        crate::types::Color,
-        Option<String>,
-        Option<String>,
-    )>,
+    pub gradient_colors: Vec<(f64, crate::types::Color, Option<String>, Option<String>)>,
     pub gradient_name: String,
     pub elevation: f64,
     pub normal: Vector3,
@@ -2175,6 +2185,10 @@ pub struct MeshData {
     pub edges: Vec<(i32, i32)>,
     pub crease_values: Vec<f64>,
     pub override_option: i32,
+    /// `true` when at least one in-range face was dropped to stay inside the
+    /// reader face budget. The rest of the face list is still consumed.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub faces_truncated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -3127,6 +3141,13 @@ pub fn read_mline(reader: &mut DwgMergedReader) -> MLineData {
 }
 
 pub fn read_mesh(reader: &mut DwgMergedReader) -> MeshData {
+    read_mesh_with_budget(reader, MeshFaceBudget::from_system())
+}
+
+pub(crate) fn read_mesh_with_budget(
+    reader: &mut DwgMergedReader,
+    budget: MeshFaceBudget,
+) -> MeshData {
     let version = reader.read_bit_short();
     let blend_crease = reader.read_bit();
     let subdivision_level = reader.read_bit_long();
@@ -3139,15 +3160,17 @@ pub fn read_mesh(reader: &mut DwgMergedReader) -> MeshData {
 
     let declared_face_data = reader.read_bit_long();
     let available_face_data = reader.main_remaining_bits().saturating_sub(6) / 2;
-    let total_face_data = if declared_face_data < 0 || i64::from(declared_face_data) > available_face_data {
-        reader.invalidate("MESH face count exceeds remaining main data");
-        0
-    } else {
-        declared_face_data as usize
-    };
+    let total_face_data =
+        if declared_face_data < 0 || i64::from(declared_face_data) > available_face_data {
+            reader.invalidate("MESH face count exceeds remaining main data");
+            0
+        } else {
+            declared_face_data as usize
+        };
     let mut faces = Vec::new();
     let mut consumed = 0usize;
     let mut stored_indices = 0usize;
+    let mut faces_truncated = false;
     while consumed < total_face_data {
         let declared_vertices = reader.read_bit_long();
         consumed = match consumed.checked_add(1) {
@@ -3166,11 +3189,12 @@ pub fn read_mesh(reader: &mut DwgMergedReader) -> MeshData {
             }
         };
 
-        let store_face = (3..=num_verts as usize).contains(&face_vertex_count)
-            && faces.len() < MAX_MESH_FACES
-            && stored_indices
-                .checked_add(face_vertex_count)
-                .is_some_and(|count| count <= MAX_MESH_FACE_INDICES);
+        let geometry_ok = (3..=num_verts as usize).contains(&face_vertex_count);
+        let within_budget = budget.allows_face(faces.len(), stored_indices, face_vertex_count);
+        if geometry_ok && !within_budget {
+            faces_truncated = true;
+        }
+        let store_face = geometry_ok && within_budget;
         let mut valid_face = store_face;
         let mut face = Vec::with_capacity(if valid_face { face_vertex_count } else { 0 });
         for _ in 0..face_vertex_count {
@@ -3219,6 +3243,7 @@ pub fn read_mesh(reader: &mut DwgMergedReader) -> MeshData {
         edges,
         crease_values,
         override_option,
+        faces_truncated,
     }
 }
 
@@ -5183,16 +5208,8 @@ pub fn read_acis_entity(
     dxf_version: DxfVersion,
     has_ds_data: bool,
 ) -> AcisEntityData {
-    read_acis_entity_impl(
-        reader,
-        version,
-        dxf_version,
-        has_ds_data,
-        true,
-        false,
-        None,
-    )
-    .expect("database ACIS decoding retains unrecognized legacy payloads")
+    read_acis_entity_impl(reader, version, dxf_version, has_ds_data, true, false, None)
+        .expect("database ACIS decoding retains unrecognized legacy payloads")
 }
 
 /// Solid-history B-rep objects keep their modeler body inline even in R2013+
@@ -5637,7 +5654,7 @@ pub fn read_surface(
         false,
         None,
     )
-        .expect("database surface decoding retains unrecognized legacy payloads");
+    .expect("database surface decoding retains unrecognized legacy payloads");
     // Surface records do not have the 3DSOLID history-id handle slot.
     let history_handle = 0;
     // The modeler version is already part of the ACIS header. Native

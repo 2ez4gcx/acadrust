@@ -54,7 +54,8 @@ fn sample_helix() -> Helix {
 
 fn roundtrip_helix(via_dwg: bool, version: DxfVersion) -> Helix {
     let mut doc = CadDocument::with_version(version);
-    doc.add_entity(EntityType::Helix(Box::new(sample_helix()))).unwrap();
+    doc.add_entity(EntityType::Helix(Box::new(sample_helix())))
+        .unwrap();
     let rt = if via_dwg {
         dwg_roundtrip(&doc)
     } else {

@@ -830,7 +830,8 @@ impl CellStyle {
         if self.legacy_override_bits {
             self.property_flags
         } else {
-            self.property_flags | CellStylePropertyFlags::from_bits_truncate(self.override_flags as u32)
+            self.property_flags
+                | CellStylePropertyFlags::from_bits_truncate(self.override_flags as u32)
         }
     }
 
@@ -1085,7 +1086,12 @@ impl TableCell {
                 for (color_bit, weight_bit, edge, border) in [
                     (0x40, 0x400, CellEdgeFlags::TOP, &mut style.top_border),
                     (0x80, 0x800, CellEdgeFlags::RIGHT, &mut style.right_border),
-                    (0x100, 0x1000, CellEdgeFlags::BOTTOM, &mut style.bottom_border),
+                    (
+                        0x100,
+                        0x1000,
+                        CellEdgeFlags::BOTTOM,
+                        &mut style.bottom_border,
+                    ),
                     (0x200, 0x2000, CellEdgeFlags::LEFT, &mut style.left_border),
                 ] {
                     if own.override_flags & color_bit != 0 {

@@ -1,4 +1,3 @@
-
 use std::io::Cursor;
 
 use acadrust::tables::{DimStyle, TextStyle};
@@ -6,7 +5,9 @@ use acadrust::types::DxfVersion;
 use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 fn dxf_roundtrip(doc: &CadDocument) -> CadDocument {
-    let bytes = DxfWriter::new(doc).write_to_vec().expect("DXF write failed");
+    let bytes = DxfWriter::new(doc)
+        .write_to_vec()
+        .expect("DXF write failed");
     DxfReader::from_reader(Cursor::new(bytes))
         .expect("DXF reader init failed")
         .read()
@@ -29,7 +30,11 @@ fn text_style_generation_flags_survive() {
     let mut style = TextStyle::new("OnlyBackward");
     style.flags.backward = true;
     doc.text_styles.add(style).unwrap();
-    let style = dxf_roundtrip(&doc).text_styles.get("OnlyBackward").cloned().unwrap();
+    let style = dxf_roundtrip(&doc)
+        .text_styles
+        .get("OnlyBackward")
+        .cloned()
+        .unwrap();
     assert!(style.flags.backward && !style.flags.upside_down);
 }
 
@@ -42,7 +47,10 @@ fn text_style_oblique_angle_is_degrees_on_the_wire() {
     // The DXF group 50 of a STYLE record is in degrees.
     let text = String::from_utf8(DxfWriter::new(&doc).write_to_vec().unwrap()).unwrap();
     let lines: Vec<&str> = text.lines().map(str::trim).collect();
-    let at = lines.iter().position(|l| *l == "Slanted").expect("style record");
+    let at = lines
+        .iter()
+        .position(|l| *l == "Slanted")
+        .expect("style record");
     // `at` is the value of group 2; group/value pairs run from one line earlier.
     let group50 = lines[at - 1..]
         .chunks(2)
@@ -50,10 +58,17 @@ fn text_style_oblique_angle_is_degrees_on_the_wire() {
         .find(|pair| pair[0] == "50")
         .map(|pair| pair[1].parse::<f64>().unwrap())
         .expect("group 50");
-    assert!((group50 - 15.0).abs() < 1e-9, "written {group50}, expected 15 degrees");
+    assert!(
+        (group50 - 15.0).abs() < 1e-9,
+        "written {group50}, expected 15 degrees"
+    );
     let rt = dxf_roundtrip(&doc);
     let style = rt.text_styles.get("Slanted").unwrap();
-    assert!((style.oblique_angle - 15f64.to_radians()).abs() < 1e-9, "read back {}", style.oblique_angle);
+    assert!(
+        (style.oblique_angle - 15f64.to_radians()).abs() < 1e-9,
+        "read back {}",
+        style.oblique_angle
+    );
 }
 
 #[test]

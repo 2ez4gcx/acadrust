@@ -234,7 +234,10 @@ fn read_history_entity(
         } else {
             super::entities::read_extra_acis_data(reader, None).unwrap_or_default()
         };
-        return Some(crate::entities::EmbeddedEntity::Body { type_code, acis_data });
+        return Some(crate::entities::EmbeddedEntity::Body {
+            type_code,
+            acis_data,
+        });
     }
     let bit_length = safe_count(reader.read_bit_long(), reader) as usize;
     crate::io::dwg::embedded_entity::read_embedded_entity_bits(

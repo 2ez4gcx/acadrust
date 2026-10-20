@@ -175,7 +175,8 @@ fn bow_tie_stays_a_valid_loop() {
 fn write_and_read(mpolygons: &[Hatch]) -> Vec<Hatch> {
     let mut doc = CadDocument::new();
     for hatch in mpolygons {
-        doc.add_entity(EntityType::Hatch(Box::new(hatch.clone()))).unwrap();
+        doc.add_entity(EntityType::Hatch(Box::new(hatch.clone())))
+            .unwrap();
     }
     mpolygons_of(&read(DwgWriter::write_to_vec(&doc).unwrap()))
 }

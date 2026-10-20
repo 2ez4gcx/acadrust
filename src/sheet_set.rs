@@ -1,4 +1,3 @@
-
 use crate::document::CadDocument;
 use crate::fields::FieldContext;
 use crate::objects::{Dictionary, ObjectType, XRecord, XRecordValue};
@@ -9,7 +8,11 @@ const fn encode_byte(p: u8) -> u8 {
     let q = p.wrapping_add(1);
     let low = (q & 0x0F) ^ 0x0D;
     let h = q >> 4;
-    let hc = if h & 1 == 1 { (h + 10) & 0x0F } else { (h + 8) & 0x0F };
+    let hc = if h & 1 == 1 {
+        (h + 10) & 0x0F
+    } else {
+        (h + 8) & 0x0F
+    };
     (hc << 4) | low
 }
 
@@ -53,11 +56,17 @@ pub struct Element {
 
 impl Element {
     pub fn new(name: &str) -> Self {
-        Self { name: name.into(), ..Self::default() }
+        Self {
+            name: name.into(),
+            ..Self::default()
+        }
     }
 
     pub fn attr(&self, key: &str) -> Option<&str> {
-        self.attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+        self.attrs
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
 
     pub fn id(&self) -> &str {
@@ -73,11 +82,15 @@ impl Element {
     }
 
     pub fn named_mut(&mut self, name: &str) -> Option<&mut Element> {
-        self.children.iter_mut().find(|c| c.propname() == Some(name))
+        self.children
+            .iter_mut()
+            .find(|c| c.propname() == Some(name))
     }
 
     pub fn prop(&self, name: &str) -> Option<&str> {
-        self.named(name).filter(|c| c.name == "AcSmProp").map(|c| c.text.as_str())
+        self.named(name)
+            .filter(|c| c.name == "AcSmProp")
+            .map(|c| c.text.as_str())
     }
 
     pub fn set_prop(&mut self, name: &str, value: &str) {
@@ -94,7 +107,11 @@ impl Element {
 
     pub fn put_named(&mut self, child: Element) {
         let name = child.propname().unwrap_or("").to_string();
-        if let Some(i) = self.children.iter().position(|c| c.propname() == Some(&name)) {
+        if let Some(i) = self
+            .children
+            .iter()
+            .position(|c| c.propname() == Some(&name))
+        {
             self.children[i] = child;
             return;
         }
@@ -192,9 +209,9 @@ fn unescape(s: &str) -> String {
             "gt" => Some('>'),
             "quot" => Some('"'),
             "apos" => Some('\''),
-            e if e.starts_with("#x") || e.starts_with("#X") => {
-                u32::from_str_radix(&e[2..], 16).ok().and_then(char::from_u32)
-            }
+            e if e.starts_with("#x") || e.starts_with("#X") => u32::from_str_radix(&e[2..], 16)
+                .ok()
+                .and_then(char::from_u32),
             e if e.starts_with('#') => e[1..].parse().ok().and_then(char::from_u32),
             _ => None,
         };
@@ -217,7 +234,11 @@ impl Parser<'_> {
     fn skip_ws(&mut self) {
         // Step by the character's width: a multi-byte space (U+00A0) would
         // otherwise leave `i` inside it and the next slice would panic.
-        while let Some(c) = self.s[self.i..].chars().next().filter(|c| c.is_whitespace()) {
+        while let Some(c) = self.s[self.i..]
+            .chars()
+            .next()
+            .filter(|c| c.is_whitespace())
+        {
             self.i += c.len_utf8();
         }
     }
@@ -352,10 +373,12 @@ pub fn new_id() -> String {
         let mut h = RandomState::new().build_hasher();
         h.write_u64(n);
         h.write_u64(salt);
-        h.write_u128(web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0));
+        h.write_u128(
+            web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        );
         h.finish()
     };
     let (a, b) = (word(0x5eed), word(0xfeed));
@@ -375,7 +398,10 @@ pub fn new_id() -> String {
 pub fn prop(name: &str, vt: i32, value: &str) -> Element {
     Element {
         name: "AcSmProp".into(),
-        attrs: vec![("propname".into(), name.into()), ("vt".into(), vt.to_string())],
+        attrs: vec![
+            ("propname".into(), name.into()),
+            ("vt".into(), vt.to_string()),
+        ],
         text: value.into(),
         children: Vec::new(),
     }
@@ -432,15 +458,31 @@ impl SheetSetDatabase {
         let mut set = object("AcSmSheetSet", CLSID_SHEET_SET, Some("SheetSet"));
         for (tag, clsid, name) in [
             ("AcSmCalloutBlocks", CLSID_CALLOUT_BLOCKS, "CalloutBlocks"),
-            ("AcSmCustomPropertyBag", CLSID_CUSTOM_PROPERTY_BAG, "CustomPropertyBag"),
-            ("AcSmProjectPointLocations", CLSID_PROJECT_POINT_LOCATIONS, "ProjectPointLocations"),
+            (
+                "AcSmCustomPropertyBag",
+                CLSID_CUSTOM_PROPERTY_BAG,
+                "CustomPropertyBag",
+            ),
+            (
+                "AcSmProjectPointLocations",
+                CLSID_PROJECT_POINT_LOCATIONS,
+                "ProjectPointLocations",
+            ),
             ("AcSmResources", CLSID_RESOURCES, "Resources"),
             ("AcSmSheetSelSets", CLSID_SHEET_SEL_SETS, "SheetSelSets"),
-            ("AcSmViewCategories", CLSID_VIEW_CATEGORIES, "ViewCategories"),
+            (
+                "AcSmViewCategories",
+                CLSID_VIEW_CATEGORIES,
+                "ViewCategories",
+            ),
         ] {
             set.put_named(object(tag, clsid, Some(name)));
         }
-        let mut publish = object("AcSmPublishOptions", CLSID_PUBLISH_OPTIONS, Some("PublishOptions"));
+        let mut publish = object(
+            "AcSmPublishOptions",
+            CLSID_PUBLISH_OPTIONS,
+            Some("PublishOptions"),
+        );
         publish.set_prop_vt("DwfType", 2, "-1");
         publish.set_prop_vt("PromptForName", 2, "-1");
         set.put_named(publish);
@@ -485,20 +527,28 @@ impl SheetSetDatabase {
         // The publish options always carry the (empty) default output folder.
         if let Some(p) = self.sheet_set_mut().named_mut("PublishOptions") {
             if p.named("DefaultOutputdir").is_none() {
-                p.put_named(object("AcSmSimpleFileReferece", CLSID_SIMPLE_FILE_REFERENCE, Some("DefaultOutputdir")));
+                p.put_named(object(
+                    "AcSmSimpleFileReferece",
+                    CLSID_SIMPLE_FILE_REFERENCE,
+                    Some("DefaultOutputdir"),
+                ));
             }
         }
         // Every save gets a new fingerprint and counts the revision up.
         let revision = self.file_revision() + 1;
         self.root.set_prop("DbFingerPrint", &new_id());
-        self.root.set_prop_vt("FileRevision", 3, &revision.to_string());
+        self.root
+            .set_prop_vt("FileRevision", 3, &revision.to_string());
         std::fs::write(path, self.to_bytes()).map_err(|e| e.to_string())?;
         self.path = Some(path.to_string());
         Ok(())
     }
 
     pub fn file_revision(&self) -> i32 {
-        self.root.prop("FileRevision").and_then(|v| v.trim().parse().ok()).unwrap_or(0)
+        self.root
+            .prop("FileRevision")
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0)
     }
 
     pub fn sheet_set(&self) -> &Element {
@@ -510,7 +560,11 @@ impl SheetSetDatabase {
     }
 
     pub fn sheet_set_mut(&mut self) -> &mut Element {
-        let i = self.root.children.iter().position(|c| c.name == "AcSmSheetSet");
+        let i = self
+            .root
+            .children
+            .iter()
+            .position(|c| c.name == "AcSmSheetSet");
         match i {
             Some(i) => &mut self.root.children[i],
             None => &mut self.root,
@@ -539,7 +593,10 @@ impl SheetSetDatabase {
     }
 
     pub fn add_subset(&mut self, parent: &str, name: &str, description: &str) -> Option<String> {
-        let prompt = self.find(parent)?.prop("PromptForDwt").is_some_and(|v| !matches!(v.trim(), "" | "0"));
+        let prompt = self
+            .find(parent)?
+            .prop("PromptForDwt")
+            .is_some_and(|v| !matches!(v.trim(), "" | "0"));
         let inherited: Vec<Element> = {
             let p = self.find(parent)?;
             ["DefDwtLayout", "NewSheetLocation"]
@@ -565,7 +622,13 @@ impl SheetSetDatabase {
         Some(id)
     }
 
-    pub fn add_sheet(&mut self, parent: &str, number: &str, title: &str, description: &str) -> Option<String> {
+    pub fn add_sheet(
+        &mut self,
+        parent: &str,
+        number: &str,
+        title: &str,
+        description: &str,
+    ) -> Option<String> {
         // Empty fields are left out; the property bag comes with the first
         // sheet property.
         let mut sheet = object("AcSmSheet", CLSID_SHEET, None);
@@ -575,7 +638,11 @@ impl SheetSetDatabase {
         if !number.is_empty() {
             sheet.set_prop("Number", number);
         }
-        sheet.put_named(object("AcSmSheetViews", CLSID_SHEET_VIEWS, Some("SheetViews")));
+        sheet.put_named(object(
+            "AcSmSheetViews",
+            CLSID_SHEET_VIEWS,
+            Some("SheetViews"),
+        ));
         sheet.set_prop("Title", title);
         // New sheets get the set's sheet properties with their defaults.
         for (name, value, flags) in custom_properties(self.sheet_set()) {
@@ -620,7 +687,12 @@ impl SheetSetDatabase {
         Some(self.resolve_file(r))
     }
 
-    pub fn set_layout_reference(&mut self, component: &str, propname: &str, reference: &LayoutReference) -> bool {
+    pub fn set_layout_reference(
+        &mut self,
+        component: &str,
+        propname: &str,
+        reference: &LayoutReference,
+    ) -> bool {
         let folder = self.folder();
         let Some(el) = self.find_mut(component) else {
             return false;
@@ -631,7 +703,11 @@ impl SheetSetDatabase {
                 r.children.clear();
                 r
             }
-            _ => object("AcSmAcDbLayoutReference", CLSID_LAYOUT_REFERENCE, Some(propname)),
+            _ => object(
+                "AcSmAcDbLayoutReference",
+                CLSID_LAYOUT_REFERENCE,
+                Some(propname),
+            ),
         };
         if !reference.handle.is_empty() {
             r.set_prop("AcDbHandle", &reference.handle);
@@ -655,7 +731,8 @@ impl SheetSetDatabase {
         let absolute = reference.prop("FileName").unwrap_or("").to_string();
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if let (Some(rel), Some(folder)) = (reference.prop("Relative_FileName"), self.folder()) {
+            if let (Some(rel), Some(folder)) = (reference.prop("Relative_FileName"), self.folder())
+            {
                 let joined = folder.join(rel.replace('\\', std::path::MAIN_SEPARATOR_STR));
                 if joined.exists() || absolute.is_empty() {
                     return normalize_path(&joined);
@@ -706,13 +783,15 @@ impl SheetSetDatabase {
     pub fn sheet_value(&self, sheet: &Element, component: &str, property: &str) -> Option<String> {
         let set = self.sheet_set();
         let custom = |el: &Element, name: &str| {
-            custom_properties(el).into_iter().find(|(n, _, _)| n == name).map(|(_, v, _)| v)
+            custom_properties(el)
+                .into_iter()
+                .find(|(n, _, _)| n == name)
+                .map(|(_, v, _)| v)
         };
         match component {
             "Sheet" => Some(match property {
-                "Number" | "Title" | "RevisionNumber" | "RevisionDate" | "IssuePurpose" | "Category" => {
-                    sheet.prop(property).unwrap_or("").to_string()
-                }
+                "Number" | "Title" | "RevisionNumber" | "RevisionDate" | "IssuePurpose"
+                | "Category" => sheet.prop(property).unwrap_or("").to_string(),
                 "Description" => sheet.prop("Desc").unwrap_or("").to_string(),
                 "NumberAndTitle" => number_and_title(sheet),
                 // A sheet property the sheet lacks shows the set's default.
@@ -747,11 +826,19 @@ impl SheetSetDatabase {
                 set.prop(property).unwrap_or("").to_string()
             }
             "Description" => set.prop("Desc").unwrap_or("").to_string(),
-            other => custom_properties(set).into_iter().find(|(n, _, _)| n == other).map(|(_, v, _)| v)?,
+            other => custom_properties(set)
+                .into_iter()
+                .find(|(n, _, _)| n == other)
+                .map(|(_, v, _)| v)?,
         })
     }
 
-    pub fn navigation_value(&self, set_id: &str, component: Option<&str>, property: &str) -> Option<String> {
+    pub fn navigation_value(
+        &self,
+        set_id: &str,
+        component: Option<&str>,
+        property: &str,
+    ) -> Option<String> {
         if !self.sheet_set().id().eq_ignore_ascii_case(set_id) {
             return None;
         }
@@ -782,24 +869,40 @@ impl SheetSetDatabase {
     pub fn view_categories(&self) -> Vec<&Element> {
         self.sheet_set()
             .named("ViewCategories")
-            .map(|v| v.children.iter().filter(|c| c.name == "AcSmViewCategory" && c.prop("Name").is_some()).collect())
+            .map(|v| {
+                v.children
+                    .iter()
+                    .filter(|c| c.name == "AcSmViewCategory" && c.prop("Name").is_some())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
     pub fn callout_blocks(&self) -> Vec<&Element> {
-        self.sheet_set().named("CalloutBlocks").map(|v| v.children.iter().collect()).unwrap_or_default()
+        self.sheet_set()
+            .named("CalloutBlocks")
+            .map(|v| v.children.iter().collect())
+            .unwrap_or_default()
     }
 
     pub fn add_callout_block(&mut self, file: &str, name: &str, handle: &str) -> Option<String> {
         let folder = self.folder();
-        let mut r = object("AcSmAcDbBlockRecordReference", CLSID_BLOCK_RECORD_REFERENCE, None);
+        let mut r = object(
+            "AcSmAcDbBlockRecordReference",
+            CLSID_BLOCK_RECORD_REFERENCE,
+            None,
+        );
         r.set_prop("AcDbHandle", handle);
         set_file_props(&mut r, file, folder.as_deref());
         r.set_prop("Name", name);
         let id = r.id().to_string();
         let set = self.sheet_set_mut();
         if set.named("CalloutBlocks").is_none() {
-            set.put_named(object("AcSmCalloutBlocks", CLSID_CALLOUT_BLOCKS, Some("CalloutBlocks")));
+            set.put_named(object(
+                "AcSmCalloutBlocks",
+                CLSID_CALLOUT_BLOCKS,
+                Some("CalloutBlocks"),
+            ));
         }
         set.named_mut("CalloutBlocks")?.children.push(r);
         Some(id)
@@ -808,12 +911,26 @@ impl SheetSetDatabase {
     pub fn category_blocks(&self, id: &str) -> Vec<String> {
         self.find(id)
             .and_then(|c| c.named("CalloutBlocks"))
-            .map(|r| r.children.iter().filter_map(|o| o.prop("ReferencedObject").map(str::to_string)).collect())
+            .map(|r| {
+                r.children
+                    .iter()
+                    .filter_map(|o| o.prop("ReferencedObject").map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
-    pub fn set_view_category(&mut self, id: Option<&str>, name: &str, blocks: &[String]) -> Option<String> {
-        let mut refs = object("AcSmCalloutBlockReferences", CLSID_CALLOUT_BLOCK_REFERENCES, Some("CalloutBlocks"));
+    pub fn set_view_category(
+        &mut self,
+        id: Option<&str>,
+        name: &str,
+        blocks: &[String],
+    ) -> Option<String> {
+        let mut refs = object(
+            "AcSmCalloutBlockReferences",
+            CLSID_CALLOUT_BLOCK_REFERENCES,
+            Some("CalloutBlocks"),
+        );
         for b in blocks {
             let mut o = object("AcSmObjectReference", CLSID_OBJECT_REFERENCE, None);
             o.set_prop_vt("ReferencedObject", -1, b);
@@ -831,29 +948,56 @@ impl SheetSetDatabase {
         let new = c.id().to_string();
         let set = self.sheet_set_mut();
         if set.named("ViewCategories").is_none() {
-            set.put_named(object("AcSmViewCategories", CLSID_VIEW_CATEGORIES, Some("ViewCategories")));
+            set.put_named(object(
+                "AcSmViewCategories",
+                CLSID_VIEW_CATEGORIES,
+                Some("ViewCategories"),
+            ));
         }
         set.named_mut("ViewCategories")?.children.push(c);
         Some(new)
     }
 
     pub fn sheet_views<'a>(&'a self, sheet: &'a Element) -> Vec<&'a Element> {
-        sheet.named("SheetViews").map(|v| v.children.iter().filter(|c| c.name == "AcSmSheetView").collect()).unwrap_or_default()
+        sheet
+            .named("SheetViews")
+            .map(|v| {
+                v.children
+                    .iter()
+                    .filter(|c| c.name == "AcSmSheetView")
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn view_category_of(view: &Element) -> Option<&str> {
-        view.named("Category").and_then(|c| c.prop("ReferencedObject"))
+        view.named("Category")
+            .and_then(|c| c.prop("ReferencedObject"))
     }
 
-    pub fn add_sheet_view(&mut self, sheet: &str, category: Option<&str>, view: &LayoutReference, title: &str) -> Option<String> {
+    pub fn add_sheet_view(
+        &mut self,
+        sheet: &str,
+        category: Option<&str>,
+        view: &LayoutReference,
+        title: &str,
+    ) -> Option<String> {
         let folder = self.folder();
         let mut v = object("AcSmSheetView", CLSID_SHEET_VIEW, None);
         if let Some(c) = category {
-            let mut r = object("AcSmObjectReference", CLSID_OBJECT_REFERENCE, Some("Category"));
+            let mut r = object(
+                "AcSmObjectReference",
+                CLSID_OBJECT_REFERENCE,
+                Some("Category"),
+            );
             r.set_prop_vt("ReferencedObject", -1, c);
             v.put_named(r);
         }
-        let mut r = object("AcSmAcDbViewReference", CLSID_VIEW_REFERENCE, Some("NamedView"));
+        let mut r = object(
+            "AcSmAcDbViewReference",
+            CLSID_VIEW_REFERENCE,
+            Some("NamedView"),
+        );
         r.set_prop("AcDbHandle", &view.handle);
         set_file_props(&mut r, &view.file_name, folder.as_deref());
         r.set_prop("Name", &view.name);
@@ -862,7 +1006,11 @@ impl SheetSetDatabase {
         let id = v.id().to_string();
         let sh = self.find_mut(sheet)?;
         if sh.named("SheetViews").is_none() {
-            sh.put_named(object("AcSmSheetViews", CLSID_SHEET_VIEWS, Some("SheetViews")));
+            sh.put_named(object(
+                "AcSmSheetViews",
+                CLSID_SHEET_VIEWS,
+                Some("SheetViews"),
+            ));
         }
         sh.named_mut("SheetViews")?.children.push(v);
         Some(id)
@@ -911,7 +1059,9 @@ pub fn custom_properties(el: &Element) -> Vec<(String, String, i32)> {
                     (
                         c.propname().unwrap_or("").to_string(),
                         c.prop("Value").unwrap_or("").to_string(),
-                        c.prop("Flags").and_then(|f| f.trim().parse().ok()).unwrap_or(0),
+                        c.prop("Flags")
+                            .and_then(|f| f.trim().parse().ok())
+                            .unwrap_or(0),
                     )
                 })
                 .collect()
@@ -921,15 +1071,26 @@ pub fn custom_properties(el: &Element) -> Vec<(String, String, i32)> {
 
 pub fn set_custom_property(el: &mut Element, name: &str, value: &str, flags: i32) {
     if el.named("CustomPropertyBag").is_none() {
-        el.put_named(object("AcSmCustomPropertyBag", CLSID_CUSTOM_PROPERTY_BAG, Some("CustomPropertyBag")));
+        el.put_named(object(
+            "AcSmCustomPropertyBag",
+            CLSID_CUSTOM_PROPERTY_BAG,
+            Some("CustomPropertyBag"),
+        ));
     }
     let bag = el.named_mut("CustomPropertyBag").expect("bag");
-    if let Some(v) = bag.named_mut(name).filter(|c| c.name == "AcSmCustomPropertyValue") {
+    if let Some(v) = bag
+        .named_mut(name)
+        .filter(|c| c.name == "AcSmCustomPropertyValue")
+    {
         v.set_prop_vt("Flags", 3, &flags.to_string());
         v.set_prop("Value", value);
         return;
     }
-    let mut v = object("AcSmCustomPropertyValue", CLSID_CUSTOM_PROPERTY_VALUE, Some(name));
+    let mut v = object(
+        "AcSmCustomPropertyValue",
+        CLSID_CUSTOM_PROPERTY_VALUE,
+        Some(name),
+    );
     v.set_prop_vt("Flags", 3, &flags.to_string());
     v.set_prop("Value", value);
     // The bag keeps its values in insertion order.
@@ -943,7 +1104,12 @@ pub fn remove_custom_property(el: &mut Element, name: &str) {
 }
 
 fn set_file_props(r: &mut Element, file: &str, folder: Option<&std::path::Path>) {
-    for p in ["Environ_FileName", "FileName", "Relative_FileName", "SpecialFolder_FileName"] {
+    for p in [
+        "Environ_FileName",
+        "FileName",
+        "Relative_FileName",
+        "SpecialFolder_FileName",
+    ] {
         r.remove_named(p);
     }
     let file = &native_path(file);
@@ -965,7 +1131,11 @@ pub fn relative_path(folder: &std::path::Path, file: &std::path::Path) -> Option
     if a.is_empty() || b.is_empty() || !a[0].eq_ignore_ascii_case(&b[0]) {
         return None;
     }
-    let common = a.iter().zip(&b).take_while(|(x, y)| x.eq_ignore_ascii_case(y)).count();
+    let common = a
+        .iter()
+        .zip(&b)
+        .take_while(|(x, y)| x.eq_ignore_ascii_case(y))
+        .count();
     let mut out: Vec<String> = Vec::new();
     if common == a.len() {
         out.push(".".into());
@@ -1019,7 +1189,9 @@ pub struct SheetSetData {
 
 impl CadDocument {
     pub fn sheet_set_data(&self) -> Option<SheetSetData> {
-        let ObjectType::Dictionary(nod) = self.objects.get(&self.header.named_objects_dict_handle)? else {
+        let ObjectType::Dictionary(nod) =
+            self.objects.get(&self.header.named_objects_dict_handle)?
+        else {
             return None;
         };
         let ObjectType::Dictionary(dict) = self.objects.get(&nod.get(SHEET_SET_DATA)?)? else {
@@ -1031,7 +1203,12 @@ impl CadDocument {
             };
             x.entries.iter().find(|e| e.code != 280).map(|e| &e.value)
         };
-        let text = |key: &str| value(key).and_then(|v| v.as_string()).unwrap_or("").to_string();
+        let text = |key: &str| {
+            value(key)
+                .and_then(|v| v.as_string())
+                .unwrap_or("")
+                .to_string()
+        };
         let int = |key: &str| value(key).and_then(|v| v.as_i32()).unwrap_or(0);
         Some(SheetSetData {
             layout_handle: text("LayoutHandle"),
@@ -1068,13 +1245,37 @@ impl CadDocument {
             }
         };
         let records: [(&str, XRecordValue, i32); 7] = [
-            ("LayoutHandle", XRecordValue::String(data.layout_handle.clone()), 1),
-            ("LayoutName", XRecordValue::String(data.layout_name.clone()), 1),
-            ("SheetDwgName", XRecordValue::String(data.sheet_dwg_name.clone()), 1),
-            ("ShSetFileName", XRecordValue::String(data.sheet_set_file_name.clone()), 1),
-            ("ShSetVersion", XRecordValue::Int32(data.sheet_set_version), 90),
+            (
+                "LayoutHandle",
+                XRecordValue::String(data.layout_handle.clone()),
+                1,
+            ),
+            (
+                "LayoutName",
+                XRecordValue::String(data.layout_name.clone()),
+                1,
+            ),
+            (
+                "SheetDwgName",
+                XRecordValue::String(data.sheet_dwg_name.clone()),
+                1,
+            ),
+            (
+                "ShSetFileName",
+                XRecordValue::String(data.sheet_set_file_name.clone()),
+                1,
+            ),
+            (
+                "ShSetVersion",
+                XRecordValue::Int32(data.sheet_set_version),
+                90,
+            ),
             ("UpdateCount", XRecordValue::Int32(data.update_count), 90),
-            ("UpdateTime", XRecordValue::String(data.update_time.clone()), 1),
+            (
+                "UpdateTime",
+                XRecordValue::String(data.update_time.clone()),
+                1,
+            ),
         ];
         for (key, value, code) in records {
             let old = match self.objects.get(&dict_handle) {
@@ -1089,7 +1290,8 @@ impl CadDocument {
             x.owner = dict_handle;
             x.reactors = vec![dict_handle];
             x.cloning_flags = crate::objects::DictionaryCloningFlags::KeepExisting;
-            x.entries.push(crate::objects::XRecordEntry::new(code, value));
+            x.entries
+                .push(crate::objects::XRecordEntry::new(code, value));
             self.objects.insert(handle, ObjectType::XRecord(x));
             if old != Some(handle) {
                 if let Some(ObjectType::Dictionary(d)) = self.objects.get_mut(&dict_handle) {
@@ -1105,8 +1307,12 @@ impl CadDocument {
 
 pub fn placeholder_type_name(component: &str, property: &str) -> String {
     match (component, property) {
-        ("Sheet", "NumberAndTitle" | "Title" | "Number" | "Description") => format!("Sheet{property}"),
-        ("Sheet", "RevisionNumber" | "RevisionDate" | "IssuePurpose" | "Category") => property.to_string(),
+        ("Sheet", "NumberAndTitle" | "Title" | "Number" | "Description") => {
+            format!("Sheet{property}")
+        }
+        ("Sheet", "RevisionNumber" | "RevisionDate" | "IssuePurpose" | "Category") => {
+            property.to_string()
+        }
         ("Sheet", _) => "Custom".into(),
         ("View", "ViewportScale") => "ViewportScale".into(),
         ("View", p) => format!("View{p}"),
@@ -1167,7 +1373,10 @@ pub fn field_child_values(code: &str) -> Vec<(&'static str, String)> {
             v.push(("SheetSetPropertyName", property));
             v
         }
-        None => vec![("SheetSetCompName", component), ("SheetSetPropertyName", property)],
+        None => vec![
+            ("SheetSetCompName", component),
+            ("SheetSetPropertyName", property),
+        ],
     }
 }
 
@@ -1191,7 +1400,9 @@ pub(crate) fn eval_acsm(
         if let Some((file, set, Some(comp))) = parse_navigation(&component) {
             let named = ctx
                 .sheet_sets(&mut |db: &SheetSetDatabase| {
-                    db.path.as_deref().filter(|p| path_key(p) == path_key(&file))?;
+                    db.path
+                        .as_deref()
+                        .filter(|p| path_key(p) == path_key(&file))?;
                     view_named_ref(db, &set, &comp)
                 })
                 .or_else(|| read_view_named_ref(&file, &set, &comp));
@@ -1199,7 +1410,10 @@ pub(crate) fn eval_acsm(
                 return Some(NOT_A_SHEET.into());
             };
             let (drawing, handle, name) = split_named_ref(&named);
-            return Some(view_scale(doc, drawing, handle, name).map_or_else(|| NOT_A_SHEET.into(), |scale| crate::fields::plot_scale_text(doc, scale, &fmt)));
+            return Some(view_scale(doc, drawing, handle, name).map_or_else(
+                || NOT_A_SHEET.into(),
+                |scale| crate::fields::plot_scale_text(doc, scale, &fmt),
+            ));
         }
     }
     let value = if let Some((file, set, comp)) = parse_navigation(&component) {
@@ -1236,12 +1450,21 @@ fn view_named_ref(db: &SheetSetDatabase, set: &str, comp: &str) -> Option<String
         return None;
     }
     let r = db.find(comp)?.named("NamedView")?;
-    Some(format!("{}|{}|{}", db.resolve_file(r), r.prop("AcDbHandle").unwrap_or(""), r.prop("Name").unwrap_or("")))
+    Some(format!(
+        "{}|{}|{}",
+        db.resolve_file(r),
+        r.prop("AcDbHandle").unwrap_or(""),
+        r.prop("Name").unwrap_or("")
+    ))
 }
 
 fn split_named_ref(s: &str) -> (&str, &str, &str) {
     let mut p = s.splitn(3, '|');
-    (p.next().unwrap_or(""), p.next().unwrap_or(""), p.next().unwrap_or(""))
+    (
+        p.next().unwrap_or(""),
+        p.next().unwrap_or(""),
+        p.next().unwrap_or(""),
+    )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1255,7 +1478,10 @@ fn read_view_named_ref(_: &str, _: &str, _: &str) -> Option<String> {
 }
 
 fn view_scale(doc: &CadDocument, drawing: &str, handle: &str, name: &str) -> Option<f64> {
-    let in_doc = doc.source_path.as_deref().is_some_and(|p| path_key(p) == path_key(drawing));
+    let in_doc = doc
+        .source_path
+        .as_deref()
+        .is_some_and(|p| path_key(p) == path_key(drawing));
     #[cfg(not(target_arch = "wasm32"))]
     let loaded;
     let sheet: &CadDocument = if in_doc {
@@ -1273,7 +1499,12 @@ fn view_scale(doc: &CadDocument, drawing: &str, handle: &str, name: &str) -> Opt
         .views
         .iter()
         .find(|v| format!("{:X}", v.handle.value()).eq_ignore_ascii_case(handle))
-        .or_else(|| sheet.views.iter().find(|v| v.name.eq_ignore_ascii_case(name)))?;
+        .or_else(|| {
+            sheet
+                .views
+                .iter()
+                .find(|v| v.name.eq_ignore_ascii_case(name))
+        })?;
     // ponytail: the view and its viewport are paired by the nearest centre;
     // a stored link would be exact if one turns up.
     sheet
@@ -1283,15 +1514,30 @@ fn view_scale(doc: &CadDocument, drawing: &str, handle: &str, name: &str) -> Opt
             _ => None,
         })
         .min_by(|a, b| {
-            let d = |vp: &crate::entities::Viewport| (vp.center.x - view.center.x).hypot(vp.center.y - view.center.y);
+            let d = |vp: &crate::entities::Viewport| {
+                (vp.center.x - view.center.x).hypot(vp.center.y - view.center.y)
+            };
             d(a).total_cmp(&d(b))
         })
-        .map(|vp| if vp.custom_scale > 0.0 { vp.custom_scale } else { vp.height / vp.view_height })
+        .map(|vp| {
+            if vp.custom_scale > 0.0 {
+                vp.custom_scale
+            } else {
+                vp.height / vp.view_height
+            }
+        })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn read_navigation(file: &str, set: &str, component: Option<&str>, property: &str) -> Option<String> {
-    SheetSetDatabase::read(file).ok()?.navigation_value(set, component, property)
+fn read_navigation(
+    file: &str,
+    set: &str,
+    component: Option<&str>,
+    property: &str,
+) -> Option<String> {
+    SheetSetDatabase::read(file)
+        .ok()?
+        .navigation_value(set, component, property)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1312,26 +1558,45 @@ mod tests {
         let mut db = SheetSetDatabase::new("Demo Set", "A & B <c>");
         let set = db.sheet_set().id().to_string();
         let sub = db.add_subset(&set, "Architectural", "Arch subset").unwrap();
-        let sheet = db.add_sheet(&sub, "A-101", "Ground Floor Plan", "Sheet description").unwrap();
+        let sheet = db
+            .add_sheet(&sub, "A-101", "Ground Floor Plan", "Sheet description")
+            .unwrap();
         db.set_layout_reference(
             &sheet,
             "Layout",
-            &LayoutReference { file_name: "C:\\p\\sheet1.dwg".into(), name: "Layout1".into(), handle: "6F".into() },
+            &LayoutReference {
+                file_name: "C:\\p\\sheet1.dwg".into(),
+                name: "Layout1".into(),
+                handle: "6F".into(),
+            },
         );
         set_custom_property(db.sheet_set_mut(), "Drawn By", "RS", CUSTOM_SHEET_PROP);
         let back = SheetSetDatabase::from_bytes(&db.to_bytes()).unwrap();
         assert_eq!(back.root, db.root);
         let s = back.sheet_for("c:/p/SHEET1.dwg", Some("Layout1")).unwrap();
-        assert_eq!(back.sheet_value(s, "Sheet", "NumberAndTitle").unwrap(), "A-101 - Ground Floor Plan");
-        assert_eq!(back.sheet_value(s, "Subset", "Name").unwrap(), "Architectural");
+        assert_eq!(
+            back.sheet_value(s, "Sheet", "NumberAndTitle").unwrap(),
+            "A-101 - Ground Floor Plan"
+        );
+        assert_eq!(
+            back.sheet_value(s, "Subset", "Name").unwrap(),
+            "Architectural"
+        );
         assert_eq!(back.sheet_value(s, "Sheet", "Drawn By").unwrap(), "RS");
-        assert_eq!(back.sheet_value(s, "SheetSet", "Description").unwrap(), "A & B <c>");
+        assert_eq!(
+            back.sheet_value(s, "SheetSet", "Description").unwrap(),
+            "A & B <c>"
+        );
         // Named children sorted, Layout between IssuePurpose and Number.
         let names: Vec<_> = s.children.iter().filter_map(|c| c.propname()).collect();
         assert_eq!(names, ["Desc", "Layout", "Number", "SheetViews", "Title"]);
         #[cfg(windows)]
         assert_eq!(
-            relative_path(std::path::Path::new("C:\\p"), std::path::Path::new("C:\\p\\sheet1.dwg")).unwrap(),
+            relative_path(
+                std::path::Path::new("C:\\p"),
+                std::path::Path::new("C:\\p\\sheet1.dwg")
+            )
+            .unwrap(),
             ".\\sheet1.dwg"
         );
         assert_eq!(

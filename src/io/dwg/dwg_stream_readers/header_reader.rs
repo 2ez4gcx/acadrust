@@ -250,7 +250,9 @@ pub fn read_header_with_encoding(
         data[size_offset + 3],
     ]);
     if section_size < 0 {
-        return Err(DxfError::Parse("Header section has a negative size".to_string()));
+        return Err(DxfError::Parse(
+            "Header section has a negative size".to_string(),
+        ));
     }
     let section_size = section_size as usize;
     size_offset += 4;

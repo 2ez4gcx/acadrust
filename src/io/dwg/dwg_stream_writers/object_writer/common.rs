@@ -1022,7 +1022,12 @@ impl<'a> DwgObjectWriter<'a> {
         // from another drawing names a handle that is no APPID here, and the
         // reference program rejects the whole file (eInvalidInput); it is
         // dropped instead.
-        let registered = |app: u64| self.document.app_ids.iter().any(|a| a.handle.value() == app);
+        let registered = |app: u64| {
+            self.document
+                .app_ids
+                .iter()
+                .any(|a| a.handle.value() == app)
+        };
         let raw_blocks: Vec<(u64, Vec<u8>)> = if eed_compatible {
             xdata
                 .raw_dwg_eed

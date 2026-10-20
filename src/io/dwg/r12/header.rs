@@ -278,7 +278,11 @@ pub fn write_header(
         Some(0x6bb) => 204,
         _ => 205,
     };
-    let variables_end = if count == 204 { 0x6bb } else { HEADER_VARIABLES_END };
+    let variables_end = if count == 204 {
+        0x6bb
+    } else {
+        HEADER_VARIABLES_END
+    };
     c.encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(
         crate::io::dxf::code_page::dwg_code_page_index(&header.code_page),
     );
@@ -315,7 +319,8 @@ pub fn write_header(
         if table.flags == 0 {
             if let Some(raw) = source_raw {
                 if raw.len() >= offset + 6 {
-                    table.flags = u16::from_le_bytes(raw[offset + 4..offset + 6].try_into().unwrap());
+                    table.flags =
+                        u16::from_le_bytes(raw[offset + 4..offset + 6].try_into().unwrap());
                 }
             }
         }

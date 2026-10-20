@@ -189,7 +189,12 @@ pub(super) fn explode_face3d(face: &Face3D) -> Vec<EntityType> {
     let common = &face.common;
     // Edge flags belong to the four stored slots, even when a mirrored
     // triangle repeats its first two corners rather than its last two.
-    let corners = [face.first_corner, face.second_corner, face.third_corner, face.fourth_corner];
+    let corners = [
+        face.first_corner,
+        face.second_corner,
+        face.third_corner,
+        face.fourth_corner,
+    ];
     let n = corners.len();
     let mut result = Vec::with_capacity(n);
 
@@ -335,4 +340,3 @@ pub(super) fn explode_spline(spline: &Spline) -> Vec<EntityType> {
         .map(|pair| line_entity(pair[0], pair[1], 0.0, spline.normal, &spline.common))
         .collect()
 }
-

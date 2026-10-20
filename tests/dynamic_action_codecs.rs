@@ -1,4 +1,3 @@
-
 use acadrust::{
     objects::{DynamicBlockData, ObjectType},
     types::Handle,

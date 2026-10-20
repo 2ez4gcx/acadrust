@@ -2,6 +2,12 @@
 
 ### 0.6.5
 
+- **DWG mesh face budget (issue #141)** - MESH faces are no longer capped at a
+  fixed 250,000 faces and 1,000,000 indices. The cap scales with installed and
+  available memory (never below those historical limits) and can be replaced
+  with `DwgReadOptions::max_mesh_faces` / `max_mesh_face_indices`, or removed
+  with `DwgReadOptions::with_unlimited_mesh`. A mesh that still exceeds the
+  budget is kept up to the cap and reported.
 - **Genuine DXF R12 output** - `DxfWriter::with_version(DxfVersion::AC1009)`
   writes a real R12 file: no handles, CLASSES or OBJECTS, R12 table records,
   and R12 entities only. LWPOLYLINE becomes a 2D POLYLINE with its bulges,

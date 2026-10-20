@@ -360,7 +360,9 @@ impl AttributeDefinition {
 
     /// Estimate the width of the text
     pub fn estimated_width(&self) -> f64 {
-        super::text::estimated_width_in_heights(&self.default_value) * self.height * self.width_factor
+        super::text::estimated_width_in_heights(&self.default_value)
+            * self.height
+            * self.width_factor
     }
 
     /// Builder: Set position

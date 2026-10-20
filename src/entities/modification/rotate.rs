@@ -62,8 +62,7 @@ pub(crate) fn angle_from_points(
         return None;
     }
     Some(
-        axis
-            .dot(&reference.cross(&target))
+        axis.dot(&reference.cross(&target))
             .atan2(reference.dot(&target)),
     )
 }
@@ -103,7 +102,9 @@ impl EntityType {
     /// Rotate using one of the CAD axis-selection modes.
     pub fn rotate_with_axis(&mut self, axis: RotationAxis, angle: f64) {
         match axis {
-            RotationAxis::TwoPoint { first, second } => self.rotate_about_line(first, second, angle),
+            RotationAxis::TwoPoint { first, second } => {
+                self.rotate_about_line(first, second, angle)
+            }
             _ => {
                 let Some((origin, direction)) = axis.line() else {
                     return;
@@ -388,7 +389,7 @@ mod tests {
 
     #[test]
     fn entity_type_rotation_invalidates_verbatim_dwg_provenance() {
-        use crate::entities::{RawRecord, EntityType};
+        use crate::entities::{EntityType, RawRecord};
         use crate::types::DxfVersion;
         use std::sync::Arc;
 

@@ -1,4 +1,3 @@
-
 pub(crate) const DEFAULT_FONT_FLAGS: i32 = 34;
 
 pub(crate) fn encode(wide: bool, typeface: &str, flags: i32) -> Vec<u8> {

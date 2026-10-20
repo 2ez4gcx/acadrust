@@ -699,8 +699,12 @@ impl<'a> DwgObjectWriter<'a> {
 #[cfg(test)]
 mod ownership_tests {
     use super::*;
-    use crate::{CadDocument, objects::{BlockEvaluationGraph, BlockEvaluationNode}, types::{DxfVersion, Handle}};
     use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+    use crate::{
+        objects::{BlockEvaluationGraph, BlockEvaluationNode},
+        types::{DxfVersion, Handle},
+        CadDocument,
+    };
 
     #[test]
     fn evaluation_graph_owns_its_expression_in_the_handle_stream() {
@@ -709,13 +713,25 @@ mod ownership_tests {
         object.handle = Handle::new(0x100);
         object.owner = Handle::new(0x50);
         object.data = DynamicBlockData::EvaluationGraph(BlockEvaluationGraph {
-            nodes: vec![BlockEvaluationNode { expression: Handle::new(0x1234), ..Default::default() }],
+            nodes: vec![BlockEvaluationNode {
+                expression: Handle::new(0x1234),
+                ..Default::default()
+            }],
             ..Default::default()
         });
         let mut writer = DwgObjectWriter::new(&doc).unwrap();
         writer.write_dynamic_block(&object);
-        let offset = writer.handle_map.iter().find(|(h,_)| *h == 0x100).unwrap().1 as usize;
-        let mut reader = DwgBitReader::new(writer.output[offset..].to_vec(), writer.version, writer.dxf_version);
+        let offset = writer
+            .handle_map
+            .iter()
+            .find(|(h, _)| *h == 0x100)
+            .unwrap()
+            .1 as usize;
+        let mut reader = DwgBitReader::new(
+            writer.output[offset..].to_vec(),
+            writer.version,
+            writer.dxf_version,
+        );
         let bytes = reader.read_modular_short() as i64;
         let handle_bits = reader.read_modular_char() as i64;
         reader.set_position_in_bits(reader.position_in_bits() + bytes * 8 - handle_bits);

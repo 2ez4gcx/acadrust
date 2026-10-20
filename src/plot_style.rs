@@ -741,7 +741,6 @@ mod round_trip_tests {
     }
 }
 
-
 #[cfg(test)]
 mod lenient_loading_tests {
     use super::{compress_ctb, decode_plot_style_text, PlotStyleTable};
@@ -827,9 +826,7 @@ mod lenient_loading_tests {
         let error = PlotStyleTable::from_bytes("foreign.ctb", cut).unwrap_err();
         assert!(error.contains("incomplete"), "{error}");
     }
-
 }
-
 
 #[cfg(test)]
 mod inflate_limit_tests {
@@ -913,7 +910,6 @@ mod inflate_limit_tests {
     }
 }
 
-
 #[cfg(test)]
 mod lineweight_table_tests {
     use super::{parse_plot_style_text, LW_TABLE};
@@ -944,7 +940,6 @@ mod lineweight_table_tests {
         assert_eq!(table.lineweights, LW_TABLE.to_vec());
     }
 }
-
 
 #[cfg(test)]
 mod legacy_color_tests {

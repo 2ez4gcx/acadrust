@@ -1,16 +1,35 @@
 use super::*;
 
-pub(super) fn sat_face_points(doc: &crate::entities::acis::SatDocument, face: &crate::entities::acis::SatFace<'_>) -> Vec<Vector3> {
+pub(super) fn sat_face_points(
+    doc: &crate::entities::acis::SatDocument,
+    face: &crate::entities::acis::SatFace<'_>,
+) -> Vec<Vector3> {
     use crate::entities::acis::{SatCoedge, SatEdge, SatLoop, SatPoint, SatVertex};
-    let Some(loop_record) = doc.resolve(face.first_loop()).and_then(SatLoop::from_record) else { return Vec::new() };
+    let Some(loop_record) = doc
+        .resolve(face.first_loop())
+        .and_then(SatLoop::from_record)
+    else {
+        return Vec::new();
+    };
     let mut points = Vec::new();
     let mut pointer = loop_record.first_coedge();
     let mut seen = std::collections::HashSet::new();
     while !pointer.is_null() && seen.insert(pointer) {
-        let Some(coedge) = doc.resolve(pointer).and_then(SatCoedge::from_record) else { break };
-        let Some(edge) = doc.resolve(coedge.edge()).and_then(SatEdge::from_record) else { break };
-        let Some(vertex) = doc.resolve(edge.start_vertex()).and_then(SatVertex::from_record) else { break };
-        let Some(point) = doc.resolve(vertex.point()).and_then(SatPoint::from_record) else { break };
+        let Some(coedge) = doc.resolve(pointer).and_then(SatCoedge::from_record) else {
+            break;
+        };
+        let Some(edge) = doc.resolve(coedge.edge()).and_then(SatEdge::from_record) else {
+            break;
+        };
+        let Some(vertex) = doc
+            .resolve(edge.start_vertex())
+            .and_then(SatVertex::from_record)
+        else {
+            break;
+        };
+        let Some(point) = doc.resolve(vertex.point()).and_then(SatPoint::from_record) else {
+            break;
+        };
         let (x, y, z) = point.position();
         points.push(Vector3::new(x, y, z));
         pointer = coedge.next();
@@ -18,35 +37,41 @@ pub(super) fn sat_face_points(doc: &crate::entities::acis::SatDocument, face: &c
     points
 }
 
-pub(super) fn modeler_regions(common: &EntityCommon, sat: Option<crate::entities::acis::SatDocument>) -> Vec<EntityType> {
+pub(super) fn modeler_regions(
+    common: &EntityCommon,
+    sat: Option<crate::entities::acis::SatDocument>,
+) -> Vec<EntityType> {
     let Some(doc) = sat else { return Vec::new() };
-    doc.faces().into_iter().filter_map(|face| {
-        let points = sat_face_points(&doc, &face);
-        let surface_type = doc
-            .resolve(face.surface())
-            .map(|record| record.entity_type.as_str())
-            .unwrap_or("plane-surface");
-        if surface_type.contains("plane") {
-            (!points.is_empty()).then(|| {
-                let wire = Wire::from_points(points);
-                let mut region = Region::new();
-                region.common = inherit_common(common);
-                region.wires.push(wire);
-                EntityType::Region(region)
-            })
-        } else {
-            // Analytic curved faces can have a one-vertex seam loop (for
-            // example a cylindrical face). Preserve the face as a SURFACE
-            // even when its detached polygon wire is degenerate.
-            (!points.is_empty()).then(|| {
-                let wire = Wire::from_points(points);
-                let mut surface = Surface::new(SurfaceKind::Generic);
-                surface.common = inherit_common(common);
-                surface.wires.push(wire);
-                EntityType::Surface(Box::new(surface))
-            })
-        }
-    }).collect()
+    doc.faces()
+        .into_iter()
+        .filter_map(|face| {
+            let points = sat_face_points(&doc, &face);
+            let surface_type = doc
+                .resolve(face.surface())
+                .map(|record| record.entity_type.as_str())
+                .unwrap_or("plane-surface");
+            if surface_type.contains("plane") {
+                (!points.is_empty()).then(|| {
+                    let wire = Wire::from_points(points);
+                    let mut region = Region::new();
+                    region.common = inherit_common(common);
+                    region.wires.push(wire);
+                    EntityType::Region(region)
+                })
+            } else {
+                // Analytic curved faces can have a one-vertex seam loop (for
+                // example a cylindrical face). Preserve the face as a SURFACE
+                // even when its detached polygon wire is degenerate.
+                (!points.is_empty()).then(|| {
+                    let wire = Wire::from_points(points);
+                    let mut surface = Surface::new(SurfaceKind::Generic);
+                    surface.common = inherit_common(common);
+                    surface.wires.push(wire);
+                    EntityType::Surface(Box::new(surface))
+                })
+            }
+        })
+        .collect()
 }
 
 pub(super) fn sat_point_entity(
@@ -55,7 +80,9 @@ pub(super) fn sat_point_entity(
 ) -> Option<Vector3> {
     use crate::entities::acis::{SatPoint, SatVertex};
     let vertex = doc.resolve(pointer).and_then(SatVertex::from_record)?;
-    let point = doc.resolve(vertex.point()).and_then(SatPoint::from_record)?;
+    let point = doc
+        .resolve(vertex.point())
+        .and_then(SatPoint::from_record)?;
     let (x, y, z) = point.position();
     let point = Vector3::new(x, y, z);
     if point.x.is_finite() && point.y.is_finite() && point.z.is_finite() {
@@ -163,10 +190,9 @@ pub(super) fn sat_edge_entity(
             spline.control_points.reverse();
             spline.weights.reverse();
             spline.knots.reverse();
-            if let (Some(first), Some(last)) = (
-                spline.knots.first().copied(),
-                spline.knots.last().copied(),
-            ) {
+            if let (Some(first), Some(last)) =
+                (spline.knots.first().copied(), spline.knots.last().copied())
+            {
                 for knot in &mut spline.knots {
                     *knot = first + last - *knot;
                 }
@@ -188,11 +214,15 @@ pub(super) fn sat_region_curves(
     let mut loop_pointer = face.first_loop();
     let mut seen_loops = std::collections::HashSet::new();
     while !loop_pointer.is_null() && seen_loops.insert(loop_pointer) {
-        let Some(loop_record) = doc.resolve(loop_pointer).and_then(SatLoop::from_record) else { break };
+        let Some(loop_record) = doc.resolve(loop_pointer).and_then(SatLoop::from_record) else {
+            break;
+        };
         let mut coedge_pointer = loop_record.first_coedge();
         let mut seen_coedges = std::collections::HashSet::new();
         while !coedge_pointer.is_null() && seen_coedges.insert(coedge_pointer) {
-            let Some(coedge) = doc.resolve(coedge_pointer).and_then(SatCoedge::from_record) else { break };
+            let Some(coedge) = doc.resolve(coedge_pointer).and_then(SatCoedge::from_record) else {
+                break;
+            };
             if let Some(edge) = doc.resolve(coedge.edge()).and_then(SatEdge::from_record) {
                 if let Some(entity) = sat_edge_entity(doc, &coedge, &edge, common) {
                     result.push(entity);
@@ -220,10 +250,22 @@ pub(super) fn explode_region(region: &Region) -> Vec<EntityType> {
     let mut result = Vec::new();
     for wire in &region.wires {
         for pair in wire.points.windows(2) {
-            result.push(line_entity(pair[0], pair[1], 0.0, Vector3::UNIT_Z, &region.common));
+            result.push(line_entity(
+                pair[0],
+                pair[1],
+                0.0,
+                Vector3::UNIT_Z,
+                &region.common,
+            ));
         }
         if wire.points.len() > 2 {
-            result.push(line_entity(*wire.points.last().unwrap(), wire.points[0], 0.0, Vector3::UNIT_Z, &region.common));
+            result.push(line_entity(
+                *wire.points.last().unwrap(),
+                wire.points[0],
+                0.0,
+                Vector3::UNIT_Z,
+                &region.common,
+            ));
         }
     }
     if result.is_empty() {
@@ -249,6 +291,7 @@ pub(super) fn explode_body(body: &Body) -> Vec<EntityType> {
 pub(super) fn explode_surface(surface: &Surface) -> Vec<EntityType> {
     if matches!(surface.kind, SurfaceKind::Plane) {
         modeler_regions(&surface.common, surface.parse_sat())
-    } else { Vec::new() }
+    } else {
+        Vec::new()
+    }
 }
-

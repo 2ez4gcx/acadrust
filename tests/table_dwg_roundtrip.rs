@@ -32,7 +32,8 @@ fn sample_table() -> Table {
 
 fn roundtrip(version: DxfVersion) -> Table {
     let mut doc = CadDocument::with_version(version);
-    doc.add_entity(EntityType::Table(Box::new(sample_table()))).unwrap();
+    doc.add_entity(EntityType::Table(Box::new(sample_table())))
+        .unwrap();
     let bytes = DwgWriter::write_to_vec(&doc).expect("DWG write");
     let rt = DwgReader::from_stream(Cursor::new(bytes))
         .read()

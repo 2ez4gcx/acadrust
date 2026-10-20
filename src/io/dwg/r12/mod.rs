@@ -19,8 +19,8 @@ use std::collections::HashMap;
 use std::io::{BufReader, Cursor};
 
 use crate::document::CadDocument;
-use crate::error::{DxfError, Result};
 use crate::entities::EntityType;
+use crate::error::{DxfError, Result};
 use crate::io::dxf::{DxfReader, DxfStreamReader, DxfTextReader, DxfWriter};
 use crate::tables::{TableEntry, VxTableRecord};
 use crate::types::{DxfVersion, Handle};
@@ -326,7 +326,9 @@ pub(crate) fn read_document(
         .filter_map(|record| {
             let code = if record.kind == "DIMSTYLE" { 105 } else { 5 };
             let handle = u64::from_str_radix(record.string(code), 16).ok()?;
-            record.native_table_usage.map(|usage| (Handle::new(handle), usage))
+            record
+                .native_table_usage
+                .map(|usage| (Handle::new(handle), usage))
         })
         .collect();
     assign_compound_owners(&mut entities);
@@ -517,10 +519,8 @@ fn complete_table_records(document: &CadDocument, records: &mut DxfRecords) {
         for record in rows {
             let code = if record.kind == "DIMSTYLE" { 105 } else { 5 };
             if let Ok(handle) = u64::from_str_radix(record.string(code), 16) {
-                record.native_table_usage = document
-                    .r12_table_usage
-                    .get(&Handle::new(handle))
-                    .copied();
+                record.native_table_usage =
+                    document.r12_table_usage.get(&Handle::new(handle)).copied();
             }
         }
     }
@@ -793,11 +793,11 @@ pub(crate) fn write_document(document: &CadDocument) -> Result<Vec<u8>> {
             .write_to_vec()?
     } else {
         match DxfWriter::new(document).write_to_vec() {
-        Ok(bytes) => bytes,
-        Err(DxfError::UnsupportedVersion(_)) => DxfWriter::new(document)
-            .with_version(DxfVersion::AC1009)
-            .write_to_vec()?,
-        Err(error) => return Err(error),
+            Ok(bytes) => bytes,
+            Err(DxfError::UnsupportedVersion(_)) => DxfWriter::new(document)
+                .with_version(DxfVersion::AC1009)
+                .write_to_vec()?,
+            Err(error) => return Err(error),
         }
     };
     let mut records = parse_dxf_records(&dxf, &document.header.code_page)?;

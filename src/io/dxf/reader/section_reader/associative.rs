@@ -30,7 +30,13 @@ impl AssocDxfRecord {
             .into_iter()
             .flatten()
             .filter(|(item_code, _)| *item_code == code)
-            .map(|(_, value)| if preserve_whitespace { value.as_str() } else { value.trim() })
+            .map(|(_, value)| {
+                if preserve_whitespace {
+                    value.as_str()
+                } else {
+                    value.trim()
+                }
+            })
             .collect()
     }
 
@@ -1150,9 +1156,15 @@ impl<'a> SectionReader<'a> {
                 } else {
                     "AcDbAssocGeomDependency"
                 };
-                let entries = record.sections.get(section).map(Vec::as_slice).unwrap_or_default();
+                let entries = record
+                    .sections
+                    .get(section)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
                 let start = entries.iter().position(|(code, _)| *code == 1);
-                let class_name = start.map(|index| entries[index].1.clone()).unwrap_or_default();
+                let class_name = start
+                    .map(|index| entries[index].1.clone())
+                    .unwrap_or_default();
                 let tail = start.map(|index| &entries[index + 1..]).unwrap_or_default();
                 let values = tail
                     .iter()
@@ -1554,11 +1566,25 @@ impl<'a> SectionReader<'a> {
                 let parameter_block = cursor.text(1);
                 let has_items = cursor.peek_code() == Some(90);
                 let item_list_version = if has_items { cursor.i32(90) } else { 0 };
-                let count = if has_items { cursor.i32(90).max(0).min(100_000) } else { 0 };
-                let item_class = if has_items { cursor.text(1) } else { String::new() };
+                let count = if has_items {
+                    cursor.i32(90).max(0).min(100_000)
+                } else {
+                    0
+                };
+                let item_class = if has_items {
+                    cursor.text(1)
+                } else {
+                    String::new()
+                };
                 let mut item_cursor = AssocCursor::new(&record, "AcDbAssocArrayItem");
-                let items: Vec<_> = (0..count).map(|_| read_array_item(&mut item_cursor)).collect();
-                let matrix_cursor = if count > 0 { &mut item_cursor } else { &mut cursor };
+                let items: Vec<_> = (0..count)
+                    .map(|_| read_array_item(&mut item_cursor))
+                    .collect();
+                let matrix_cursor = if count > 0 {
+                    &mut item_cursor
+                } else {
+                    &mut cursor
+                };
                 let mut matrix = [0.0; 16];
                 for target in &mut matrix {
                     *target = matrix_cursor.f64(40);

@@ -749,15 +749,16 @@ pub(crate) fn restore_table_style_roundtrip(document: &mut crate::document::CadD
         let Some(ObjectType::Dictionary(dictionary)) = document.objects.get(&dictionary) else {
             continue;
         };
-        let cells = dictionary
-            .get(CELL_STYLE_MAP_KEY)
-            .and_then(|map| match document.objects.get(&map) {
-                Some(ObjectType::DataObject(object)) => match &object.data {
-                    DataObjectData::CellStyleMap(map) => Some(map.cells.clone()),
+        let cells =
+            dictionary
+                .get(CELL_STYLE_MAP_KEY)
+                .and_then(|map| match document.objects.get(&map) {
+                    Some(ObjectType::DataObject(object)) => match &object.data {
+                        DataObjectData::CellStyleMap(map) => Some(map.cells.clone()),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            });
+                });
         let mut row_types: [Option<(i32, i32, String)>; 3] = Default::default();
         if let Some(Some(ObjectType::XRecord(record))) = dictionary
             .get(ROUNDTRIP_RECORD_KEY)
@@ -857,17 +858,17 @@ pub(crate) fn store_table_style_roundtrip(document: &mut crate::document::CadDoc
                     }
                 }
                 let map = document.allocate_handle();
-                let mut object = DataObject::new(DataObjectData::CellStyleMap(CellStyleMap {
-                    cells,
-                }));
+                let mut object =
+                    DataObject::new(DataObjectData::CellStyleMap(CellStyleMap { cells }));
                 object.handle = map;
                 object.owner = dictionary;
                 object.reactors = vec![dictionary];
                 document.objects.insert(map, ObjectType::DataObject(object));
-                if let Some(ObjectType::Dictionary(entries)) =
-                    document.objects.get_mut(&dictionary)
+                if let Some(ObjectType::Dictionary(entries)) = document.objects.get_mut(&dictionary)
                 {
-                    entries.entries.retain(|(name, _)| name != CELL_STYLE_MAP_KEY);
+                    entries
+                        .entries
+                        .retain(|(name, _)| name != CELL_STYLE_MAP_KEY);
                     entries.add_entry(CELL_STYLE_MAP_KEY, map);
                 }
             }

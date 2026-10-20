@@ -167,14 +167,14 @@
 pub mod classes;
 pub mod compound_file;
 pub mod count;
-pub mod document;
 mod current_transparency;
-pub mod nested_copy;
+pub mod document;
 pub mod entities;
 pub mod error;
 pub mod fields;
 pub mod io;
 pub mod layer_state;
+pub mod nested_copy;
 pub mod notification;
 pub mod objects;
 pub mod plot_style;
@@ -217,7 +217,7 @@ pub use document::{
 pub use layer_state::{LayerState, LayerStateLayer, LayerStateMask};
 
 // Re-export I/O types
-pub use io::dwg::{DwgReadOptions, DwgReader, DwgWriter};
+pub use io::dwg::{DwgReadOptions, DwgReader, DwgWriter, MeshFaceBudget};
 pub use io::dxf::{DxfReader, DxfReaderConfiguration, DxfWriter};
 pub use io::read::{
     push_read_diagnostic, ReadDiagnostic, ReadOutcome, ReadStage, ReadStats, SourceFormat,

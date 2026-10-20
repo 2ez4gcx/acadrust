@@ -6,7 +6,6 @@ use crate::objects::{
 };
 use crate::types::Handle;
 
-
 pub fn read_dgn_line_style_data(
     reader: &mut DwgMergedReader,
     dxf_name: &str,

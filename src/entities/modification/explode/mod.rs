@@ -191,11 +191,7 @@ fn dimension_attachment(attachment: AttachmentPointType) -> AttachmentPoint {
     }
 }
 
-fn dimension_mtext(
-    base: &DimensionBase,
-    value: String,
-    style: Option<&DimStyle>,
-) -> EntityType {
+fn dimension_mtext(base: &DimensionBase, value: String, style: Option<&DimStyle>) -> EntityType {
     let height = style
         .map(|style| (style.dimtxt * style.dimscale).abs())
         .filter(|height| height.is_finite() && *height > 0.0)
@@ -226,7 +222,6 @@ fn dimension_mtext(
 // Per-entity explode functions
 // ============================================================================
 
-
 mod dimensions;
 mod hatch;
 mod leaders;
@@ -235,14 +230,14 @@ mod modeler;
 mod primitives;
 mod text;
 
+pub(crate) use dimensions::explode_dimension_with_style;
 use dimensions::*;
 use leaders::*;
 use meshes::*;
 use modeler::*;
 use primitives::*;
-use text::*;
-pub(crate) use dimensions::explode_dimension_with_style;
 pub(crate) use primitives::{nurbs_points, spline_points};
+use text::*;
 
 fn explode_mline(mline: &MLine) -> Vec<EntityType> {
     // Context-free entities do not carry their MLINESTYLE definition.  Keep
@@ -253,11 +248,12 @@ fn explode_mline(mline: &MLine) -> Vec<EntityType> {
         return Vec::new();
     }
 
-    let offsets = if mline.style_name.eq_ignore_ascii_case("Standard") && mline.style_element_count >= 2 {
-        vec![0.5 * mline.scale_factor, -0.5 * mline.scale_factor]
-    } else {
-        vec![0.0]
-    };
+    let offsets =
+        if mline.style_name.eq_ignore_ascii_case("Standard") && mline.style_element_count >= 2 {
+            vec![0.5 * mline.scale_factor, -0.5 * mline.scale_factor]
+        } else {
+            vec![0.0]
+        };
     let mut result = Vec::with_capacity((n - 1) * offsets.len());
     for offset in offsets {
         for i in 0..n - 1 {
@@ -271,7 +267,9 @@ fn explode_mline(mline: &MLine) -> Vec<EntityType> {
 
     // Close if the MLine is closed.
     if mline.flags.contains(MLineFlags::CLOSED) && n > 2 {
-        let offsets = if mline.style_name.eq_ignore_ascii_case("Standard") && mline.style_element_count >= 2 {
+        let offsets = if mline.style_name.eq_ignore_ascii_case("Standard")
+            && mline.style_element_count >= 2
+        {
             vec![0.5 * mline.scale_factor, -0.5 * mline.scale_factor]
         } else {
             vec![0.0]
@@ -385,8 +383,10 @@ fn explode_table(table: &Table) -> Vec<EntityType> {
             }
             let mut text = MText::with_value(
                 value,
-                point((x[column_index] + x[column_index + 1]) * 0.5,
-                    (y[row_index] + y[row_index + 1]) * 0.5),
+                point(
+                    (x[column_index] + x[column_index + 1]) * 0.5,
+                    (y[row_index] + y[row_index + 1]) * 0.5,
+                ),
             )
             .with_height(2.5)
             .with_width((x[column_index + 1] - x[column_index]).max(0.0));

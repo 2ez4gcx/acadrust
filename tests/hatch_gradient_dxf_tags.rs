@@ -36,13 +36,27 @@ fn second_stop_color(doc: &CadDocument) -> Color {
 #[test]
 fn rgb_wins_when_aci_comes_after_it() {
     let doc = read_dxf(gradient_hatch("463\n1\n421\n1193046\n63\n7\n"));
-    assert_eq!(second_stop_color(&doc), Color::Rgb { r: 0x12, g: 0x34, b: 0x56 });
+    assert_eq!(
+        second_stop_color(&doc),
+        Color::Rgb {
+            r: 0x12,
+            g: 0x34,
+            b: 0x56
+        }
+    );
 }
 
 #[test]
 fn rgb_wins_when_aci_comes_before_it() {
     let doc = read_dxf(gradient_hatch("463\n1\n63\n7\n421\n1193046\n"));
-    assert_eq!(second_stop_color(&doc), Color::Rgb { r: 0x12, g: 0x34, b: 0x56 });
+    assert_eq!(
+        second_stop_color(&doc),
+        Color::Rgb {
+            r: 0x12,
+            g: 0x34,
+            b: 0x56
+        }
+    );
 }
 
 #[test]
@@ -58,7 +72,11 @@ fn dwg_keeps_gradient_color_book_names() {
     use acadrust::{DwgReadOptions, DwgReader, DwgWriter, Vector2};
     let mut hatch = Hatch::new();
     let mut path = BoundaryPath::new();
-    for (a, b) in [((0.0, 0.0), (1.0, 0.0)), ((1.0, 0.0), (1.0, 1.0)), ((1.0, 1.0), (0.0, 0.0))] {
+    for (a, b) in [
+        ((0.0, 0.0), (1.0, 0.0)),
+        ((1.0, 0.0), (1.0, 1.0)),
+        ((1.0, 1.0), (0.0, 0.0)),
+    ] {
         path.edges.push(BoundaryEdge::Line(LineEdge {
             start: Vector2::new(a.0, a.1),
             end: Vector2::new(b.0, b.1),
@@ -70,7 +88,11 @@ fn dwg_keeps_gradient_color_book_names() {
     hatch.gradient_color.colors = vec![
         GradientColorEntry {
             value: 0.0,
-            color: Color::Rgb { r: 0x12, g: 0x34, b: 0x56 },
+            color: Color::Rgb {
+                r: 0x12,
+                g: 0x34,
+                b: 0x56,
+            },
             color_name: Some("PANTONE 2945 C".into()),
             book_name: Some("PANTONE+ Solid Coated".into()),
         },
@@ -81,7 +103,8 @@ fn dwg_keeps_gradient_color_book_names() {
         },
     ];
     let mut doc = CadDocument::new();
-    doc.add_entity(EntityType::Hatch(Box::new(hatch.clone()))).unwrap();
+    doc.add_entity(EntityType::Hatch(Box::new(hatch.clone())))
+        .unwrap();
     let bytes = DwgWriter::write_to_vec(&doc).unwrap();
     let back = DwgReader::from_stream_with_options(Cursor::new(bytes), DwgReadOptions::failsafe())
         .read()

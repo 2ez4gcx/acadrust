@@ -272,23 +272,66 @@ pub struct DwgPageCrcInfo {
 /// action parameters with unsupported payload layouts are preserved as raw DWG
 /// objects with diagnostics even in strict mode, if their framing and common
 /// object metadata are valid. Same-version DWG saves retain those records.
+///
+/// MESH entities are stored up to [`crate::MeshFaceBudget::from_system`] unless
+/// [`Self::max_mesh_faces`] or [`Self::max_mesh_face_indices`] is set.
+/// `Some(usize::MAX)` removes that cap. The object record still bounds the
+/// face list, and a mesh that exceeds the budget is truncated with a
+/// `mesh-face-budget` diagnostic.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DwgReadOptions {
     /// When `true`, recover as much data as possible from corrupt files.
     pub failsafe: bool,
+    /// Faces retained from one MESH entity.
+    ///
+    /// `None` uses the system budget. `Some(usize::MAX)` stores every face
+    /// that fits in the object record.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub max_mesh_faces: Option<usize>,
+    /// Face-corner indices retained from one MESH entity.
+    ///
+    /// `None` uses the system budget. `Some(usize::MAX)` stores every index
+    /// that fits in the object record.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub max_mesh_face_indices: Option<usize>,
 }
 
 impl Default for DwgReadOptions {
     fn default() -> Self {
-        Self { failsafe: false }
+        Self {
+            failsafe: false,
+            max_mesh_faces: None,
+            max_mesh_face_indices: None,
+        }
     }
 }
 
 impl DwgReadOptions {
     /// Create options with failsafe mode enabled.
     pub fn failsafe() -> Self {
-        Self { failsafe: true }
+        Self {
+            failsafe: true,
+            ..Self::default()
+        }
+    }
+
+    /// Replace both MESH caps. `usize::MAX` removes a cap.
+    pub fn with_mesh_limits(mut self, max_faces: usize, max_face_indices: usize) -> Self {
+        self.max_mesh_faces = Some(max_faces);
+        self.max_mesh_face_indices = Some(max_face_indices);
+        self
+    }
+
+    /// Store every MESH face that fits in its object record.
+    pub fn with_unlimited_mesh(self) -> Self {
+        self.with_mesh_limits(usize::MAX, usize::MAX)
+    }
+
+    /// Budget applied while reading MESH entities.
+    pub fn mesh_budget(&self) -> crate::io::dwg::mesh_budget::MeshFaceBudget {
+        crate::io::dwg::mesh_budget::MeshFaceBudget::from_system()
+            .with_overrides(self.max_mesh_faces, self.max_mesh_face_indices)
     }
 }
 
@@ -692,7 +735,11 @@ fn section_name_from_field(name_buf: &[u8; 64]) -> String {
 /// integrity checksums including the AC1021 Header CRC-64.
 /// Read one `T16` string (2-byte character-count prefix). R2007+ stores the
 /// characters as UTF-16LE; earlier versions as one byte per character.
-fn read_t16(cur: &mut &[u8], utf16: bool, encoding: crate::io::dxf::code_page::LegacyEncoding) -> String {
+fn read_t16(
+    cur: &mut &[u8],
+    utf16: bool,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
+) -> String {
     if cur.len() < 2 {
         *cur = &[];
         return String::new();
@@ -724,15 +771,29 @@ fn decode_field_xdata(document: &mut crate::document::CadDocument) {
         .eed_by_handle
         .keys()
         .copied()
-        .filter(|h| matches!(document.objects.get(h), Some(crate::objects::ObjectType::Field(_))))
+        .filter(|h| {
+            matches!(
+                document.objects.get(h),
+                Some(crate::objects::ObjectType::Field(_))
+            )
+        })
         .collect();
     for h in fields {
-        let Some(blocks) = document.eed_by_handle.remove(&h) else { continue };
+        let Some(blocks) = document.eed_by_handle.remove(&h) else {
+            continue;
+        };
         let mut kept = Vec::new();
         let mut xdata = crate::xdata::ExtendedData::new();
         for (app, bytes) in blocks {
-            let name = document.app_ids.iter().find(|a| a.handle.value() == app).map(|a| a.name.clone());
-            match (name, crate::io::dwg::eed_codec::decode_values(&bytes, wide, |_| None)) {
+            let name = document
+                .app_ids
+                .iter()
+                .find(|a| a.handle.value() == app)
+                .map(|a| a.name.clone());
+            match (
+                name,
+                crate::io::dwg::eed_codec::decode_values(&bytes, wide, |_| None),
+            ) {
                 (Some(name), Some(values)) => {
                     let mut rec = crate::xdata::ExtendedDataRecord::new(name);
                     rec.values = values;
@@ -758,7 +819,9 @@ fn decode_block_units_xdata(document: &mut crate::document::CadDocument) {
         return;
     };
     for record in document.block_records.iter_mut() {
-        let Some(blocks) = document.eed_by_handle.get_mut(&record.handle) else { continue };
+        let Some(blocks) = document.eed_by_handle.get_mut(&record.handle) else {
+            continue;
+        };
         blocks.retain(|(app, bytes)| {
             let units = (*app == acad)
                 .then(|| crate::io::dwg::eed_codec::decode_values(bytes, false, |_| None))
@@ -1003,9 +1066,7 @@ impl<R: Read + Seek> DwgReader<R> {
 
     /// Recover as much usable drawing data as possible and apply conservative
     /// document repairs. Recovery always enables failsafe parsing.
-    pub fn recover(
-        &mut self,
-    ) -> std::result::Result<crate::io::recover::RecoverOutcome, DxfError> {
+    pub fn recover(&mut self) -> std::result::Result<crate::io::recover::RecoverOutcome, DxfError> {
         self.options.failsafe = true;
         crate::io::recover::RecoverOutcome::from_read_outcome(self.read_with_stats()?)
     }
@@ -1032,7 +1093,12 @@ impl<R: Read + Seek> DwgReader<R> {
         &mut self,
     ) -> std::result::Result<crate::io::read::ReadOutcome, DxfError> {
         self.read_with_optional_visitor(
-            None::<&mut dyn FnMut(&crate::document::CadDocument, crate::entities::EntityType) -> Option<crate::entities::EntityType>>,
+            None::<
+                &mut dyn FnMut(
+                    &crate::document::CadDocument,
+                    crate::entities::EntityType,
+                ) -> Option<crate::entities::EntityType>,
+            >,
         )
     }
 
@@ -1322,8 +1388,9 @@ impl<R: Read + Seek> DwgReader<R> {
                     handle_map,
                     crate::io::dxf::code_page::encoding_from_dwg_code_page(info.code_page),
                 ) {
-                    Ok(obj_reader) => {
+                    Ok(mut obj_reader) => {
                         record_stream_read = true;
+                        obj_reader.set_mesh_budget(self.options.mesh_budget());
                         let mut builder = crate::io::dwg::dwg_document_builder::DwgDocumentBuilder::new(obj_reader);
                         builder.set_failsafe(failsafe);
                         if let Some(progress) = &self.progress {
@@ -1648,7 +1715,10 @@ impl<R: Read + Seek> DwgReader<R> {
                     .map(|(index, table)| {
                         (
                             crate::io::dwg::r12::header::TABLE_NAMES[index].to_owned(),
-                            (table.address as i64, (table.record_size as u32 * table.count as u32) as i64),
+                            (
+                                table.address as i64,
+                                (table.record_size as u32 * table.count as u32) as i64,
+                            ),
                         )
                     })
                     .collect();
@@ -2529,14 +2599,15 @@ impl<R: Read + Seek> DwgReader<R> {
                         }
                     }
                     if filled != requested_size || read_error.is_some() {
-                        let detail = read_error
-                            .map(|error| error.to_string())
-                            .unwrap_or_else(|| {
-                                format!(
-                                    "unexpected end of file after {} of {} bytes",
-                                    filled, requested_size
-                                )
-                            });
+                        let detail =
+                            read_error
+                                .map(|error| error.to_string())
+                                .unwrap_or_else(|| {
+                                    format!(
+                                        "unexpected end of file after {} of {} bytes",
+                                        filled, requested_size
+                                    )
+                                });
                         buf.truncate(filled);
                         self.notifications.notify(
                             NotificationType::Warning,

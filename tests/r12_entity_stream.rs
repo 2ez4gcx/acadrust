@@ -280,7 +280,13 @@ pub fn block_polyline_extra_fixture() -> Vec<u8> {
     let polyline = polyline(0x20);
     let to_extra = jump(0x8000_0000, 0);
     let resume = begin.len() + polyline.len() + to_extra.len();
-    let blocks = [begin.clone(), polyline, to_extra, frame(13, 0, 0, 0x11, &[])].concat();
+    let blocks = [
+        begin.clone(),
+        polyline,
+        to_extra,
+        frame(13, 0, 0, 0x11, &[]),
+    ]
+    .concat();
     let owner = 0x4000_0000 | begin.len() as u32;
     let extras = [
         vertex(0x21, 1.0, 2.0),

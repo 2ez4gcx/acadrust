@@ -44,7 +44,12 @@ fn assert_angles(document: &CadDocument) {
             _ => None,
         })
         .collect();
-    assert_eq!(angles.len(), ANGLES.len(), "{:?}: missing TEXT entities", document.version);
+    assert_eq!(
+        angles.len(),
+        ANGLES.len(),
+        "{:?}: missing TEXT entities",
+        document.version
+    );
     for (label, degrees) in ANGLES {
         assert!(
             (angles[label] - degrees.to_radians()).abs() < 1e-12,

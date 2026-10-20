@@ -342,7 +342,10 @@ impl core::fmt::Display for TabStop {
             TabStop::Center(p) => write!(f, "c{}", p),
             TabStop::Right(p) => write!(f, "r{}", p),
             TabStop::Decimal(p) => write!(f, "D{}", p),
-            TabStop::DecimalWithCharacter { position, character } => {
+            TabStop::DecimalWithCharacter {
+                position,
+                character,
+            } => {
                 write!(f, "D{}{}", character, position)
             }
         }

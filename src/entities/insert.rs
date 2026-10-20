@@ -538,8 +538,10 @@ impl Insert {
         // rigid transform or uniform scale.  Under those transforms their
         // native region decomposition remains exact; non-uniform cases are
         // handled by the document-aware anonymous *E fallback instead.
-        if matches!(entity, EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_))
-            && Self::linear_is_similarity(transform)
+        if matches!(
+            entity,
+            EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_)
+        ) && Self::linear_is_similarity(transform)
         {
             return entity
                 .explode()

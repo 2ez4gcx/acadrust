@@ -193,7 +193,9 @@ impl<'a> DxfWriter<'a> {
             ));
         }
         let mut stream_writer = DxfTextWriter::new(writer);
-        if let Some(encoding) = crate::io::dxf::code_page::encoding_from_code_page(&self.document.header.code_page) {
+        if let Some(encoding) =
+            crate::io::dxf::code_page::encoding_from_code_page(&self.document.header.code_page)
+        {
             stream_writer.set_encoding(encoding);
         }
         r12::write_r12(&mut stream_writer, self.document)?;

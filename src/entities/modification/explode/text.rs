@@ -43,7 +43,11 @@ pub(super) fn mtext_axes(mtext: &MText) -> (Vector3, Vector3) {
     (x_axis, y_axis)
 }
 
-pub(super) fn mtext_column_layout(mtext: &MText, line_count: usize, line_index: usize) -> (usize, usize) {
+pub(super) fn mtext_column_layout(
+    mtext: &MText,
+    line_count: usize,
+    line_index: usize,
+) -> (usize, usize) {
     let columns = if mtext.column_data.column_type == 0 {
         1
     } else {
@@ -117,8 +121,8 @@ pub(super) fn explode_mtext(mtext: &MText) -> Vec<EntityType> {
         .map(|(i, line)| {
             let (column_index, row_index) = mtext_column_layout(mtext, line_count, i);
             let y = first - spacing * row_index as f64;
-            let point = mtext.insertion_point + x_axis * (column_width * column_index as f64)
-                + y_axis * y;
+            let point =
+                mtext.insertion_point + x_axis * (column_width * column_index as f64) + y_axis * y;
             EntityType::Text(Text {
                 common: inherit_common(&mtext.common),
                 value: line,
@@ -144,19 +148,24 @@ pub(super) fn explode_formatted_mtext(
     document: &crate::entities::mtext_format::MTextDocument,
 ) -> Vec<EntityType> {
     use crate::entities::mtext_format::{MTextColor, MTextScalar};
-    let base_height = if mtext.height > 0.0 { mtext.height } else { 1.0 };
+    let base_height = if mtext.height > 0.0 {
+        mtext.height
+    } else {
+        1.0
+    };
     let spacing = base_height * 5.0 / 3.0
-        * if mtext.line_spacing_factor > 0.0 { mtext.line_spacing_factor } else { 1.0 };
+        * if mtext.line_spacing_factor > 0.0 {
+            mtext.line_spacing_factor
+        } else {
+            1.0
+        };
     let (x_axis, y_axis) = mtext_axes(mtext);
     let column_width = (mtext.rectangle_width + mtext.column_data.gutter).max(0.0);
     let mut result = Vec::new();
     for (paragraph_index, paragraph) in document.paragraphs.iter().enumerate() {
         let mut advance = 0.0;
-        let (column_index, row_index) = mtext_column_layout(
-            mtext,
-            document.paragraphs.len(),
-            paragraph_index,
-        );
+        let (column_index, row_index) =
+            mtext_column_layout(mtext, document.paragraphs.len(), paragraph_index);
         let y = -(row_index as f64) * spacing - base_height;
         let column_offset = x_axis * (column_width * column_index as f64);
         for span in &paragraph.spans {
@@ -174,8 +183,8 @@ pub(super) fn explode_formatted_mtext(
                 None => base_height,
             };
             let width_factor = span.properties.width_factor.unwrap_or(1.0).max(1e-9);
-            let rotation = mtext.rotation
-                + span.properties.oblique_angle.unwrap_or(0.0).to_radians();
+            let rotation =
+                mtext.rotation + span.properties.oblique_angle.unwrap_or(0.0).to_radians();
             let point = mtext.insertion_point + column_offset + y_axis * y + x_axis * advance;
             let mut text = Text {
                 common: inherit_common(&mtext.common),
@@ -213,4 +222,3 @@ pub(super) fn explode_formatted_mtext(
     }
     result
 }
-

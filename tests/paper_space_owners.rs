@@ -27,6 +27,9 @@ fn a_second_layouts_block_marker_and_entities_keep_their_record() {
     };
     assert_eq!(marker.name, extra.name);
     assert_eq!(marker.common.owner_handle, extra.handle);
-    assert_eq!(loaded.get_entity(line).unwrap().common().owner_handle, extra.handle);
+    assert_eq!(
+        loaded.get_entity(line).unwrap().common().owner_handle,
+        extra.handle
+    );
     assert!(extra.entity_handles.contains(&line));
 }

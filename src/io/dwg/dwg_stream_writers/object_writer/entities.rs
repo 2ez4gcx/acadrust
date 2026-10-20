@@ -45,7 +45,10 @@ impl<'a> DwgObjectWriter<'a> {
     pub(super) fn write_entity(&mut self, entity: &EntityType) {
         // Already emitted verbatim (ACADRUST_RAW_ALL bisection aid): skip, so a
         // compound entity does not re-allocate handles for its children.
-        if self.registered_handles.contains(&entity.common().handle.value()) {
+        if self
+            .registered_handles
+            .contains(&entity.common().handle.value())
+        {
             return;
         }
         // Verbatim passthrough: the entity still carries the exact bytes it was read
@@ -55,14 +58,25 @@ impl<'a> DwgObjectWriter<'a> {
         // the AcDs section, which is assembled from what gets written).
         if let Some(raw) = &entity.common().raw_record {
             let handle = entity.common().handle;
-            let acis = matches!(entity, EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_) | EntityType::Surface(_));
+            let acis = matches!(
+                entity,
+                EntityType::Solid3D(_)
+                    | EntityType::Region(_)
+                    | EntityType::Body(_)
+                    | EntityType::Surface(_)
+            );
             // Compound entities own follow-up records (VERTEX…/ATTRIB…/SEQEND) that the
             // reader folded into them; the writer emits those alongside, so they must
             // go through the normal path. An INSERT without attributes owns none, and
             // copying it keeps subclasses such as AcIdBlockReference intact.
-            let compound = matches!(entity, EntityType::Polyline(_) | EntityType::Polyline2D(_) | EntityType::Polyline3D(_)
-                | EntityType::PolyfaceMesh(_) | EntityType::PolygonMesh(_))
-                || matches!(entity, EntityType::Insert(i) if !i.attributes.is_empty() || i.seqend_handle.is_some());
+            let compound = matches!(
+                entity,
+                EntityType::Polyline(_)
+                    | EntityType::Polyline2D(_)
+                    | EntityType::Polyline3D(_)
+                    | EntityType::PolyfaceMesh(_)
+                    | EntityType::PolygonMesh(_)
+            ) || matches!(entity, EntityType::Insert(i) if !i.attributes.is_empty() || i.seqend_handle.is_some());
             let ok = self.version.r2004_plus()
                 && raw.version == self.dxf_version
                 && !self.raw_excluded_handles.contains(&handle.value())
@@ -3196,9 +3210,8 @@ impl<'a> DwgObjectWriter<'a> {
         // the closed and cap-suppression bits supplied by the model while
         // making group 71 agree with group 72 in every output format.
         let caps = e.flags & (MLineFlags::NO_START_CAPS | MLineFlags::NO_END_CAPS);
-        let open_closed: i16 = (e.serialized_flags()
-            & (MLineFlags::HAS_VERTICES | MLineFlags::CLOSED))
-            .bits();
+        let open_closed: i16 =
+            (e.serialized_flags() & (MLineFlags::HAS_VERTICES | MLineFlags::CLOSED)).bits();
         self.writer.write_bit_short(open_closed | caps.bits());
 
         // Linesinstyle RC 73 — number of segments from first vertex

@@ -777,7 +777,8 @@ impl<'a> DwgObjectWriter<'a> {
                         self.writer.write_bit_long(*item);
                     }
                 } else {
-                    self.writer.write_variable_text(subent.resolved_class_name());
+                    self.writer
+                        .write_variable_text(subent.resolved_class_name());
                 }
                 self.writer.write_bit(subent.dependent_on_compound_object);
             }

@@ -8,7 +8,9 @@
 use std::collections::HashMap;
 
 use super::CadDocument;
-use crate::entities::{Block, BlockEnd, EntityCommon, EntityType, Insert, Line, MLine, MultiLeader};
+use crate::entities::{
+    Block, BlockEnd, EntityCommon, EntityType, Insert, Line, MLine, MultiLeader,
+};
 use crate::tables::BlockRecord;
 use crate::types::{Handle, Transform, Vector3};
 
@@ -31,14 +33,20 @@ impl CadDocument {
                 let Some(arrow_handle) = arrow_handle.filter(|handle| !handle.is_null()) else {
                     continue;
                 };
-                let Some(tip) = line.points.first().copied() else { continue };
-                let Some(next) = line.points.get(1).copied() else { continue };
+                let Some(tip) = line.points.first().copied() else {
+                    continue;
+                };
+                let Some(next) = line.points.get(1).copied() else {
+                    continue;
+                };
                 let Some(record) = self
                     .block_records
                     .iter()
                     .find(|record| record.handle == arrow_handle)
                     .cloned()
-                else { continue };
+                else {
+                    continue;
+                };
                 let base = self
                     .get_entity(record.block_entity_handle)
                     .and_then(|entity| match entity {
@@ -79,13 +87,17 @@ impl CadDocument {
         let Some(block_handle) = leader
             .block_content_handle
             .or(leader.context.block_content_handle)
-        else { return parts };
+        else {
+            return parts;
+        };
         let Some(record) = self
             .block_records
             .iter()
             .find(|record| record.handle == block_handle)
             .cloned()
-        else { return parts };
+        else {
+            return parts;
+        };
         let base = self
             .get_entity(record.block_entity_handle)
             .and_then(|entity| match entity {
@@ -98,7 +110,9 @@ impl CadDocument {
             .iter()
             .filter_map(|handle| self.get_entity(*handle).cloned())
             .map(|mut entity| {
-                entity.as_entity_mut().apply_transform(&Transform::from_translation(base * -1.0));
+                entity
+                    .as_entity_mut()
+                    .apply_transform(&Transform::from_translation(base * -1.0));
                 entity
             })
             .collect();
@@ -127,13 +141,14 @@ impl CadDocument {
             .or_else(|| {
                 self.objects.values().find_map(|object| match object {
                     crate::objects::ObjectType::MLineStyle(style)
-                        if style.name.eq_ignore_ascii_case(&mline.style_name) => Some(style),
+                        if style.name.eq_ignore_ascii_case(&mline.style_name) =>
+                    {
+                        Some(style)
+                    }
                     _ => None,
                 })
             });
-        let fill_on = style
-            .map(|style| style.flags.fill_on)
-            .unwrap_or(false);
+        let fill_on = style.map(|style| style.flags.fill_on).unwrap_or(false);
         let offset_values: Vec<f64> = style
             .map(|style| {
                 style
@@ -155,7 +170,10 @@ impl CadDocument {
             mline.vertices.len().saturating_sub(1)
         };
         for (element_index, offset) in offset_values.iter().copied().enumerate() {
-            let color = colors.get(element_index).copied().unwrap_or(mline.common.color);
+            let color = colors
+                .get(element_index)
+                .copied()
+                .unwrap_or(mline.common.color);
             for i in 0..segment_count {
                 let a = &mline.vertices[i];
                 let b = &mline.vertices[(i + 1) % mline.vertices.len()];
@@ -174,10 +192,7 @@ impl CadDocument {
             }
         }
         if fill_on && offset_values.len() >= 2 {
-            let low = offset_values
-                .iter()
-                .copied()
-                .fold(f64::INFINITY, f64::min);
+            let low = offset_values.iter().copied().fold(f64::INFINITY, f64::min);
             let high = offset_values
                 .iter()
                 .copied()
@@ -191,7 +206,8 @@ impl CadDocument {
                     b.position + b.miter.normalize() * low,
                     b.position + b.miter.normalize() * high,
                 );
-                solid.common = crate::entities::modification::explode::inherit_common(&mline.common);
+                solid.common =
+                    crate::entities::modification::explode::inherit_common(&mline.common);
                 parts.push(EntityType::Solid(solid));
             }
         }
@@ -203,7 +219,9 @@ impl CadDocument {
         // native LINE result for the common custom-style case.
         let style_flags = style.map(|style| style.flags);
         let cap_line = |at_start: bool| {
-            let Some(flags) = style_flags else { return None };
+            let Some(flags) = style_flags else {
+                return None;
+            };
             let square = if at_start {
                 flags.start_square_cap
             } else {
@@ -212,10 +230,18 @@ impl CadDocument {
             if !square {
                 return None;
             }
-            if at_start && mline.flags.contains(crate::entities::MLineFlags::NO_START_CAPS) {
+            if at_start
+                && mline
+                    .flags
+                    .contains(crate::entities::MLineFlags::NO_START_CAPS)
+            {
                 return None;
             }
-            if !at_start && mline.flags.contains(crate::entities::MLineFlags::NO_END_CAPS) {
+            if !at_start
+                && mline
+                    .flags
+                    .contains(crate::entities::MLineFlags::NO_END_CAPS)
+            {
                 return None;
             }
             let vertex = if at_start {
@@ -240,15 +266,23 @@ impl CadDocument {
             Some(EntityType::Line(line))
         };
         let cap_arc = |at_start: bool| {
-            let Some(flags) = style_flags else { return None };
+            let Some(flags) = style_flags else {
+                return None;
+            };
             let round = if at_start {
                 flags.start_round_cap
             } else {
                 flags.end_round_cap
             };
             if !round
-                || (at_start && mline.flags.contains(crate::entities::MLineFlags::NO_START_CAPS))
-                || (!at_start && mline.flags.contains(crate::entities::MLineFlags::NO_END_CAPS))
+                || (at_start
+                    && mline
+                        .flags
+                        .contains(crate::entities::MLineFlags::NO_START_CAPS))
+                || (!at_start
+                    && mline
+                        .flags
+                        .contains(crate::entities::MLineFlags::NO_END_CAPS))
                 || mline.normal.cross(&Vector3::UNIT_Z).length_squared() > 1e-12
             {
                 return None;
@@ -267,7 +301,8 @@ impl CadDocument {
             if miter.length_squared() <= 1e-20 || radius <= 1e-12 {
                 return None;
             }
-            let start_angle = miter.y.atan2(miter.x) + if at_start { 0.0 } else { std::f64::consts::PI };
+            let start_angle =
+                miter.y.atan2(miter.x) + if at_start { 0.0 } else { std::f64::consts::PI };
             let end_angle = start_angle + std::f64::consts::PI;
             let mut arc = crate::entities::Arc {
                 common: crate::entities::modification::explode::inherit_common(&mline.common),
@@ -355,7 +390,12 @@ impl CadDocument {
         if !unsupported.is_empty() {
             let drawable_count = source
                 .iter()
-                .filter(|entity| !matches!(entity, EntityType::Block(_) | EntityType::BlockEnd(_) | EntityType::Seqend(_)))
+                .filter(|entity| {
+                    !matches!(
+                        entity,
+                        EntityType::Block(_) | EntityType::BlockEnd(_) | EntityType::Seqend(_)
+                    )
+                })
                 .count();
             if unsupported.len() == drawable_count {
                 // AutoCAD leaves an INSERT containing only unsupported
@@ -379,24 +419,30 @@ impl CadDocument {
                 continue;
             }
             if let EntityType::Insert(nested) = entity {
-                let composite = Transform::from_matrix(transform.matrix * nested.get_transform().matrix);
+                let composite =
+                    Transform::from_matrix(transform.matrix * nested.get_transform().matrix);
                 if Insert::has_unrepresentable_shear(&composite) {
-                    if let Some(fallback) =
-                        self.make_shear_fallback(insert, nested, &transform)
-                    {
+                    if let Some(fallback) = self.make_shear_fallback(insert, nested, &transform) {
                         parts.push(fallback);
                         continue;
                     }
                 }
             }
-            parts.extend(insert.explode_with_transform(std::slice::from_ref(entity), &transform, false));
+            parts.extend(insert.explode_with_transform(
+                std::slice::from_ref(entity),
+                &transform,
+                false,
+            ));
         }
         self.detach_exploded_parts(&mut parts, insert.common.owner_handle);
         parts
     }
 
     fn is_nonuniform_modeler(entity: &EntityType) -> bool {
-        matches!(entity, EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_))
+        matches!(
+            entity,
+            EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_)
+        )
     }
 
     /// Preserve an exact nested INSERT whose parent transform introduces
@@ -435,7 +481,8 @@ impl CadDocument {
                 entity
             })
             .collect();
-        let composite = Transform::from_matrix(parent_transform.matrix * nested.get_transform().matrix);
+        let composite =
+            Transform::from_matrix(parent_transform.matrix * nested.get_transform().matrix);
         let mut geometry = nested.explode_with_transform(&source, &composite, true);
         if geometry.is_empty() {
             return None;
@@ -629,18 +676,13 @@ mod tests {
         let mut style = MLineStyle::new("CAPS");
         style.handle = style_handle;
         style.flags = MLineStyleFlags::simple();
-        style.elements = vec![
-            MLineStyleElement::new(1.0),
-            MLineStyleElement::new(-1.0),
-        ];
+        style.elements = vec![MLineStyleElement::new(1.0), MLineStyleElement::new(-1.0)];
         document
             .objects
             .insert(style_handle, ObjectType::MLineStyle(style));
 
-        let mut mline = MLine::from_points(&[
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(10.0, 0.0, 0.0),
-        ]);
+        let mut mline =
+            MLine::from_points(&[Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0)]);
         mline.style_name = "CAPS".to_string();
         mline.style_handle = Some(style_handle);
         let parts = document.explode_entity(&EntityType::MLine(mline));
@@ -654,8 +696,8 @@ mod tests {
             _ => false,
         }));
         assert!(lines.iter().any(|part| match part {
-            EntityType::Line(line) => (line.start.x - 10.0).abs() < 1e-9
-                && (line.end.x - 10.0).abs() < 1e-9,
+            EntityType::Line(line) =>
+                (line.start.x - 10.0).abs() < 1e-9 && (line.end.x - 10.0).abs() < 1e-9,
             _ => false,
         }));
     }
@@ -667,18 +709,13 @@ mod tests {
         let mut style = MLineStyle::new("ROUND");
         style.handle = style_handle;
         style.flags = MLineStyleFlags::round_caps();
-        style.elements = vec![
-            MLineStyleElement::new(1.0),
-            MLineStyleElement::new(-1.0),
-        ];
+        style.elements = vec![MLineStyleElement::new(1.0), MLineStyleElement::new(-1.0)];
         document
             .objects
             .insert(style_handle, ObjectType::MLineStyle(style));
 
-        let mut mline = MLine::from_points(&[
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::new(10.0, 0.0, 0.0),
-        ]);
+        let mut mline =
+            MLine::from_points(&[Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 0.0, 0.0)]);
         mline.style_name = "ROUND".to_string();
         mline.style_handle = Some(style_handle);
         let parts = document.explode_entity(&EntityType::MLine(mline));
@@ -792,7 +829,11 @@ mod tests {
             let mut marker = Block::new("CHILD", Vector3::ZERO);
             marker.common.owner_handle = owner;
             let marker_handle = document.add_entity(EntityType::Block(marker)).unwrap();
-            document.block_records.get_mut("CHILD").unwrap().block_entity_handle = marker_handle;
+            document
+                .block_records
+                .get_mut("CHILD")
+                .unwrap()
+                .block_entity_handle = marker_handle;
             let mut line = Line::from_points(Vector3::ZERO, Vector3::new(1.0, 0.0, 0.0));
             line.common.owner_handle = owner;
             document.add_entity(EntityType::Line(line)).unwrap();
@@ -806,23 +847,31 @@ mod tests {
             let mut marker = Block::new("PARENT", Vector3::ZERO);
             marker.common.owner_handle = owner;
             let marker_handle = document.add_entity(EntityType::Block(marker)).unwrap();
-            document.block_records.get_mut("PARENT").unwrap().block_entity_handle = marker_handle;
+            document
+                .block_records
+                .get_mut("PARENT")
+                .unwrap()
+                .block_entity_handle = marker_handle;
             owner
         };
-        let mut nested = Insert::new("CHILD", Vector3::ZERO).with_rotation(std::f64::consts::FRAC_PI_4);
+        let mut nested =
+            Insert::new("CHILD", Vector3::ZERO).with_rotation(std::f64::consts::FRAC_PI_4);
         nested.common.owner_handle = parent_owner;
         document.add_entity(EntityType::Insert(nested)).unwrap();
         let mut outer = Insert::new("PARENT", Vector3::ZERO).with_scale(2.0, 1.0, 1.0);
         outer.common.owner_handle = document.header.model_space_block_handle;
         let parts = document.explode_entity(&EntityType::Insert(outer));
-        let fallback = parts.iter().find_map(|part| match part {
-            EntityType::Insert(insert) if insert.block_name.starts_with("*E") => Some(insert),
-            _ => None,
-        }).expect("nested shear should use an anonymous fallback block");
+        let fallback = parts
+            .iter()
+            .find_map(|part| match part {
+                EntityType::Insert(insert) if insert.block_name.starts_with("*E") => Some(insert),
+                _ => None,
+            })
+            .expect("nested shear should use an anonymous fallback block");
         assert!(document.block_records.contains(&fallback.block_name));
-        assert!(document.entities_in_block(&fallback.block_name).any(|entity| {
-            matches!(entity, EntityType::Line(_))
-        }));
+        assert!(document
+            .entities_in_block(&fallback.block_name)
+            .any(|entity| { matches!(entity, EntityType::Line(_)) }));
         assert_ne!(child_owner, parent_owner);
     }
 
@@ -836,7 +885,11 @@ mod tests {
         let mut marker = Block::new("MODEL", Vector3::ZERO);
         marker.common.owner_handle = owner;
         let marker_handle = document.add_entity(EntityType::Block(marker)).unwrap();
-        document.block_records.get_mut("MODEL").unwrap().block_entity_handle = marker_handle;
+        document
+            .block_records
+            .get_mut("MODEL")
+            .unwrap()
+            .block_entity_handle = marker_handle;
         let mut solid = crate::entities::Solid3D::new();
         solid.common.owner_handle = owner;
         document.add_entity(EntityType::Solid3D(solid)).unwrap();
@@ -848,12 +901,15 @@ mod tests {
         insert.common.owner_handle = document.header.model_space_block_handle;
         let parts = document.explode_entity(&EntityType::Insert(insert));
         assert!(parts.iter().any(|part| matches!(part, EntityType::Line(_))));
-        let fallback = parts.iter().find_map(|part| match part {
-            EntityType::Insert(value) if value.block_name.starts_with("*E") => Some(value),
-            _ => None,
-        }).expect("modeler member fallback INSERT");
-        assert!(document.entities_in_block(&fallback.block_name).any(|entity| {
-            matches!(entity, EntityType::Solid3D(_))
-        }));
+        let fallback = parts
+            .iter()
+            .find_map(|part| match part {
+                EntityType::Insert(value) if value.block_name.starts_with("*E") => Some(value),
+                _ => None,
+            })
+            .expect("modeler member fallback INSERT");
+        assert!(document
+            .entities_in_block(&fallback.block_name)
+            .any(|entity| { matches!(entity, EntityType::Solid3D(_)) }));
     }
 }

@@ -882,10 +882,7 @@ mod tests {
         empty.flags = MLineFlags::CLOSED | MLineFlags::NO_START_CAPS;
         assert_eq!(empty.serialized_flags().bits(), 6);
 
-        let mut populated = MLine::from_points(&[
-            Vector3::ZERO,
-            Vector3::new(1.0, 0.0, 0.0),
-        ]);
+        let mut populated = MLine::from_points(&[Vector3::ZERO, Vector3::new(1.0, 0.0, 0.0)]);
         populated.flags.remove(MLineFlags::HAS_VERTICES);
         assert_eq!(populated.serialized_flags().bits(), 1);
     }

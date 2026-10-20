@@ -5,8 +5,8 @@ use acadrust::io::dwg::DwgVersion;
 use acadrust::tables::BlockRecord;
 use acadrust::tables::Layer;
 use acadrust::{
-    Arc, CadDocument, Circle, DwgReader, DwgWriter, DxfVersion, Ellipse, EntityType, Line,
-    MText, Point, Text, Vector3,
+    Arc, CadDocument, Circle, DwgReader, DwgWriter, DxfVersion, Ellipse, EntityType, Line, MText,
+    Point, Text, Vector3,
 };
 
 #[test]

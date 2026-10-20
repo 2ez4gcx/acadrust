@@ -338,9 +338,13 @@ fn test_native_multileader_text_uses_polyline_arrow_and_shaft() {
     ml.context.text_string = "NOTE".to_string();
     let parts = EntityType::MultiLeader(Box::new(ml)).explode();
     assert_eq!(parts.len(), 3);
-    assert!(parts.iter().any(|part| matches!(part, EntityType::LwPolyline(_))));
+    assert!(parts
+        .iter()
+        .any(|part| matches!(part, EntityType::LwPolyline(_))));
     assert!(parts.iter().any(|part| matches!(part, EntityType::Line(_))));
-    assert!(parts.iter().any(|part| matches!(part, EntityType::MText(_))));
+    assert!(parts
+        .iter()
+        .any(|part| matches!(part, EntityType::MText(_))));
 }
 
 #[test]
@@ -506,8 +510,7 @@ fn test_explode_mtext() {
 
 #[test]
 fn test_explode_mtext_paragraphs_and_formatting() {
-    let mut mtext =
-        MText::with_value("{\\fArial|b1;Line 1}\\PLine 2", Vector3::new(0.0, 0.0, 0.0));
+    let mut mtext = MText::with_value("{\\fArial|b1;Line 1}\\PLine 2", Vector3::new(0.0, 0.0, 0.0));
     mtext.height = 2.0;
     let parts = EntityType::MText(Box::new(mtext)).flatten();
     let values: Vec<&str> = parts
@@ -528,10 +531,7 @@ fn test_explode_mtext_paragraphs_and_formatting() {
 
 #[test]
 fn test_explode_mtext_preserves_formatted_runs() {
-    let mtext = MText::with_value(
-        r"A{\C1;RED}B{\H2x;BIG}",
-        Vector3::ZERO,
-    );
+    let mtext = MText::with_value(r"A{\C1;RED}B{\H2x;BIG}", Vector3::ZERO);
     let parts = EntityType::MText(Box::new(mtext)).explode();
     assert_eq!(parts.len(), 4);
     let texts: Vec<_> = parts
@@ -562,7 +562,9 @@ fn test_explode_mtext_uses_tilted_normal_axes() {
         })
         .collect();
     assert_eq!(texts.len(), 2);
-    assert!(texts.iter().all(|text| text.insertion_point.y.abs() < 1e-12));
+    assert!(texts
+        .iter()
+        .all(|text| text.insertion_point.y.abs() < 1e-12));
     assert!(texts[1].insertion_point.z > texts[0].insertion_point.z);
     assert_eq!(texts[0].normal, Vector3::new(0.0, 1.0, 0.0));
 }
@@ -695,7 +697,9 @@ fn test_explode_region_preserves_acis_analytic_edges() {
         })
         .collect();
     assert_eq!(circles.len(), 4);
-    assert!(circles.iter().all(|circle| (circle.radius - 2.0).abs() < 1e-9));
+    assert!(circles
+        .iter()
+        .all(|circle| (circle.radius - 2.0).abs() < 1e-9));
 }
 
 #[test]
@@ -706,8 +710,14 @@ fn test_explode_linear_dimension_projects_onto_offset_line() {
     let parts = EntityType::Dimension(Box::new(Dimension::Linear(dimension))).flatten();
     let lines = line_ends(&parts);
     assert_eq!(lines.len(), 4);
-    assert_eq!(lines[0], (Vector3::new(1.0, 2.0, 0.0), Vector3::new(1.0, 8.0, 0.0)));
-    assert_eq!(lines[1], (Vector3::new(11.0, 4.0, 0.0), Vector3::new(11.0, 8.0, 0.0)));
+    assert_eq!(
+        lines[0],
+        (Vector3::new(1.0, 2.0, 0.0), Vector3::new(1.0, 8.0, 0.0))
+    );
+    assert_eq!(
+        lines[1],
+        (Vector3::new(11.0, 4.0, 0.0), Vector3::new(11.0, 8.0, 0.0))
+    );
     assert_eq!(lines[2].0, Vector3::new(1.0, 8.0, 0.0));
     assert_eq!(lines[3].1, Vector3::new(11.0, 8.0, 0.0));
 }
@@ -742,16 +752,25 @@ fn test_explode_dimension_uses_dimstyle_geometry_and_formatting() {
     style.dimdec = 1;
     style.dimpost = "<> mm".to_owned();
 
-    let parts = explode_dimension_with_style(
-        &Dimension::Linear(dimension),
-        Some(&style),
-    );
+    let parts = explode_dimension_with_style(&Dimension::Linear(dimension), Some(&style));
     let lines = line_ends(&parts);
     assert_eq!(lines.len(), 4);
-    assert_eq!(lines[0], (Vector3::new(0.0, 1.0, 0.0), Vector3::new(0.0, 7.0, 0.0)));
-    assert_eq!(lines[1], (Vector3::new(10.0, 1.0, 0.0), Vector3::new(10.0, 7.0, 0.0)));
-    assert_eq!(lines[2], (Vector3::new(1.0, 5.0, 0.0), Vector3::new(4.5, 5.0, 0.0)));
-    assert_eq!(lines[3], (Vector3::new(5.5, 5.0, 0.0), Vector3::new(9.0, 5.0, 0.0)));
+    assert_eq!(
+        lines[0],
+        (Vector3::new(0.0, 1.0, 0.0), Vector3::new(0.0, 7.0, 0.0))
+    );
+    assert_eq!(
+        lines[1],
+        (Vector3::new(10.0, 1.0, 0.0), Vector3::new(10.0, 7.0, 0.0))
+    );
+    assert_eq!(
+        lines[2],
+        (Vector3::new(1.0, 5.0, 0.0), Vector3::new(4.5, 5.0, 0.0))
+    );
+    assert_eq!(
+        lines[3],
+        (Vector3::new(5.5, 5.0, 0.0), Vector3::new(9.0, 5.0, 0.0))
+    );
 
     let arrows = solids(&parts);
     assert_eq!(arrows.len(), 2);
@@ -783,7 +802,9 @@ fn test_explode_dimension_dimstyle_suppression_and_text_blank() {
     let parts = explode_dimension_with_style(&Dimension::Linear(dimension), Some(&style));
     assert!(line_ends(&parts).is_empty());
     assert!(solids(&parts).len() == 2);
-    assert!(!parts.iter().any(|part| matches!(part, EntityType::MText(_))));
+    assert!(!parts
+        .iter()
+        .any(|part| matches!(part, EntityType::MText(_))));
 }
 
 #[test]
@@ -799,7 +820,9 @@ fn test_document_explode_dimension_resolves_named_dimstyle() {
     dimension.definition_point = Vector3::new(0.0, 5.0, 0.0);
     dimension.base.text_middle_point = Vector3::new(1.0, 5.0, 0.0);
     dimension.base.style_name = "DOC_STYLE".to_owned();
-    let parts = document.explode_entity(&EntityType::Dimension(Box::new(Dimension::Linear(dimension))));
+    let parts = document.explode_entity(&EntityType::Dimension(Box::new(Dimension::Linear(
+        dimension,
+    ))));
 
     let text = parts
         .iter()
@@ -845,7 +868,9 @@ fn test_explode_box_solid_into_planar_regions() {
     let solid = Solid3D::from_sat(&sat.to_sat_string());
     let parts = EntityType::Solid3D(solid).explode();
     assert_eq!(parts.len(), 6);
-    assert!(parts.iter().all(|part| matches!(part, EntityType::Region(_))));
+    assert!(parts
+        .iter()
+        .all(|part| matches!(part, EntityType::Region(_))));
 }
 
 #[test]
@@ -853,8 +878,20 @@ fn test_explode_curved_cylinder_into_surface_and_planar_regions() {
     let sat = crate::entities::acis::primitives::build_cylinder([0.0, 0.0, 0.0], 2.0, 3.0);
     let solid = Solid3D::from_sat(&sat.to_sat_string());
     let parts = EntityType::Solid3D(solid).explode();
-    assert_eq!(parts.iter().filter(|part| matches!(part, EntityType::Surface(_))).count(), 1);
-    assert_eq!(parts.iter().filter(|part| matches!(part, EntityType::Region(_))).count(), 2);
+    assert_eq!(
+        parts
+            .iter()
+            .filter(|part| matches!(part, EntityType::Surface(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        parts
+            .iter()
+            .filter(|part| matches!(part, EntityType::Region(_)))
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -864,8 +901,20 @@ fn test_native_table_graphics_have_grid_and_cell_text() {
     table.set_cell_text(1, 0, "A");
     table.set_cell_text(1, 1, "B");
     let parts = EntityType::Table(Box::new(table)).explode();
-    assert_eq!(parts.iter().filter(|part| matches!(part, EntityType::Line(_))).count(), 7);
-    assert_eq!(parts.iter().filter(|part| matches!(part, EntityType::MText(_))).count(), 3);
+    assert_eq!(
+        parts
+            .iter()
+            .filter(|part| matches!(part, EntityType::Line(_)))
+            .count(),
+        7
+    );
+    assert_eq!(
+        parts
+            .iter()
+            .filter(|part| matches!(part, EntityType::MText(_)))
+            .count(),
+        3
+    );
 }
 
 #[test]
@@ -901,13 +950,16 @@ fn test_document_explode_dimension_resolves_dimstyle() {
     dimension.definition_point = Vector3::new(0.0, 5.0, 0.0);
     dimension.base.text_middle_point = Vector3::new(5.0, 5.0, 0.0);
     dimension.base.style_name = "CUSTOM".to_string();
-    let parts = document.explode_entity(&EntityType::Dimension(Box::new(
-        Dimension::Linear(dimension),
-    )));
-    let text = parts.iter().find_map(|part| match part {
-        EntityType::MText(text) => Some(text),
-        _ => None,
-    }).expect("dimension MTEXT");
+    let parts = document.explode_entity(&EntityType::Dimension(Box::new(Dimension::Linear(
+        dimension,
+    ))));
+    let text = parts
+        .iter()
+        .find_map(|part| match part {
+            EntityType::MText(text) => Some(text),
+            _ => None,
+        })
+        .expect("dimension MTEXT");
     assert_eq!(text.value, "\\A1;20.0 mm");
     assert!((text.height - 3.0).abs() < 1e-12);
 }

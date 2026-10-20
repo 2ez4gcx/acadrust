@@ -258,11 +258,7 @@ pub trait Entity {
     }
 
     /// Rotate using one of the CAD axis-selection modes.
-    fn rotate_with_axis(
-        &mut self,
-        axis: crate::entities::rotate::RotationAxis,
-        angle: f64,
-    ) {
+    fn rotate_with_axis(&mut self, axis: crate::entities::rotate::RotationAxis, angle: f64) {
         match axis {
             crate::entities::rotate::RotationAxis::TwoPoint { first, second } => {
                 self.rotate_about_line(first, second, angle)
@@ -285,11 +281,7 @@ pub trait Entity {
     }
 
     /// Apply the 3D CAD rotation axis selector.
-    fn rotate3d(
-        &mut self,
-        axis: crate::entities::rotate::RotationAxis,
-        angle: f64,
-    ) {
+    fn rotate3d(&mut self, axis: crate::entities::rotate::RotationAxis, angle: f64) {
         self.rotate_with_axis(axis, angle);
     }
 
@@ -301,12 +293,9 @@ pub trait Entity {
     /// Rotate from a reference point to a target point around `center` in the
     /// world XY plane.
     fn rotate_by_points(&mut self, center: Vector3, reference: Vector3, target: Vector3) {
-        if let Some(angle) = crate::entities::rotate::angle_from_points(
-            center,
-            Vector3::UNIT_Z,
-            reference,
-            target,
-        ) {
+        if let Some(angle) =
+            crate::entities::rotate::angle_from_points(center, Vector3::UNIT_Z, reference, target)
+        {
             self.rotate_about_axis(center, Vector3::UNIT_Z, angle);
         }
     }
@@ -319,9 +308,9 @@ pub trait Entity {
         reference: Vector3,
         target: Vector3,
     ) {
-        if let Some(angle) = crate::entities::rotate::angle_from_points(
-            center, axis, reference, target,
-        ) {
+        if let Some(angle) =
+            crate::entities::rotate::angle_from_points(center, axis, reference, target)
+        {
             self.rotate_about_axis(center, axis, angle);
         }
     }

@@ -290,9 +290,10 @@ fn clearing_modeled_table_metadata_preserves_other_values_for_the_same_app() {
             if application == "ACAD" && document.version >= DxfVersion::AC1021 {
                 continue;
             }
-            let data = document.object_xdata.get(&handle).unwrap_or_else(|| {
-                panic!("missing {:?} {handle} {application}", document.version)
-            });
+            let data = document
+                .object_xdata
+                .get(&handle)
+                .unwrap_or_else(|| panic!("missing {:?} {handle} {application}", document.version));
             let record = data.get_record(application).unwrap();
             assert_eq!(
                 data.records()

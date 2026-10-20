@@ -78,11 +78,27 @@ impl Default for DateLocale {
     fn default() -> Self {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         let months = s(&[
-            "January", "February", "March", "April", "May", "June", "July", "August",
-            "September", "October", "November", "December",
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
         ]);
         let days = s(&[
-            "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+            "Sunday",
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
         ]);
         let abbr = |v: &[String]| v.iter().map(|x| x[..3].to_string()).collect::<Vec<_>>();
         Self {
@@ -491,8 +507,7 @@ impl<'a> ExprParser<'a> {
             }
             self.i += 1;
         }
-        let text =
-            std::str::from_utf8(&self.s[start..self.i]).map_err(|_| ExprError::Invalid)?;
+        let text = std::str::from_utf8(&self.s[start..self.i]).map_err(|_| ExprError::Invalid)?;
         if real {
             text.parse().map(Num::Real).map_err(|_| ExprError::Invalid)
         } else {
@@ -588,8 +603,7 @@ impl<'a> ExprParser<'a> {
             match parse_cellref(self.s, &mut self.i) {
                 Some((c1, r1)) if self.eat(b':') => {
                     self.skip_ws();
-                    let (c2, r2) =
-                        parse_cellref(self.s, &mut self.i).ok_or(ExprError::Invalid)?;
+                    let (c2, r2) = parse_cellref(self.s, &mut self.i).ok_or(ExprError::Invalid)?;
                     for r in r1.min(r2)..=r1.max(r2) {
                         for c in c1.min(c2)..=c1.max(c2) {
                             match self.cell(c, r)? {
@@ -689,8 +703,16 @@ fn apply_func(name: &str, vals: &[Num], table: bool) -> ExprResult {
         }
         "average" | "mean" if table && !xs.is_empty() => xs.iter().sum::<f64>() / xs.len() as f64,
         "count" if table => return Ok(Num::Int(xs.len() as i64)),
-        "min" if table => xs.iter().copied().reduce(f64::min).ok_or(ExprError::Invalid)?,
-        "max" if table => xs.iter().copied().reduce(f64::max).ok_or(ExprError::Invalid)?,
+        "min" if table => xs
+            .iter()
+            .copied()
+            .reduce(f64::min)
+            .ok_or(ExprError::Invalid)?,
+        "max" if table => xs
+            .iter()
+            .copied()
+            .reduce(f64::max)
+            .ok_or(ExprError::Invalid)?,
         "product" if table => xs.iter().product(),
         "abs" => one()?.abs(),
         "sqrt" if one()? >= 0.0 => one()?.sqrt(),
@@ -771,7 +793,17 @@ fn named_object_name(doc: &CadDocument, h: Handle) -> Option<String> {
             }
         )*};
     }
-    find_in!(layers, line_types, text_styles, block_records, dim_styles, views, ucss, vports, app_ids);
+    find_in!(
+        layers,
+        line_types,
+        text_styles,
+        block_records,
+        dim_styles,
+        views,
+        ucss,
+        vports,
+        app_ids
+    );
     doc.objects.values().find_map(|o| match o {
         ObjectType::Dictionary(d) => d
             .entries
@@ -881,8 +913,12 @@ fn object_property(doc: &CadDocument, e: &EntityType, prop: &str) -> Option<Prop
             EntityType::Insert(i) => PropVal::Angle(i.rotation),
             _ => return None,
         },
-        "XScaleFactor" | "YScaleFactor" | "ZScaleFactor" | "XEffectiveScaleFactor"
-        | "YEffectiveScaleFactor" | "ZEffectiveScaleFactor" => match e {
+        "XScaleFactor"
+        | "YScaleFactor"
+        | "ZScaleFactor"
+        | "XEffectiveScaleFactor"
+        | "YEffectiveScaleFactor"
+        | "ZEffectiveScaleFactor" => match e {
             EntityType::Insert(i) => {
                 let s = match &prop[..1] {
                     "X" => i.x_scale(),
@@ -890,7 +926,11 @@ fn object_property(doc: &CadDocument, e: &EntityType, prop: &str) -> Option<Prop
                     _ => i.z_scale(),
                 };
                 // The effective scale leaves out the block-unit conversion.
-                let unit = if prop.contains("Effective") { insert_unit_factor(doc, i) } else { 1.0 };
+                let unit = if prop.contains("Effective") {
+                    insert_unit_factor(doc, i)
+                } else {
+                    1.0
+                };
                 PropVal::Num(s / unit)
             }
             _ => return None,
@@ -944,7 +984,10 @@ const INSERT_UNITS: [(&str, f64); 25] = [
 fn insert_unit_factor(doc: &CadDocument, i: &crate::entities::Insert) -> f64 {
     let block = doc.block_records.get(&i.block_name).map_or(0, |b| b.units);
     let drawing = doc.header.insertion_units;
-    match (INSERT_UNITS.get(block as usize), INSERT_UNITS.get(drawing as usize)) {
+    match (
+        INSERT_UNITS.get(block as usize),
+        INSERT_UNITS.get(drawing as usize),
+    ) {
         (Some(b), Some(d)) if block > 0 && drawing > 0 => b.1 / d.1,
         _ => 1.0,
     }
@@ -1053,7 +1096,10 @@ fn eval_acvar(
 ) -> Option<String> {
     // Drop the evaluator word (`\AcVar`, `\AcVar.16.2`).
     let body = code.trim().trim_start_matches('\\');
-    let body = body.split_once(char::is_whitespace).map_or("", |(_, r)| r).trim();
+    let body = body
+        .split_once(char::is_whitespace)
+        .map_or("", |(_, r)| r)
+        .trim();
 
     // Hyperlink: `\href "url#location#text to display#flags"` — the text, or
     // the address when the text is empty.
@@ -1093,9 +1139,17 @@ fn eval_acvar(
                 Some((c, m)) => date(if create { c } else { m }),
                 None => {
                     let h = &doc.header;
-                    let jd = if create { h.create_date_julian } else { h.update_date_julian };
+                    let jd = if create {
+                        h.create_date_julian
+                    } else {
+                        h.update_date_julian
+                    };
                     // Header dates count the day fraction from midnight.
-                    if jd > 0.0 { date(jd - 0.5) } else { Some(NO_VALUE.into()) }
+                    if jd > 0.0 {
+                        date(jd - 0.5)
+                    } else {
+                        Some(NO_VALUE.into())
+                    }
                 }
             }
         }
@@ -1112,8 +1166,7 @@ fn eval_acvar(
         "HyperlinkBase" => Some(or_no_value(&si.hyperlink_base)),
         "RevisionNumber" => Some(or_no_value(&si.revision_number)),
         "LastSavedBy" => Some(
-            nonempty(&si.last_saved_by)
-                .unwrap_or_else(|| or_no_value(&doc.header.last_saved_by)),
+            nonempty(&si.last_saved_by).unwrap_or_else(|| or_no_value(&doc.header.last_saved_by)),
         ),
         // File provenance. An unsaved drawing has only its name (DWGNAME,
         // from the host). Without a format the full path shows (`%fn7`).
@@ -1198,8 +1251,14 @@ pub const PLOT_SCALE_FORMATS: [(&str, &str); 7] = [
         "1\" = #'",
         r#"\AcVar.16.2 PlotScale \f "1\" = %lu2%zs12%ct9[0.0833333333333333]'""#,
     ),
-    ("#\" = 1'", r#"\AcVar PlotScale \f "%lu4%pr8%ct2%qf2816 = 1'""#),
-    ("#\" = 1'-0\"", r#"\AcVar PlotScale \f "%lu4%pr8%ct2%qf2816 = 1'-0\"""#),
+    (
+        "#\" = 1'",
+        r#"\AcVar PlotScale \f "%lu4%pr8%ct2%qf2816 = 1'""#,
+    ),
+    (
+        "#\" = 1'-0\"",
+        r#"\AcVar PlotScale \f "%lu4%pr8%ct2%qf2816 = 1'-0\"""#,
+    ),
     ("Use scale name", r#"\AcVar.16.2 PlotScale \f "%sn""#),
 ];
 
@@ -1250,7 +1309,8 @@ pub(crate) fn plot_scale_text(doc: &CadDocument, scale: f64, fmt: &str) -> Strin
             .into_iter()
             .find(|s| {
                 s.drawing_units != 0.0
-                    && (s.paper_units / s.drawing_units - scale).abs() <= 1e-9 * scale.abs().max(1.0)
+                    && (s.paper_units / s.drawing_units - scale).abs()
+                        <= 1e-9 * scale.abs().max(1.0)
             })
             .map(|s| s.name.clone())
             .unwrap_or_else(|| format!("{:.6}", scale));
@@ -1312,14 +1372,21 @@ impl Picture {
                     continue;
                 }
             }
-            let key: String = tail.chars().take_while(|c| c.is_ascii_alphabetic()).take(2).collect();
+            let key: String = tail
+                .chars()
+                .take_while(|c| c.is_ascii_alphabetic())
+                .take(2)
+                .collect();
             if key.len() < 2 {
                 p.lit.push('%');
                 rest = tail;
                 continue;
             }
             let after_key = &tail[key.len()..];
-            let digits: String = after_key.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let digits: String = after_key
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
             let mut end = key.len() + digits.len();
             let arg = after_key[digits.len()..]
                 .strip_prefix('[')
@@ -1444,11 +1511,18 @@ fn format_number(doc: &CadDocument, value: f64, pic: &str) -> String {
 fn number_text(doc: &CadDocument, p: &Picture, v: f64) -> String {
     let z = p.zeros();
     if let Some(au) = p.au {
-        let mode = if au == 5 { doc.header.angular_unit_format as i64 } else { au };
-        let prec = p.pr.unwrap_or(doc.header.angular_unit_precision.max(0) as usize);
+        let mode = if au == 5 {
+            doc.header.angular_unit_format as i64
+        } else {
+            au
+        };
+        let prec =
+            p.pr.unwrap_or(doc.header.angular_unit_precision.max(0) as usize);
         return angle_text(v, mode, prec.min(16), z, true);
     }
-    let prec = p.pr.unwrap_or(doc.header.linear_unit_precision.max(0) as usize).min(16);
+    let prec =
+        p.pr.unwrap_or(doc.header.linear_unit_precision.max(0) as usize)
+            .min(16);
     // `%qf2` / `%qf4`: an angle in radians whose `%lu` number is the angle
     // mode, normalised to one turn with 2, as is with 4.
     if p.qf & 6 != 0 {
@@ -1511,7 +1585,11 @@ fn unit_text(v: f64, mode: i64, prec: usize, z: Zeros, ds: char, th: Option<char
             let mut e = if a > 0.0 { a.log10().floor() as i32 } else { 0 };
             let scaled = |e: i32| {
                 let k = prec as i32 - e;
-                if k >= 0 { (a * 10f64.powi(k)).round() } else { (a / 10f64.powi(-k)).round() }
+                if k >= 0 {
+                    (a * 10f64.powi(k)).round()
+                } else {
+                    (a / 10f64.powi(-k)).round()
+                }
             };
             let mut n = scaled(e);
             if n >= 10f64.powi(prec as i32 + 1) {
@@ -1541,7 +1619,11 @@ fn unit_text(v: f64, mode: i64, prec: usize, z: Zeros, ds: char, th: Option<char
         4 => {
             let (inches, num, den) = fraction(a);
             let (feet, inch) = (inches / 12, inches % 12);
-            let frac = if num != 0 { format!("{num}/{den}") } else { String::new() };
+            let frac = if num != 0 {
+                format!("{num}/{den}")
+            } else {
+                String::new()
+            };
             let inch_text = |drop_zero: bool| match (inch, frac.is_empty()) {
                 (0, false) if drop_zero => frac.clone(),
                 (i, false) => format!("{i} {frac}"),
@@ -1665,7 +1747,6 @@ fn nonempty(s: &str) -> Option<String> {
     let t = s.trim();
     (!t.is_empty()).then(|| t.to_string())
 }
-
 
 fn filename_parts(p: &str, bits: u32) -> Option<String> {
     let (dir, sep, base) = match p.rfind(['/', '\\']) {
@@ -1975,7 +2056,10 @@ pub fn format_dt_in(dt: (i64, u32, u32, u32, u32, u32), fmt: &str, loc: &DateLoc
     while i < chars.len() {
         let c = chars[i];
         if c == '\'' || c == '"' {
-            let end = chars[i + 1..].iter().position(|&x| x == c).map_or(chars.len(), |p| i + 1 + p);
+            let end = chars[i + 1..]
+                .iter()
+                .position(|&x| x == c)
+                .map_or(chars.len(), |p| i + 1 + p);
             out.extend(&chars[i + 1..end]);
             i = end + 1;
             continue;
@@ -2008,10 +2092,26 @@ pub fn format_dt_in(dt: (i64, u32, u32, u32, u32, u32), fmt: &str, loc: &DateLoc
                 2 => format!("{:02}", (y % 100).unsigned_abs()),
                 _ => format!("{:0width$}", y, width = n),
             }),
-            'h' => out.push_str(&if n == 1 { h12.to_string() } else { format!("{:02}", h12) }),
-            'H' => out.push_str(&if n == 1 { h.to_string() } else { format!("{:02}", h) }),
-            'm' => out.push_str(&if n == 1 { mi.to_string() } else { format!("{:02}", mi) }),
-            's' => out.push_str(&if n == 1 { s.to_string() } else { format!("{:02}", s) }),
+            'h' => out.push_str(&if n == 1 {
+                h12.to_string()
+            } else {
+                format!("{:02}", h12)
+            }),
+            'H' => out.push_str(&if n == 1 {
+                h.to_string()
+            } else {
+                format!("{:02}", h)
+            }),
+            'm' => out.push_str(&if n == 1 {
+                mi.to_string()
+            } else {
+                format!("{:02}", mi)
+            }),
+            's' => out.push_str(&if n == 1 {
+                s.to_string()
+            } else {
+                format!("{:02}", s)
+            }),
             't' => {
                 if n == 1 {
                     out.extend(ampm.chars().next());
@@ -2161,7 +2261,10 @@ fn code_evaluator(code: &str) -> &str {
 }
 
 fn code_word(code: &str, n: usize) -> Option<&str> {
-    code.trim().trim_start_matches('\\').split_whitespace().nth(n)
+    code.trim()
+        .trim_start_matches('\\')
+        .split_whitespace()
+        .nth(n)
 }
 
 fn code_format(code: &str) -> &str {
@@ -2291,14 +2394,20 @@ impl CadDocument {
         &self,
         t: &Table,
         extra: &[(usize, usize)],
-    ) -> (Vec<((usize, usize), crate::entities::MText)>, Vec<crate::entities::Line>, Vec<crate::entities::Solid>) {
+    ) -> (
+        Vec<((usize, usize), crate::entities::MText)>,
+        Vec<crate::entities::Line>,
+        Vec<crate::entities::Solid>,
+    ) {
         use crate::entities::table::CellStylePropertyFlags as P;
         use crate::entities::{Line, MText, Solid};
         use crate::types::{Color, LineWeight, Transparency, Vector3};
-        let style = t.table_style_handle.and_then(|h| match self.objects.get(&h) {
-            Some(ObjectType::TableStyle(s)) => Some(s.clone()),
-            _ => None,
-        });
+        let style = t
+            .table_style_handle
+            .and_then(|h| match self.objects.get(&h) {
+                Some(ObjectType::TableStyle(s)) => Some(s.clone()),
+                _ => None,
+            });
         let margin = style.as_ref().map_or(0.06, |s| s.horizontal_margin);
         let legacy = t.legacy_style_override.clone().unwrap_or_default();
         let title = !legacy.title_suppressed.unwrap_or(false);
@@ -2306,7 +2415,11 @@ impl CadDocument {
         // (text height, alignment) of a row by its kind: title, header, data.
         let row_style = |r: usize| {
             // Newer tables name each row's cell style (1 title, 2 header, 3 data).
-            let named_kind = t.rows.get(r).map(|row| row.style_id).filter(|id| (1..=3).contains(id));
+            let named_kind = t
+                .rows
+                .get(r)
+                .map(|row| row.style_id)
+                .filter(|id| (1..=3).contains(id));
             let kind = if let Some(id) = named_kind {
                 (id - 1) as usize
             } else if title && r == 0 {
@@ -2319,7 +2432,8 @@ impl CadDocument {
             style.as_ref().map_or((0.18, 5), |s| {
                 // Newer styles keep their rows as the named cell styles.
                 let named = s.modern_overrides.iter().find(|(_, n)| {
-                    n.name.eq_ignore_ascii_case(["_TITLE", "_HEADER", "_DATA"][kind])
+                    n.name
+                        .eq_ignore_ascii_case(["_TITLE", "_HEADER", "_DATA"][kind])
                 });
                 match named {
                     Some((_, n)) if n.cell_style.content_format.text_height > 0.0 => (
@@ -2341,11 +2455,22 @@ impl CadDocument {
         let widths: Vec<f64> = t.columns.iter().map(|c| c.width).collect();
         let heights: Vec<f64> = t.rows.iter().map(|r| r.height).collect();
         let (nr, nc) = (heights.len(), widths.len());
-        let xs: Vec<f64> = std::iter::once(0.0).chain(widths.iter().scan(0.0, |a, w| { *a += w; Some(*a) })).collect();
-        let ys: Vec<f64> = std::iter::once(0.0).chain(heights.iter().scan(0.0, |a, h| { *a += h; Some(*a) })).collect();
+        let xs: Vec<f64> = std::iter::once(0.0)
+            .chain(widths.iter().scan(0.0, |a, w| {
+                *a += w;
+                Some(*a)
+            }))
+            .collect();
+        let ys: Vec<f64> = std::iter::once(0.0)
+            .chain(heights.iter().scan(0.0, |a, h| {
+                *a += h;
+                Some(*a)
+            }))
+            .collect();
         // Merged regions: the top-left cell spans its merge width and height;
         // `owner[r][c]` is the cell a grid square belongs to.
-        let mut owner: Vec<Vec<(usize, usize)>> = (0..nr).map(|r| (0..nc).map(|c| (r, c)).collect()).collect();
+        let mut owner: Vec<Vec<(usize, usize)>> =
+            (0..nr).map(|r| (0..nc).map(|c| (r, c)).collect()).collect();
         let mut span = vec![vec![(1usize, 1usize); nc]; nr];
         // Merges come as the table's merged ranges (binary files) or as the
         // origin cell's merge width and height (DXF).
@@ -2356,7 +2481,10 @@ impl CadDocument {
             .collect();
         for (r, row) in t.rows.iter().enumerate() {
             for (c, cell) in row.cells.iter().enumerate().take(nc) {
-                let (w, h) = (cell.merge_width.max(1) as usize, cell.merge_height.max(1) as usize);
+                let (w, h) = (
+                    cell.merge_width.max(1) as usize,
+                    cell.merge_height.max(1) as usize,
+                );
                 if w > 1 || h > 1 {
                     regions.push((r, c, w, h));
                 }
@@ -2404,14 +2532,20 @@ impl CadDocument {
                     solid.common.color = s.background_color.clone();
                     fills.push(solid);
                 }
-                let text = cell.and_then(|cell| cell.contents.first()).map(|ct| ct.value.display().to_string()).unwrap_or_default();
-                let has_field = cell.and_then(|cell| cell.contents.first()).is_some_and(|ct| ct.field_handle.is_some());
+                let text = cell
+                    .and_then(|cell| cell.contents.first())
+                    .map(|ct| ct.value.display().to_string())
+                    .unwrap_or_default();
+                let has_field = cell
+                    .and_then(|cell| cell.contents.first())
+                    .is_some_and(|ct| ct.field_handle.is_some());
                 if text.is_empty() && !has_field && !extra.contains(&(r, c)) {
                     continue;
                 }
                 let (mut height, mut align) = row_style(r);
                 // A cell overriding its style brings its own alignment.
-                if let Some(s) = style_sets(P::ALIGNMENT).filter(|s| (1..=9).contains(&s.alignment)) {
+                if let Some(s) = style_sets(P::ALIGNMENT).filter(|s| (1..=9).contains(&s.alignment))
+                {
                     align = s.alignment;
                 }
                 if let Some(c) = content_sets(P::TEXT_HEIGHT).filter(|c| c.text_height > 0.0) {
@@ -2473,7 +2607,10 @@ impl CadDocument {
                 while c < nc && open(c) {
                     c += 1;
                 }
-                lines.push(line(Vector3::new(xs[start], -ys[k], 0.0), Vector3::new(xs[c], -ys[k], 0.0)));
+                lines.push(line(
+                    Vector3::new(xs[start], -ys[k], 0.0),
+                    Vector3::new(xs[c], -ys[k], 0.0),
+                ));
             }
         }
         for k in 0..=nc {
@@ -2488,7 +2625,10 @@ impl CadDocument {
                 while r < nr && open(r) {
                     r += 1;
                 }
-                lines.push(line(Vector3::new(xs[k], -ys[start], 0.0), Vector3::new(xs[k], -ys[r], 0.0)));
+                lines.push(line(
+                    Vector3::new(xs[k], -ys[start], 0.0),
+                    Vector3::new(xs[k], -ys[r], 0.0),
+                ));
             }
         }
         let mut point = Line::from_points(Vector3::ZERO, Vector3::ZERO);
@@ -2510,15 +2650,23 @@ impl CadDocument {
         let texts = self.redraw_table_block(table, &cells, true)?;
         let mut out = Vec::new();
         for (r, c, template, children) in fields {
-            let container = texts.get(&(r, c)).and_then(|h| self.set_text_field(*h, &template, children));
-            let display = texts.get(&(r, c)).and_then(|h| match self.get_entity(*h) {
-                Some(EntityType::MText(text)) => Some(text.value.clone()),
-                _ => None,
-            }).unwrap_or_default();
-            if let (Some(container), Some(EntityType::Table(t))) = (container, self.get_entity_mut(table)) {
+            let container = texts
+                .get(&(r, c))
+                .and_then(|h| self.set_text_field(*h, &template, children));
+            let display = texts
+                .get(&(r, c))
+                .and_then(|h| match self.get_entity(*h) {
+                    Some(EntityType::MText(text)) => Some(text.value.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            if let (Some(container), Some(EntityType::Table(t))) =
+                (container, self.get_entity_mut(table))
+            {
                 if let Some(cell) = t.rows.get_mut(r).and_then(|row| row.cells.get_mut(c)) {
                     if cell.contents.is_empty() {
-                        cell.contents.push(crate::entities::table::CellContent::new());
+                        cell.contents
+                            .push(crate::entities::table::CellContent::new());
                     }
                     let content = &mut cell.contents[0];
                     content.content_type = crate::entities::table::TableCellContentType::Field;
@@ -2551,7 +2699,11 @@ impl CadDocument {
         let record = t
             .block_record_handle
             .and_then(|h| self.block_records.iter().find(|r| r.handle == h))
-            .or_else(|| self.block_records.get(&t.block_name).filter(|_| !t.block_name.is_empty()))
+            .or_else(|| {
+                self.block_records
+                    .get(&t.block_name)
+                    .filter(|_| !t.block_name.is_empty())
+            })
             .map(|r| (r.handle, r.name.clone(), r.entity_handles.clone()));
         // A table that let go of its block (found by name) keeps drawing from
         // its own data, which shows more than the block plan does (borders,
@@ -2571,10 +2723,28 @@ impl CadDocument {
                     m.attachment_point as i32,
                     m.common.color,
                     m.style,
-                    if m.common.xdictionary_handle.is_some() { "" } else { m.value.as_str() }
+                    if m.common.xdictionary_handle.is_some() {
+                        ""
+                    } else {
+                        m.value.as_str()
+                    }
                 )),
-                EntityType::Line(l) => Some(format!("L {} {} {} {} {}", r(l.start.x), r(l.start.y), r(l.end.x), r(l.end.y), l.common.layer)),
-                EntityType::Solid(f) => Some(format!("S {} {} {} {} {:?}", r(f.first_corner.x), r(f.first_corner.y), r(f.fourth_corner.x), r(f.fourth_corner.y), f.common.color)),
+                EntityType::Line(l) => Some(format!(
+                    "L {} {} {} {} {}",
+                    r(l.start.x),
+                    r(l.start.y),
+                    r(l.end.x),
+                    r(l.end.y),
+                    l.common.layer
+                )),
+                EntityType::Solid(f) => Some(format!(
+                    "S {} {} {} {} {:?}",
+                    r(f.first_corner.x),
+                    r(f.first_corner.y),
+                    r(f.fourth_corner.x),
+                    r(f.fourth_corner.y),
+                    f.common.color
+                )),
                 _ => None,
             }
         };
@@ -2586,12 +2756,20 @@ impl CadDocument {
                 row.cells
                     .iter()
                     .enumerate()
-                    .filter(|(_, cell)| cell.contents.first().is_some_and(|ct| ct.field_handle.is_some()))
+                    .filter(|(_, cell)| {
+                        cell.contents
+                            .first()
+                            .is_some_and(|ct| ct.field_handle.is_some())
+                    })
                     .map(move |(c, _)| (r, c))
             })
             .collect();
         if let (false, Some((_, _, old))) = (always, record.as_ref()) {
-            let mut now: Vec<String> = old.iter().filter_map(|h| self.get_entity(*h)).filter_map(key).collect();
+            let mut now: Vec<String> = old
+                .iter()
+                .filter_map(|h| self.get_entity(*h))
+                .filter_map(key)
+                .collect();
             let mut want: Vec<String> = texts
                 .iter()
                 .map(|(cell, m)| {
@@ -2601,8 +2779,16 @@ impl CadDocument {
                     }
                     key(&EntityType::MText(Box::new(m))).unwrap_or_default()
                 })
-                .chain(lines.iter().filter_map(|l| key(&EntityType::Line(l.clone()))))
-                .chain(fills.iter().filter_map(|f| key(&EntityType::Solid(f.clone()))))
+                .chain(
+                    lines
+                        .iter()
+                        .filter_map(|l| key(&EntityType::Line(l.clone()))),
+                )
+                .chain(
+                    fills
+                        .iter()
+                        .filter_map(|f| key(&EntityType::Solid(f.clone()))),
+                )
                 .collect();
             now.sort();
             want.sort();
@@ -2612,9 +2798,15 @@ impl CadDocument {
         }
 
         // Field cells keep their text's dictionary (the field) and value.
-        let mut carried: std::collections::HashMap<(usize, usize), (Handle, String)> = std::collections::HashMap::new();
+        let mut carried: std::collections::HashMap<(usize, usize), (Handle, String)> =
+            std::collections::HashMap::new();
         for (cell, container) in t.rows.iter().enumerate().flat_map(|(r, row)| {
-            row.cells.iter().enumerate().filter_map(move |(c, cell)| cell.contents.first().and_then(|ct| ct.field_handle).map(|h| ((r, c), h)))
+            row.cells.iter().enumerate().filter_map(move |(c, cell)| {
+                cell.contents
+                    .first()
+                    .and_then(|ct| ct.field_handle)
+                    .map(|h| ((r, c), h))
+            })
         }) {
             let owner_of = |h: Handle| match self.objects.get(&h) {
                 Some(ObjectType::Field(f)) => Some(f.owner),
@@ -2624,7 +2816,9 @@ impl CadDocument {
             // container › TEXT dictionary › extension dictionary › MTEXT
             let xdict = owner_of(container).and_then(owner_of);
             let host = xdict.and_then(owner_of);
-            if let (Some(xdict), Some(EntityType::MText(m))) = (xdict, host.and_then(|h| self.get_entity(h))) {
+            if let (Some(xdict), Some(EntityType::MText(m))) =
+                (xdict, host.and_then(|h| self.get_entity(h)))
+            {
                 carried.insert(cell, (xdict, m.value.clone()));
             }
         }
@@ -2741,7 +2935,8 @@ impl CadDocument {
         }
         let now_empty = match self.objects.get_mut(&xdict) {
             Some(ObjectType::Dictionary(x)) => {
-                x.entries.retain(|(k, _)| !k.eq_ignore_ascii_case("ACAD_FIELD"));
+                x.entries
+                    .retain(|(k, _)| !k.eq_ignore_ascii_case("ACAD_FIELD"));
                 x.entries.is_empty()
             }
             _ => false,
@@ -2769,14 +2964,22 @@ impl CadDocument {
     ) -> Vec<Handle> {
         // ATTRIBs need handles to host fields.
         let unset = match self.get_entity(insert) {
-            Some(EntityType::Insert(i)) => i.attributes.iter().filter(|a| a.common.handle.is_null()).count(),
+            Some(EntityType::Insert(i)) => i
+                .attributes
+                .iter()
+                .filter(|a| a.common.handle.is_null())
+                .count(),
             _ => return Vec::new(),
         };
         let fresh: Vec<Handle> = (0..unset).map(|_| self.allocate_handle()).collect();
         if let Some(EntityType::Insert(i)) = self.get_entity_mut(insert) {
             let owner = i.common.handle;
             let mut fresh = fresh.into_iter();
-            for a in i.attributes.iter_mut().filter(|a| a.common.handle.is_null()) {
+            for a in i
+                .attributes
+                .iter_mut()
+                .filter(|a| a.common.handle.is_null())
+            {
                 a.common.handle = fresh.next().unwrap_or_default();
                 a.common.owner_handle = owner;
             }
@@ -2786,12 +2989,17 @@ impl CadDocument {
         };
         let mut plans = Vec::new();
         for attrib in &ins.attributes {
-            let Some(def) = self.entities_in_block(&ins.block_name).find_map(|e| match e {
-                EntityType::AttributeDefinition(d) if d.tag.eq_ignore_ascii_case(&attrib.tag) => {
-                    Some(d.common.handle)
-                }
-                _ => None,
-            }) else {
+            let Some(def) = self
+                .entities_in_block(&ins.block_name)
+                .find_map(|e| match e {
+                    EntityType::AttributeDefinition(d)
+                        if d.tag.eq_ignore_ascii_case(&attrib.tag) =>
+                    {
+                        Some(d.common.handle)
+                    }
+                    _ => None,
+                })
+            else {
                 continue;
             };
             let Some(container) = container_for_host(self, def) else {
@@ -2808,14 +3016,21 @@ impl CadDocument {
                 .map(|k| {
                     let placeholder = k.code.contains("?BlockRefId");
                     let code = map(&k.code.replace("?BlockRefId", "%<\\_ObjIdx 0>%"));
-                    let objects = if placeholder { vec![insert] } else { k.objects.clone() };
+                    let objects = if placeholder {
+                        vec![insert]
+                    } else {
+                        k.objects.clone()
+                    };
                     let stored = match self.objects.get(&k.handle) {
                         Some(ObjectType::Field(f)) => Some(f),
                         _ => None,
                     };
-                    let cached = stored.map(|f| f.value.display().to_string()).unwrap_or_default();
-                    let shown = evaluate_code(self, &code, &objects, Some(attrib.common.handle), ctx)
-                        .unwrap_or(cached);
+                    let cached = stored
+                        .map(|f| f.value.display().to_string())
+                        .unwrap_or_default();
+                    let shown =
+                        evaluate_code(self, &code, &objects, Some(attrib.common.handle), ctx)
+                            .unwrap_or(cached);
                     let mut child = NewField::new(code, shown);
                     child.objects = objects;
                     if let Some(f) = stored {
@@ -2829,14 +3044,16 @@ impl CadDocument {
         plans
             .into_iter()
             .filter_map(|(attrib, template, children)| {
-                self.set_text_field(attrib, &template, children).map(|_| attrib)
+                self.set_text_field(attrib, &template, children)
+                    .map(|_| attrib)
             })
             .collect()
     }
 
     pub fn stamp_plot_fields(&mut self, ctx: &dyn FieldContext) -> Vec<Handle> {
         let plot = Plotting(ctx);
-        self.restamp_fields(&plot, ctx, &|_, f| f.evaluation_option & 4 != 0, None).0
+        self.restamp_fields(&plot, ctx, &|_, f| f.evaluation_option & 4 != 0, None)
+            .0
     }
 
     pub fn update_fields(
@@ -2857,13 +3074,17 @@ impl CadDocument {
             _ => None,
         };
         match hosts {
-            Some(hosts) => self.restamp_fields(ctx, ctx, &|kid, _| kid.evaluator == "AcExpr", Some(&hosts)).0,
+            Some(hosts) => {
+                self.restamp_fields(ctx, ctx, &|kid, _| kid.evaluator == "AcExpr", Some(&hosts))
+                    .0
+            }
             None => Vec::new(),
         }
     }
 
     pub fn refresh_sheet_set_fields(&mut self, ctx: &dyn FieldContext) -> Vec<Handle> {
-        self.restamp_fields(ctx, ctx, &|kid, _| kid.evaluator.starts_with("AcSm"), None).0
+        self.restamp_fields(ctx, ctx, &|kid, _| kid.evaluator.starts_with("AcSm"), None)
+            .0
     }
 
     fn restamp_fields(
@@ -2902,7 +3123,9 @@ impl CadDocument {
                     "" => stored.value_string.clone(),
                     shown => shown.to_string(),
                 };
-                let fresh = pick(kid, stored).then(|| eval_field(self, kid, plot, host)).flatten();
+                let fresh = pick(kid, stored)
+                    .then(|| eval_field(self, kid, plot, host))
+                    .flatten();
                 // A sheet set field with no set open to answer it keeps the
                 // value it was saved with rather than `####`.
                 let unanswered = |text: &str| kid.evaluator.starts_with("AcSm") && text == "####";
@@ -2916,7 +3139,10 @@ impl CadDocument {
                 }
             }
             let mtext = matches!(self.get_entity(host), Some(EntityType::MText(_)));
-            if let Some(text) = changed.then(|| fill_template(&container.code, &shown, mtext)).flatten() {
+            if let Some(text) = changed
+                .then(|| fill_template(&container.code, &shown, mtext))
+                .flatten()
+            {
                 hosts.push((host, container.handle, text));
             }
         }
@@ -2969,7 +3195,9 @@ impl CadDocument {
             Some(ObjectType::Dictionary(d)) => d.get("ACAD_FIELDLIST"),
             _ => None,
         };
-        if let Some(h) = in_nod.filter(|h| matches!(self.objects.get(h), Some(ObjectType::FieldList(_)))) {
+        if let Some(h) =
+            in_nod.filter(|h| matches!(self.objects.get(h), Some(ObjectType::FieldList(_))))
+        {
             return h;
         }
         if let Some(h) = self
@@ -3112,7 +3340,10 @@ fn child_field(child: NewField, handle: Handle, owner: Handle) -> Field {
     if child.evaluator.starts_with("AcCount") {
         // The count's JSON query, kept beside the code.
         let body = child.code.trim().trim_start_matches('\\');
-        let json = body.split_once(char::is_whitespace).map(|(_, j)| j.trim()).unwrap_or("");
+        let json = body
+            .split_once(char::is_whitespace)
+            .map(|(_, j)| j.trim())
+            .unwrap_or("");
         if !json.is_empty() {
             let mut v = CellValue::text(json);
             v.flags = 2;
@@ -3131,7 +3362,10 @@ fn child_field(child: NewField, handle: Handle, owner: Handle) -> Field {
             let mut v = CellValue::text(&text);
             v.flags = 2;
             v.formatted_value.clear();
-            child_values.push(FieldChildValue { key: key.into(), value: v });
+            child_values.push(FieldChildValue {
+                key: key.into(),
+                value: v,
+            });
         }
         unevaluated = child.value.display() == "####";
     }
@@ -3151,8 +3385,11 @@ fn child_field(child: NewField, handle: Handle, owner: Handle) -> Field {
     } else {
         child.value.clone()
     };
-    let (state, evaluation_status, evaluation_error_code) =
-        if unevaluated { (43, 32, 22) } else { (59, 2, 0) };
+    let (state, evaluation_status, evaluation_error_code) = if unevaluated {
+        (43, 32, 22)
+    } else {
+        (59, 2, 0)
+    };
     Field {
         handle,
         owner,
@@ -3188,7 +3425,11 @@ fn fill_template<S: AsRef<str>>(template: &str, shown: &[S], mtext: bool) -> Opt
         let end = after.find(">%")?;
         let idx: usize = after[..end].trim().parse().ok()?;
         let shown = shown.get(idx)?.as_ref();
-        out.push_str(&if mtext { mtext_escape(shown) } else { shown.to_string() });
+        out.push_str(&if mtext {
+            mtext_escape(shown)
+        } else {
+            shown.to_string()
+        });
         rest = &after[end + 2..];
     }
     out.push_str(rest);
@@ -3213,7 +3454,11 @@ pub fn field_spans(
         let idx: usize = after[..end].trim().parse().ok()?;
         let value = shown.get(idx)?;
         let start = out.len();
-        out.push_str(&if mtext { mtext_escape(value) } else { value.clone() });
+        out.push_str(&if mtext {
+            mtext_escape(value)
+        } else {
+            value.clone()
+        });
         spans.push(start..out.len());
         rest = &after[end + 2..];
     }
@@ -3232,10 +3477,15 @@ fn cached_value(doc: &CadDocument, field: Handle) -> String {
 }
 
 fn cached_children(doc: &CadDocument, container: &FieldDef) -> Vec<String> {
-    let mut kids: Vec<&FieldDef> =
-        doc.fields.values().filter(|f| f.owner == container.handle).collect();
+    let mut kids: Vec<&FieldDef> = doc
+        .fields
+        .values()
+        .filter(|f| f.owner == container.handle)
+        .collect();
     kids.sort_by_key(|f| u64::from(f.handle));
-    kids.iter().map(|kid| cached_value(doc, kid.handle)).collect()
+    kids.iter()
+        .map(|kid| cached_value(doc, kid.handle))
+        .collect()
 }
 
 pub fn cell_field_text(
@@ -3252,7 +3502,10 @@ pub fn cell_field_text(
             Some(cached_value(doc, field))
         };
     }
-    let formula = doc.fields.values().any(|f| f.owner == def.handle && f.evaluator == "AcExpr");
+    let formula = doc
+        .fields
+        .values()
+        .any(|f| f.owner == def.handle && f.evaluator == "AcExpr");
     if formula {
         return resolve_handle(doc, field, table, ctx);
     }
@@ -3353,7 +3606,11 @@ pub const LINEWEIGHT_FORMATS: [(&str, &str); 2] =
 
 fn hyperlink_xdata(code: &str) -> Option<crate::xdata::ExtendedData> {
     use crate::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
-    let rest = code.split_once("\\href")?.1.trim_start().strip_prefix('"')?;
+    let rest = code
+        .split_once("\\href")?
+        .1
+        .trim_start()
+        .strip_prefix('"')?;
     let target = &rest[..rest.find('"')?];
     let (url, rest) = target.split_once('#').unwrap_or((target, ""));
     let (location, rest) = rest.split_once('#').unwrap_or(("", rest));

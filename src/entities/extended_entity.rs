@@ -544,7 +544,10 @@ fn transformed_extents(min: Vector3, max: Vector3, transform: &Transform) -> (Ve
 }
 
 pub fn point_cloud_ex_to_world(data: &PointCloudExData, p: Vector3) -> Vector3 {
-    data.ucs_origin + data.ucs_x_direction * p.x + data.ucs_y_direction * p.y + data.ucs_z_direction * p.z
+    data.ucs_origin
+        + data.ucs_x_direction * p.x
+        + data.ucs_y_direction * p.y
+        + data.ucs_z_direction * p.z
 }
 
 pub fn point_cloud_ex_corners(data: &PointCloudExData) -> [Vector3; 8] {

@@ -88,10 +88,26 @@ fn proxy_object(doc: &mut CadDocument, dwg_version: i32) -> Handle {
 fn proxy_object_layout_matches_autocad_per_version() {
     // (DXF version, proxied object's own format version, expected groups)
     let cases: [(DxfVersion, i32, &[i32]); 4] = [
-        (DxfVersion::AC1018, 31, &[90, 91, 95, 70, 93, 310, 340, 330, 94]),
-        (DxfVersion::AC1024, 23, &[90, 91, 95, 70, 161, 310, 340, 330, 94]),
-        (DxfVersion::AC1024, 31, &[90, 91, 95, 70, 162, 161, 310, 340, 330, 94]),
-        (DxfVersion::AC1032, 31, &[90, 91, 71, 97, 70, 162, 161, 310, 340, 330, 94]),
+        (
+            DxfVersion::AC1018,
+            31,
+            &[90, 91, 95, 70, 93, 310, 340, 330, 94],
+        ),
+        (
+            DxfVersion::AC1024,
+            23,
+            &[90, 91, 95, 70, 161, 310, 340, 330, 94],
+        ),
+        (
+            DxfVersion::AC1024,
+            31,
+            &[90, 91, 95, 70, 162, 161, 310, 340, 330, 94],
+        ),
+        (
+            DxfVersion::AC1032,
+            31,
+            &[90, 91, 71, 97, 70, 162, 161, 310, 340, 330, 94],
+        ),
     ];
     for (version, object_version, expected) in cases {
         let mut doc = CadDocument::with_version(version);
@@ -122,7 +138,10 @@ fn proxy_object_references_and_payload_read_back() {
     let kinds: Vec<_> = object.object_ids.iter().map(|r| r.kind).collect();
     assert_eq!(
         kinds,
-        [ProxyReferenceKind::HardPointer, ProxyReferenceKind::SoftPointer]
+        [
+            ProxyReferenceKind::HardPointer,
+            ProxyReferenceKind::SoftPointer
+        ]
     );
 }
 
@@ -148,11 +167,19 @@ fn proxy_entity_graphics_are_written_once_inside_the_proxy_subclass() {
             object_ids: Vec::new(),
         }),
     };
-    let handle = doc.add_entity(EntityType::Extended(Box::new(entity))).unwrap();
+    let handle = doc
+        .add_entity(EntityType::Extended(Box::new(entity)))
+        .unwrap();
     let rec = record(&write_pairs(&doc), handle);
     let entity_part: Vec<i32> = {
-        let start = rec.iter().position(|(c, v)| *c == 100 && v == "AcDbEntity").unwrap();
-        let end = rec.iter().position(|(c, v)| *c == 100 && v == "AcDbProxyEntity").unwrap();
+        let start = rec
+            .iter()
+            .position(|(c, v)| *c == 100 && v == "AcDbEntity")
+            .unwrap();
+        let end = rec
+            .iter()
+            .position(|(c, v)| *c == 100 && v == "AcDbProxyEntity")
+            .unwrap();
         rec[start..end].iter().map(|(c, _)| *c).collect()
     };
     assert!(
@@ -181,9 +208,14 @@ fn remote_text_uses_the_rtext_subclass_marker() {
             text: "$(getvar, \"dwgname\")".to_string(),
         }),
     };
-    let handle = doc.add_entity(EntityType::Extended(Box::new(entity))).unwrap();
+    let handle = doc
+        .add_entity(EntityType::Extended(Box::new(entity)))
+        .unwrap();
     let rec = record(&write_pairs(&doc), handle);
-    assert!(rec.iter().any(|(c, v)| *c == 100 && v == "RText"), "{rec:?}");
+    assert!(
+        rec.iter().any(|(c, v)| *c == 100 && v == "RText"),
+        "{rec:?}"
+    );
     assert!(!rec.iter().any(|(_, v)| v == "AcDbRText"));
 }
 
@@ -206,7 +238,11 @@ fn hatch_with_a_derived_boundary_writes_pixel_size_before_seed_points() {
     let mut flags = BoundaryPathFlags::new();
     flags.set_derived(true);
     let mut path = BoundaryPath::with_flags(flags);
-    for (a, b) in [((0.0, 0.0), (1.0, 0.0)), ((1.0, 0.0), (1.0, 1.0)), ((1.0, 1.0), (0.0, 0.0))] {
+    for (a, b) in [
+        ((0.0, 0.0), (1.0, 0.0)),
+        ((1.0, 0.0), (1.0, 1.0)),
+        ((1.0, 1.0), (0.0, 0.0)),
+    ] {
         path.edges.push(BoundaryEdge::Line(LineEdge {
             start: Vector2::new(a.0, a.1),
             end: Vector2::new(b.0, b.1),
@@ -234,7 +270,11 @@ fn active_layout_viewports_get_ids_starting_at_one() {
     let pairs = write_pairs(&doc);
     for (handle, id) in [(first, "1"), (second, "2")] {
         let rec = record(&pairs, handle);
-        let get = |code| rec.iter().find(|(c, _)| *c == code).map(|(_, v)| v.trim().to_string());
+        let get = |code| {
+            rec.iter()
+                .find(|(c, _)| *c == code)
+                .map(|(_, v)| v.trim().to_string())
+        };
         assert_eq!(get(69).as_deref(), Some(id), "viewport id");
         assert_eq!(get(68).as_deref(), Some(id), "viewport status");
     }
@@ -265,16 +305,29 @@ fn mtext_context_data_has_no_subclass_marker_and_autocad_point_codes() {
             columns: None,
         }),
     };
-    doc.objects.insert(handle, ObjectType::ObjectContextData(context));
+    doc.objects
+        .insert(handle, ObjectType::ObjectContextData(context));
     let pairs = write_pairs(&doc);
     let rec = record(&pairs, handle);
     assert!(
         !rec.iter().any(|(_, v)| v == "AcDbMTextObjectContextData"),
         "AutoCAD rejects the marker: {rec:?}"
     );
-    let value = |code| rec.iter().find(|(c, _)| *c == code).map(|(_, v)| v.trim().to_string());
-    assert_eq!(value(10).as_deref(), Some("1.0"), "10 is the x-axis direction");
-    assert_eq!(value(11).as_deref(), Some("29798.0"), "11 is the insertion point");
+    let value = |code| {
+        rec.iter()
+            .find(|(c, _)| *c == code)
+            .map(|(_, v)| v.trim().to_string())
+    };
+    assert_eq!(
+        value(10).as_deref(),
+        Some("1.0"),
+        "10 is the x-axis direction"
+    );
+    assert_eq!(
+        value(11).as_deref(),
+        Some("29798.0"),
+        "11 is the insertion point"
+    );
 
     let path = std::env::temp_dir().join("acadrust_mtext_context_rt.dxf");
     std::fs::write(&path, DxfWriter::new(&doc).write_to_vec().unwrap()).unwrap();

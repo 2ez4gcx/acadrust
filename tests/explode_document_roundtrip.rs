@@ -13,7 +13,11 @@ fn add_block(document: &mut CadDocument, name: &str) -> Handle {
     let mut marker = Block::new(name, Vector3::ZERO);
     marker.common.owner_handle = owner;
     let marker_handle = document.add_entity(EntityType::Block(marker)).unwrap();
-    document.block_records.get_mut(name).unwrap().block_entity_handle = marker_handle;
+    document
+        .block_records
+        .get_mut(name)
+        .unwrap()
+        .block_entity_handle = marker_handle;
     owner
 }
 
@@ -37,10 +41,8 @@ fn nested_attributed_insert_explode_gets_fresh_ids_before_dwg_roundtrip() {
 
     // Keep the child definition valid even though this test only checks the
     // nested INSERT record emitted by EXPLODE.
-    let mut child_line = acadrust::entities::Line::from_points(
-        Vector3::ZERO,
-        Vector3::new(1.0, 0.0, 0.0),
-    );
+    let mut child_line =
+        acadrust::entities::Line::from_points(Vector3::ZERO, Vector3::new(1.0, 0.0, 0.0));
     child_line.common.owner_handle = child_owner;
     document.add_entity(EntityType::Line(child_line)).unwrap();
 
@@ -71,7 +73,9 @@ fn nested_attributed_insert_explode_gets_fresh_ids_before_dwg_roundtrip() {
     assert_ne!(nested.common.handle, child_handle);
     assert_ne!(nested.attributes[0].common.handle, Handle::NULL);
     assert_ne!(nested.seqend_handle, Some(Handle::NULL));
-    document.add_entity(pieces.into_iter().next().unwrap()).unwrap();
+    document
+        .add_entity(pieces.into_iter().next().unwrap())
+        .unwrap();
 
     let bytes = DwgWriter::write_to_vec(&document).expect("write DWG");
     let reopened = DwgReader::from_stream(Cursor::new(bytes))
@@ -104,7 +108,12 @@ fn nested_attributed_insert_explode_gets_fresh_ids_before_dwg_roundtrip() {
 
     let attribute_handles: Vec<_> = inserts
         .iter()
-        .flat_map(|insert| insert.attributes.iter().map(|attribute| attribute.common.handle))
+        .flat_map(|insert| {
+            insert
+                .attributes
+                .iter()
+                .map(|attribute| attribute.common.handle)
+        })
         .collect();
     assert_eq!(attribute_handles.len(), 2);
     assert_ne!(attribute_handles[0], attribute_handles[1]);

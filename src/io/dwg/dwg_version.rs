@@ -266,10 +266,7 @@ mod tests {
             Some(DwgVersion::AC9)
         );
         assert_eq!(DwgVersion::AC9.to_dxf_version_string(), "AC1009");
-        assert_eq!(
-            DwgVersion::AC9.version_string(DxfVersion::AC1009),
-            "AC1009"
-        );
+        assert_eq!(DwgVersion::AC9.version_string(DxfVersion::AC1009), "AC1009");
         assert!(!DwgVersion::AC9.uses_page_format());
         assert!(!DwgVersion::AC9.supports_true_color());
         assert!(!DwgVersion::AC9.uses_unicode_text());

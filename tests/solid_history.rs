@@ -40,11 +40,21 @@ fn appended_history_is_returned_root_to_active() {
     assert_eq!(operations.len(), 2);
     assert!(matches!(operations[0], SolidHistoryOperation::Box(_)));
     assert!(matches!(operations[1], SolidHistoryOperation::Fillet(_)));
-    assert_eq!(operations[0].base().unwrap().eval.parent_id, SolidHistoryNodeBase::ROOT_PARENT);
+    assert_eq!(
+        operations[0].base().unwrap().eval.parent_id,
+        SolidHistoryNodeBase::ROOT_PARENT
+    );
     // Nodes are linked through the evaluation graph; every node stores the
     // root parent id.
-    assert_eq!(operations[1].base().unwrap().eval.parent_id, SolidHistoryNodeBase::ROOT_PARENT);
-    assert!(document.solid_history_graph(entity).unwrap().evaluation_graph.is_some());
+    assert_eq!(
+        operations[1].base().unwrap().eval.parent_id,
+        SolidHistoryNodeBase::ROOT_PARENT
+    );
+    assert!(document
+        .solid_history_graph(entity)
+        .unwrap()
+        .evaluation_graph
+        .is_some());
 }
 
 #[test]
@@ -69,8 +79,14 @@ fn updating_a_step_preserves_its_graph_identity() {
         .unwrap();
 
     let operations = document.solid_history_operations(entity).unwrap();
-    assert_eq!(operations[0].base().unwrap().eval.parent_id, SolidHistoryNodeBase::ROOT_PARENT);
-    assert_eq!(operations[1].base().unwrap().eval.parent_id, SolidHistoryNodeBase::ROOT_PARENT);
+    assert_eq!(
+        operations[0].base().unwrap().eval.parent_id,
+        SolidHistoryNodeBase::ROOT_PARENT
+    );
+    assert_eq!(
+        operations[1].base().unwrap().eval.parent_id,
+        SolidHistoryNodeBase::ROOT_PARENT
+    );
     assert!(matches!(
         &operations[0],
         SolidHistoryOperation::Box(value) if value.length == 8.0
@@ -148,10 +164,22 @@ fn a_boolean_keeps_both_solids_histories_through_dwg() {
     };
     assert_eq!(boolean.operation, SolidHistoryBoolean::SUBTRACT);
     assert_eq!(tree.operands.len(), 2);
-    assert!(matches!(tree.operands[0].operation, SolidHistoryOperation::Fillet(_)));
-    assert!(matches!(tree.operands[1].operation, SolidHistoryOperation::Box(_)));
-    assert_eq!(boolean.first_operand, tree.operands[0].operation.base().unwrap().node_id());
-    assert_eq!(boolean.second_operand, tree.operands[1].operation.base().unwrap().node_id());
+    assert!(matches!(
+        tree.operands[0].operation,
+        SolidHistoryOperation::Fillet(_)
+    ));
+    assert!(matches!(
+        tree.operands[1].operation,
+        SolidHistoryOperation::Box(_)
+    ));
+    assert_eq!(
+        boolean.first_operand,
+        tree.operands[0].operation.base().unwrap().node_id()
+    );
+    assert_eq!(
+        boolean.second_operand,
+        tree.operands[1].operation.base().unwrap().node_id()
+    );
     // The root may name the active node by its step id.
     assert_eq!(boolean.base.step_id, boolean.base.node_id());
 
@@ -159,7 +187,10 @@ fn a_boolean_keeps_both_solids_histories_through_dwg() {
     let mut ids = vec![tree.operation.base().unwrap().node_id()];
     ids.extend(tree.operands.iter().flat_map(|operand| {
         std::iter::once(operand.operation.base().unwrap().node_id()).chain(
-            operand.operands.iter().map(|inner| inner.operation.base().unwrap().node_id()),
+            operand
+                .operands
+                .iter()
+                .map(|inner| inner.operation.base().unwrap().node_id()),
         )
     }));
     let count = ids.len();
@@ -173,7 +204,9 @@ fn a_boolean_keeps_both_solids_histories_through_dwg() {
         value.length = 9.0;
     }
     let mut roundtrip = roundtrip;
-    roundtrip.update_solid_history_step(base, replacement).unwrap();
+    roundtrip
+        .update_solid_history_step(base, replacement)
+        .unwrap();
     let tree = roundtrip.solid_history_tree(base).unwrap();
     assert!(matches!(
         &tree.operands[1].operation,
@@ -181,6 +214,9 @@ fn a_boolean_keeps_both_solids_histories_through_dwg() {
     ));
 
     let dxf = DxfWriter::new(&roundtrip).write_to_vec().unwrap();
-    let dxf = DxfReader::from_reader(Cursor::new(dxf)).unwrap().read().unwrap();
+    let dxf = DxfReader::from_reader(Cursor::new(dxf))
+        .unwrap()
+        .read()
+        .unwrap();
     assert_eq!(dxf.solid_history_tree(base).unwrap(), tree);
 }

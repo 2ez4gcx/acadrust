@@ -376,7 +376,11 @@ fn build(version: DxfVersion, assets: &Path) -> Sheet {
         arc_end_parameter: FRAC_PI_2,
         ..Default::default()
     };
-    s.add("DIM_ARC", AC1018, EntityType::Dimension(Box::new(Dimension::Arc(d))));
+    s.add(
+        "DIM_ARC",
+        AC1018,
+        EntityType::Dimension(Box::new(Dimension::Arc(d))),
+    );
     let d = DimensionLargeRadial {
         definition_point: p(20., 25.),
         chord_point: p(100., 60.),
@@ -770,14 +774,18 @@ fn build(version: DxfVersion, assets: &Path) -> Sheet {
     let mut overall = Viewport::new();
     overall.id = 1;
     overall.common.owner_handle = s.doc.header.paper_space_block_handle;
-    s.doc.add_entity(EntityType::Viewport(Box::new(overall))).unwrap();
+    s.doc
+        .add_entity(EntityType::Viewport(Box::new(overall)))
+        .unwrap();
     let mut viewport = Viewport::with_size(p(100., 80.), 160., 110.);
     viewport.id = 2;
     viewport.common.layer = layer;
     viewport.common.owner_handle = s.doc.header.paper_space_block_handle;
     viewport.view_height = 1100.;
     viewport.view_target = p(500., -400.);
-    s.doc.add_entity(EntityType::Viewport(Box::new(viewport))).unwrap();
+    s.doc
+        .add_entity(EntityType::Viewport(Box::new(viewport)))
+        .unwrap();
     s.cases.last_mut().unwrap()["expected"] = json!(["VIEWPORT"]);
     s.add(
         "RAY",

@@ -170,7 +170,8 @@ impl CadDocument {
         for parameter in &graph.visibility {
             let mut parameter = parameter.clone();
             parameter.visit_handles_mut(&mut rewrite);
-            self.block_visibility_params.insert(parameter.handle, parameter);
+            self.block_visibility_params
+                .insert(parameter.handle, parameter);
         }
         for (data, definition) in &graph.representations {
             let mut definition = *definition;

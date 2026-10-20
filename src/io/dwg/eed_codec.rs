@@ -36,7 +36,13 @@ use crate::xdata::XDataValue;
 /// `0` when the layer is unknown).
 #[cfg(test)]
 fn encode_values(wide: bool, values: &[XDataValue], layer_handle: impl Fn(&str) -> u64) -> Vec<u8> {
-    encode_values_with_encoding(wide, values, encoding_rs::WINDOWS_1252.into(), 30, layer_handle)
+    encode_values_with_encoding(
+        wide,
+        values,
+        encoding_rs::WINDOWS_1252.into(),
+        30,
+        layer_handle,
+    )
 }
 
 pub(crate) fn encode_values_with_encoding(

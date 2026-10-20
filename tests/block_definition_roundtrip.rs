@@ -1,4 +1,3 @@
-
 use std::io::Cursor;
 
 use acadrust::entities::{EntityType, Line};
@@ -7,7 +6,9 @@ use acadrust::types::{DxfVersion, Vector3};
 use acadrust::{CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter};
 
 fn dxf_roundtrip(doc: &CadDocument) -> CadDocument {
-    let bytes = DxfWriter::new(doc).write_to_vec().expect("DXF write failed");
+    let bytes = DxfWriter::new(doc)
+        .write_to_vec()
+        .expect("DXF write failed");
     DxfReader::from_reader(Cursor::new(bytes))
         .expect("DXF reader init failed")
         .read()
@@ -55,7 +56,10 @@ fn a_unicode_description_survives_and_an_empty_one_stays_empty() {
         .get("Door")
         .cloned()
         .expect("Door missing");
-    assert!(record.description.is_empty(), "no description, none invented");
+    assert!(
+        record.description.is_empty(),
+        "no description, none invented"
+    );
 }
 
 #[test]
@@ -64,7 +68,11 @@ fn the_dwg_block_marker_agrees_with_its_record_on_the_base_point() {
     let read = DwgReader::from_stream(Cursor::new(bytes))
         .read()
         .expect("DWG read failed");
-    let record = read.block_records.get("Door").expect("Door missing").clone();
+    let record = read
+        .block_records
+        .get("Door")
+        .expect("Door missing")
+        .clone();
     assert_eq!(record.base_point, Vector3::new(2.0, 3.0, 4.0));
     let Some(EntityType::Block(marker)) = read.get_entity(record.block_entity_handle) else {
         panic!("the BLOCK marker is missing from the document");
@@ -79,10 +87,21 @@ fn the_dwg_block_marker_agrees_with_its_record_on_the_base_point() {
 #[test]
 fn an_explicit_attribute_flag_survives_without_attribute_definitions() {
     let mut doc = door("Synthetic block");
-    doc.block_records.get_mut("Door").unwrap().flags.has_attributes = true;
+    doc.block_records
+        .get_mut("Door")
+        .unwrap()
+        .flags
+        .has_attributes = true;
     let saved = DwgReader::from_stream(Cursor::new(DwgWriter::write_to_vec(&doc).unwrap()))
         .read()
         .unwrap();
-    assert!(saved.block_records.get("Door").unwrap().flags.has_attributes);
+    assert!(
+        saved
+            .block_records
+            .get("Door")
+            .unwrap()
+            .flags
+            .has_attributes
+    );
     assert_eq!(doc.entities().count(), saved.entities().count());
 }

@@ -110,6 +110,9 @@ fn legacy_multiline_tag_comes_from_the_roundtrip_record() {
         panic!()
     };
     assert_eq!(d.tag, "NOTE");
-    assert!(d.common.raw_record.is_some(), "Derived tag resolution must preserve raw records");
+    assert!(
+        d.common.raw_record.is_some(),
+        "Derived tag resolution must preserve raw records"
+    );
     assert!(loaded.xrecord(handle, "ACAD_MLATT").is_some());
 }

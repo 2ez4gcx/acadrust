@@ -130,7 +130,6 @@ impl GroupCodeValueType {
     }
 
     pub fn coordinate_axis_raw(code_num: i32) -> Option<usize> {
-
         // X coordinates (10-18, 110-112, 210, 1010-1013)
         if matches!(code_num, 10..=18 | 110..=112 | 210..=213 | 1010..=1013) {
             return Some(0);
@@ -155,7 +154,6 @@ impl GroupCodeValueType {
     }
 
     pub fn coordinate_group_raw(code_num: i32) -> Option<usize> {
-
         match code_num {
             10 | 20 | 30 => Some(0), // Primary point
             11 | 21 | 31 => Some(1), // Secondary point
@@ -166,11 +164,11 @@ impl GroupCodeValueType {
             16 | 26 | 36 => Some(6),
             17 | 27 | 37 => Some(7),
             18 | 28 | 38 => Some(8),
-            110 | 120 | 130 => Some(10),     // UCS origin
-            111 | 121 | 131 => Some(11),     // UCS X-axis
-            112 | 122 | 132 => Some(12),     // UCS Y-axis
-            210 | 220 | 230 => Some(21),     // Extrusion direction
-            211 | 221 | 231 => Some(22),     // Second 21x point (e.g. LEADER horizontal direction)
+            110 | 120 | 130 => Some(10), // UCS origin
+            111 | 121 | 131 => Some(11), // UCS X-axis
+            112 | 122 | 132 => Some(12), // UCS Y-axis
+            210 | 220 | 230 => Some(21), // Extrusion direction
+            211 | 221 | 231 => Some(22), // Second 21x point (e.g. LEADER horizontal direction)
             212 | 222 | 232 => Some(23),
             213 | 223 | 233 => Some(24),
             1010 | 1020 | 1030 => Some(100), // XData point
