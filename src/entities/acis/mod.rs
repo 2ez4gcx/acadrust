@@ -51,7 +51,7 @@ pub mod writer;
 pub use parser::SatParser;
 pub use sab::{SabReader, SabWriter};
 pub use types::*;
-pub use writer::SatWriter;
+pub use writer::{SatWriter, SplineNet};
 
 /// Downgrade ACIS v600+ record token layouts to v400 format.
 ///

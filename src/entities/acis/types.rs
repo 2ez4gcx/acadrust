@@ -1965,7 +1965,10 @@ impl<'a> SatSplineSurface<'a> {
 
     pub fn offset_in(&self, document: &SatDocument) -> Option<(SatBSplineSurface, f64)> {
         let tokens = self.definition_tokens(document)?;
-        let name = tokens.iter().position(|t| t.as_ident() == Some("off_spl_sur"))?;
+        // `off_spl_sur` in ASM files, `offsur` in ACIS 7 ones.
+        let name = tokens
+            .iter()
+            .position(|t| matches!(t.as_ident(), Some("off_spl_sur" | "offsur")))?;
         let open = (name..tokens.len()).find(|&i| tokens[i].as_ident() == Some("{"))?;
         let base = decode_spline_definition(document, subtype_definition(document, tokens, open)?)?;
         // The base's u and v ranges: `I` unset, or `F` and a bound, per end.

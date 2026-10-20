@@ -595,51 +595,18 @@ impl SatDocument {
             .push(id(if rev_v { "reversed" } else { "forward" }));
         record.tokens.push(id("{"));
         record.tokens.push(id("exactsur"));
-        record.tokens.push(SatToken::Enum("full".to_string()));
-        record
-            .tokens
-            .push(id(if rational { "nurbs" } else { "nubs" }));
-        record.tokens.push(SatToken::Integer(deg_u as i64));
-        record.tokens.push(SatToken::Integer(deg_v as i64));
-        if rational {
-            record.tokens.push(id("both"));
-        }
-        record.tokens.push(SatToken::Enum(
-            if u_closed { "closed" } else { "open" }.to_string(),
-        ));
-        record.tokens.push(SatToken::Enum(
-            if v_closed { "closed" } else { "open" }.to_string(),
-        ));
-        record.tokens.push(SatToken::Enum("none".to_string()));
-        record.tokens.push(SatToken::Enum("none".to_string()));
-        record.tokens.push(SatToken::Integer(u_knots.len() as i64));
-        record.tokens.push(SatToken::Integer(v_knots.len() as i64));
-        for (position, &(knot, mult)) in u_knots.iter().enumerate() {
-            record.tokens.push(SatToken::Float(knot));
-            let implicit = i32::from(position == 0 || position + 1 == u_knots.len());
-            record
-                .tokens
-                .push(SatToken::Integer((mult - implicit) as i64));
-        }
-        for (position, &(knot, mult)) in v_knots.iter().enumerate() {
-            record.tokens.push(SatToken::Float(knot));
-            let implicit = i32::from(position == 0 || position + 1 == v_knots.len());
-            record
-                .tokens
-                .push(SatToken::Integer((mult - implicit) as i64));
-        }
-        for (i, p) in control.iter().enumerate() {
-            record.tokens.push(SatToken::Float(p[0]));
-            record.tokens.push(SatToken::Float(p[1]));
-            record.tokens.push(SatToken::Float(p[2]));
-            if rational {
-                let w = weights.and_then(|w| w.get(i)).copied().unwrap_or(1.0);
-                record.tokens.push(SatToken::Float(w));
-            }
-        }
-        record.tokens.push(SatToken::Float(fit_tol));
-        // Empty U/V discontinuity lists, then the exact surface's native bounds.
-        record.tokens.extend((0..6).map(|_| SatToken::Integer(0)));
+        record.tokens.extend(bs3_tokens(&SplineNet {
+            rational,
+            deg_u,
+            deg_v,
+            u_closed,
+            v_closed,
+            u_knots,
+            v_knots,
+            control,
+            weights,
+            fit_tol,
+        }));
         record.tokens.extend((0..4).map(|_| id("I")));
         record.tokens.push(id("}"));
         record.tokens.push(id("I"));
@@ -647,6 +614,50 @@ impl SatDocument {
         record.tokens.push(id("I"));
         record.tokens.push(id("I"));
 
+        self.records.push(record);
+        self.header.num_records = self.records.len();
+        index
+    }
+
+    /// Add an ACIS 7 offset spline surface (`offsur`) and return its index:
+    /// `base` pushed `distance` along its normal, stored with the base as an
+    /// exact spline (its own unset bounds `F 1 F 0 F 1 F 0`, then unbounded
+    /// parameters), the distance, and `approximation`, a spline through the
+    /// offset in the base's parameters.
+    pub fn add_offset_spline_surface(
+        &mut self,
+        rev_v: bool,
+        base_rev_v: bool,
+        base: &SplineNet,
+        distance: f64,
+        approximation: &SplineNet,
+    ) -> i32 {
+        let index = self.records.len() as i32;
+        let mut record = SatRecord::new(index, "spline-surface");
+        record.attribute = SatPointer::NULL;
+        let id = |s: &str| SatToken::Ident(s.to_string());
+        let sense = |reversed: bool| id(if reversed { "reversed" } else { "forward" });
+        record.tokens.push(SatToken::Pointer(SatPointer::NULL));
+        record.tokens.push(sense(rev_v));
+        record.tokens.push(id("{"));
+        record.tokens.push(id("offsur"));
+        record.tokens.push(id("spline"));
+        record.tokens.push(sense(base_rev_v));
+        record.tokens.push(id("{"));
+        record.tokens.push(id("exactsur"));
+        record.tokens.extend(bs3_tokens(base));
+        for value in [1.0, 0.0, 1.0, 0.0] {
+            record.tokens.push(id("F"));
+            record.tokens.push(SatToken::Float(value));
+        }
+        record.tokens.push(id("}"));
+        record.tokens.extend((0..4).map(|_| id("I")));
+        record.tokens.push(SatToken::Float(distance));
+        record.tokens.push(id("forward"));
+        record.tokens.push(id("forward"));
+        record.tokens.extend(bs3_tokens(approximation));
+        record.tokens.push(id("}"));
+        record.tokens.extend((0..4).map(|_| id("I")));
         self.records.push(record);
         self.header.num_records = self.records.len();
         index
@@ -1170,4 +1181,58 @@ mod tests {
             re.validate()
         );
     }
+}
+
+/// A spline surface's control net as an ACIS 7 `bs3_surface` takes it (see
+/// [`SatDocument::add_spline_surface`] for the fields).
+pub struct SplineNet<'a> {
+    pub rational: bool,
+    pub deg_u: i32,
+    pub deg_v: i32,
+    pub u_closed: bool,
+    pub v_closed: bool,
+    pub u_knots: &'a [(f64, i32)],
+    pub v_knots: &'a [(f64, i32)],
+    pub control: &'a [[f64; 3]],
+    pub weights: Option<&'a [f64]>,
+    pub fit_tol: f64,
+}
+
+/// `full nubs|nurbs ...` through the fit tolerance and six empty
+/// discontinuity lists.
+fn bs3_tokens(net: &SplineNet) -> Vec<SatToken> {
+    let id = |s: &str| SatToken::Ident(s.to_string());
+    let mut tokens = vec![
+        SatToken::Enum("full".to_string()),
+        id(if net.rational { "nurbs" } else { "nubs" }),
+        SatToken::Integer(net.deg_u as i64),
+        SatToken::Integer(net.deg_v as i64),
+    ];
+    if net.rational {
+        tokens.push(id("both"));
+    }
+    tokens.push(SatToken::Enum(if net.u_closed { "closed" } else { "open" }.to_string()));
+    tokens.push(SatToken::Enum(if net.v_closed { "closed" } else { "open" }.to_string()));
+    tokens.push(SatToken::Enum("none".to_string()));
+    tokens.push(SatToken::Enum("none".to_string()));
+    tokens.push(SatToken::Integer(net.u_knots.len() as i64));
+    tokens.push(SatToken::Integer(net.v_knots.len() as i64));
+    for knots in [net.u_knots, net.v_knots] {
+        for (position, &(knot, mult)) in knots.iter().enumerate() {
+            tokens.push(SatToken::Float(knot));
+            let implicit = i32::from(position == 0 || position + 1 == knots.len());
+            tokens.push(SatToken::Integer((mult - implicit) as i64));
+        }
+    }
+    for (i, p) in net.control.iter().enumerate() {
+        tokens.extend(p.iter().map(|c| SatToken::Float(*c)));
+        if net.rational {
+            let w = net.weights.and_then(|w| w.get(i)).copied().unwrap_or(1.0);
+            tokens.push(SatToken::Float(w));
+        }
+    }
+    tokens.push(SatToken::Float(net.fit_tol));
+    // Empty U/V discontinuity lists.
+    tokens.extend((0..6).map(|_| SatToken::Integer(0)));
+    tokens
 }
