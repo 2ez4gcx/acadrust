@@ -81,11 +81,14 @@ impl<'a> DwgObjectWriter<'a> {
             // Normalize them to the R2018 layout when rewriting the drawing.
             let frame_only_mtext = self.version.r2018_plus(self.dxf_version)
                 && matches!(entity, EntityType::MText(text) if text.background_fill_flags & 0x11 == 0x10);
+            let stale_paper_owner = entity.common().entity_mode == Some(1)
+                && entity.common().owner_handle != self.paper_space_block_handle;
             let ok = self.version.r2004_plus()
                 && raw.version == self.dxf_version
                 && !self.raw_excluded_handles.contains(&handle.value())
                 && !compound
                 && !frame_only_mtext
+                && !stale_paper_owner
                 && !(acis && self.version.r2013_plus(self.dxf_version))
                 && !self.owner_overrides.contains_key(&handle)
                 // EED naming an application this drawing has no APPID for

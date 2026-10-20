@@ -38,37 +38,49 @@ use crate::types::{BoundingBox3D, DxfVersion, Handle};
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/// Convert a deduplicated block name back to the DWG binary name.
-///
-/// In DWG format, all paper-space blocks are stored as `*Paper_Space`
-/// and anonymous blocks share names like `*U`, `*D`, etc. (no numeric
-/// suffixes).  Our reader adds suffixes (`*Paper_Space0`, `*U1`, …)
-/// for deduplication.  This function strips them back for writing.
-fn dwg_block_name(name: &str) -> &str {
-    // Known multi-word prefixes first
-    for prefix in &["*Model_Space", "*Paper_Space"] {
-        if name
-            .get(..prefix.len())
-            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
-        {
-            let rest = &name[prefix.len()..];
-            if rest.is_empty() || rest.chars().all(|c| c.is_ascii_digit()) {
-                return &name[..prefix.len()];
+pub(crate) fn paper_space_block_handle(document: &CadDocument) -> Handle {
+    document
+        .block_records
+        .iter()
+        .find(|record| {
+            record.handle == document.header.paper_space_block_handle && record.is_paper_space()
+        })
+        .or_else(|| document.block_records.get("*Paper_Space"))
+        .or_else(|| {
+            document
+                .block_records
+                .iter()
+                .find(|record| record.is_paper_space())
+        })
+        .map_or(Handle::NULL, |record| record.handle)
+}
+
+/// Reserve the bare paper-space name for the active record without colliding
+/// with other layouts. Anonymous names retain their native ordinal encoding.
+fn dwg_block_name<'a>(
+    document: &'a CadDocument,
+    record: &'a BlockRecord,
+    active: Handle,
+) -> &'a str {
+    if record.is_paper_space() {
+        if record.handle == active {
+            return "*Paper_Space";
+        }
+        if record.name.eq_ignore_ascii_case("*Paper_Space") {
+            if let Some(active_record) = document.block_records.iter().find(|r| r.handle == active) {
+                return &active_record.name;
             }
         }
     }
-    // Generic anonymous: *<alpha><digits> → *<alpha>
-    if name.starts_with('*') && name.len() >= 2 {
-        let alpha_end = name[1..]
+    if record.flags.anonymous && record.name.starts_with('*') {
+        let prefix_end = record.name[1..]
             .find(|c: char| !c.is_ascii_alphabetic())
-            .map(|p| 1 + p)
-            .unwrap_or(name.len());
-        let rest = &name[alpha_end..];
-        if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
-            return &name[..alpha_end];
+            .map_or(record.name.len(), |pos| pos + 1);
+        if record.name[prefix_end..].chars().all(|c| c.is_ascii_digit()) {
+            return &record.name[..prefix_end];
         }
     }
-    name
+    &record.name
 }
 
 // ── Public struct ───────────────────────────────────────────────────
@@ -81,6 +93,8 @@ pub struct DwgObjectWriter<'a> {
     pub(super) version: DwgVersion,
     /// DXF version (for R2013/R2018 flag checks)
     pub(super) dxf_version: DxfVersion,
+    /// Active paper-space record shared by names, controls and implicit owners.
+    pub(super) paper_space_block_handle: Handle,
     /// Reference to the CAD document being written
     pub(super) document: &'a CadDocument,
     /// Per-object scratch writer (main + text + handle streams)
@@ -254,6 +268,7 @@ impl<'a> DwgObjectWriter<'a> {
         Ok(Self {
             version,
             dxf_version,
+            paper_space_block_handle: paper_space_block_handle(document),
             document,
             writer,
             output: Vec::with_capacity(64 * 1024),
@@ -617,14 +632,12 @@ impl<'a> DwgObjectWriter<'a> {
         // Gather handles
         let mut regular: Vec<Handle> = Vec::new();
         let mut ms_handle = Handle::NULL;
-        let mut ps_handle = Handle::NULL;
+        let ps_handle = self.paper_space_block_handle;
 
         for br in self.document.block_records.iter() {
             if br.name.eq_ignore_ascii_case("*Model_Space") {
                 ms_handle = br.handle;
-            } else if br.name.eq_ignore_ascii_case("*Paper_Space") {
-                ps_handle = br.handle;
-            } else {
+            } else if br.handle != ps_handle {
                 regular.push(br.handle);
             }
         }
@@ -2065,6 +2078,7 @@ impl<'a> DwgObjectWriter<'a> {
         let mut worker = Self {
             version: self.version,
             dxf_version: self.dxf_version,
+            paper_space_block_handle: self.paper_space_block_handle,
             document: self.document,
             writer: DwgMergedWriter::with_encoding(self.version, self.dxf_version, encoding),
             output: Vec::with_capacity(handles.len().saturating_mul(64)),
@@ -2153,8 +2167,8 @@ impl<'a> DwgObjectWriter<'a> {
             extra,
         );
 
-        // Entry name (DWG uses bare names without numeric suffixes)
-        let dwg_name = dwg_block_name(&record.name);
+        // Paper-space names stay unique; anonymous names use their native base.
+        let dwg_name = dwg_block_name(self.document, record, self.paper_space_block_handle);
         self.writer.write_variable_text(dwg_name);
         // Xref dependant
         self.write_xref_dependant_bit();
@@ -2315,10 +2329,10 @@ impl<'a> DwgObjectWriter<'a> {
             None
         };
 
-        let (handle, name, use_raw_name) = if let Some(ref b) = block {
-            (b.common.handle, b.name.as_str(), true)
+        let handle = if let Some(ref b) = block {
+            b.common.handle
         } else {
-            (record.block_entity_handle, record.name.as_str(), false)
+            record.block_entity_handle
         };
 
         let mut common = block
@@ -2362,13 +2376,11 @@ impl<'a> DwgObjectWriter<'a> {
             &common.edge_visual_style_handle,
         );
 
-        // Use the original name as-is when we have the Block entity from binary;
-        // only apply dwg_block_name() for programmatically-created blocks.
-        if use_raw_name {
-            self.writer.write_variable_text(name);
-        } else {
-            self.writer.write_variable_text(dwg_block_name(name));
-        }
+        self.writer.write_variable_text(dwg_block_name(
+            self.document,
+            record,
+            self.paper_space_block_handle,
+        ));
 
         self.register_object(common.handle);
     }
