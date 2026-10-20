@@ -33,6 +33,7 @@ enum MergeMode {
 /// Merged reader that transparently demultiplexes three-stream R2007+ data.
 ///
 /// For pre-R2007, this acts as a simple passthrough to the main reader.
+#[derive(Clone)]
 pub struct DwgMergedReader {
     /// Main data reader
     main: DwgBitReader,

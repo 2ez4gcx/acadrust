@@ -1542,6 +1542,34 @@ pub fn read_mtext(
     version: DwgVersion,
     dxf_version: DxfVersion,
 ) -> MTextData {
+    if !version.r2018_plus(dxf_version) {
+        return read_mtext_layout(reader, version, dxf_version, false);
+    }
+
+    let checkpoint = reader.clone();
+    let text = read_mtext_layout(reader, version, dxf_version, false);
+    if text.background_flags & 0x11 == 0x10
+        && (reader.check_error().is_err() || reader.main_remaining_bits() != 0)
+    {
+        // Some native AC1032 producers also store fill properties for a frame.
+        // Accept that layout only when it consumes the complete entity record.
+        let mut alternate = checkpoint;
+        let native = read_mtext_layout(&mut alternate, version, dxf_version, true);
+        if alternate.check_error().is_ok() && alternate.main_remaining_bits() == 0 {
+            *reader = alternate;
+            return native;
+        }
+        reader.invalidate("Invalid frame-only MTEXT layout");
+    }
+    text
+}
+
+fn read_mtext_layout(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+    dxf_version: DxfVersion,
+    frame_fill_properties: bool,
+) -> MTextData {
     let insertion_point = reader.read_3bit_double();
     let normal = reader.read_3bit_double();
     let x_direction = reader.read_3bit_double();
@@ -1579,10 +1607,9 @@ pub fn read_mtext(
         // 0x10 = text frame (R2018+).
         background_flags = reader.read_bit_long();
 
-        // The background-fill block follows when the UseBackgroundFillColor bit
-        // (0x01) is set, or — for R2018+ — when the TextFrame bit (0x10) is set.
+        // Fill properties are conditional on bit 0x01 in the R2018 layout.
         if (background_flags & 0x01) != 0
-            || (version.r2018_plus(dxf_version) && (background_flags & 0x10) != 0)
+            || (frame_fill_properties && (background_flags & 0x10) != 0)
         {
             // Background scale factor BD 45 (default 1.5)
             background_scale = reader.read_bit_double();
