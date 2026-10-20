@@ -341,8 +341,14 @@ impl DwgMergedReader {
     pub fn read_bit_short(&mut self) -> i16 {
         self.main.read_bit_short()
     }
+    pub fn try_read_bit_short(&mut self) -> Option<i16> {
+        self.main.try_read_bit_short()
+    }
     pub fn read_bit_long(&mut self) -> i32 {
         self.main.read_bit_long()
+    }
+    pub fn try_read_bit_long(&mut self) -> Option<i32> {
+        self.main.try_read_bit_long()
     }
     pub fn read_bit_long_long(&mut self) -> i64 {
         self.main.read_bit_long_long()
@@ -468,6 +474,16 @@ impl DwgMergedReader {
         match &mut self.text {
             Some(text_reader) => text_reader.read_variable_text(),
             None => self.main.read_variable_text(),
+        }
+    }
+
+    /// Read variable text without recording an error when an optional value
+    /// is truncated.  This is used by auxiliary objects whose tail fields are
+    /// known to be omitted by some DWG writers.
+    pub fn try_read_variable_text(&mut self) -> Option<String> {
+        match &mut self.text {
+            Some(text_reader) => text_reader.try_read_variable_text(),
+            None => self.main.try_read_variable_text(),
         }
     }
 

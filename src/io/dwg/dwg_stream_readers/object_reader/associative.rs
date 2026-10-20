@@ -163,6 +163,66 @@ fn read_dependency(reader: &mut DwgMergedReader) -> AssocDependency {
     }
 }
 
+/// Decode the persistent-subentity tail of `ASSOCGEOMDEPENDENCY` without
+/// allowing an omitted optional field to invalidate the complete object.
+///
+/// AC1024 records use a class name in the text stream and only the compound
+/// flag in the main stream.  AC1027+ records normally use the compact class
+/// code layout.  Both forms occur in files produced by different writers,
+/// and damaged auxiliary records can end after any prefix, so each optional
+/// read is bounded before it is attempted.
+fn read_persistent_subent(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+    dxf_version: DxfVersion,
+) -> AssocPersistentSubentId {
+    let compact_layout = version.r2013_plus(dxf_version)
+        && reader.text_remaining_bits() == 0
+        // The known compact class codes (1, 3 and 5) use a one-byte BL
+        // payload: leading flag + 2-bit prefix + 8-bit code + compound flag.
+        // With fewer bits left, prefer the text form so a lone compound flag
+        // and byte padding are not consumed as a fabricated compact value.
+        && reader.main_remaining_bits() >= 12;
+
+    if compact_layout {
+        let leading_flag = reader.read_bit();
+        let class_code = reader.try_read_bit_long().unwrap_or_default();
+        let class_name = AssocPersistentSubentId::class_name_for_code(class_code)
+            .unwrap_or_default()
+            .to_string();
+        let mut values = Vec::new();
+        if let Some(count) = AssocPersistentSubentId::field_count_for_class_name(&class_name) {
+            values.reserve(count);
+            for _ in 0..count {
+                let Some(value) = reader.try_read_bit_long() else {
+                    break;
+                };
+                values.push(value);
+            }
+        }
+        let dependent_on_compound_object = reader.main_remaining_bits() >= 1 && reader.read_bit();
+        AssocPersistentSubentId {
+            class_name,
+            dependent_on_compound_object,
+            class_code,
+            values,
+            leading_flag,
+        }
+    } else {
+        let class_name = reader.try_read_variable_text().unwrap_or_default();
+        let class_code =
+            AssocPersistentSubentId::code_for_class_name(&class_name).unwrap_or_default();
+        let dependent_on_compound_object = reader.main_remaining_bits() >= 1 && reader.read_bit();
+        AssocPersistentSubentId {
+            class_name,
+            dependent_on_compound_object,
+            class_code,
+            values: Vec::new(),
+            leading_flag: false,
+        }
+    }
+}
+
 fn read_action(reader: &mut DwgMergedReader) -> AssocAction {
     let class_version = reader.read_bit_short();
     let geometry_status = reader.read_bit_long();
@@ -1018,54 +1078,7 @@ pub fn read_associative_data(
                 dependency,
                 class_version: reader.read_bit_short(),
                 enabled: reader.read_bit(),
-                persistent_subent: {
-                    // R2010 and earlier records use the original
-                    // AcDbAssocPersSubentId layout: the class name is a
-                    // variable text value and only the compound-object flag
-                    // remains in the main stream.  R2013+ files in the wild
-                    // also exist with the compact class-code layout emitted
-                    // by older versions of this crate, so recognize that
-                    // form when there is no text stream to consume.
-                    let compact_layout = version.r2013_plus(dxf_version)
-                        && reader.text_remaining_bits() == 0
-                        && reader.main_remaining_bits() >= 4;
-                    if compact_layout {
-                        let leading_flag = reader.read_bit();
-                        let class_code = reader.read_bit_long();
-                        let class_name = AssocPersistentSubentId::class_name_for_code(class_code)
-                            .unwrap_or_default()
-                            .to_string();
-                        let values = AssocPersistentSubentId::field_count_for_class_name(
-                            &class_name,
-                        )
-                        .map(|count| {
-                            (0..count)
-                                .map(|_| reader.read_bit_long())
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                        let dependent_on_compound_object = reader.read_bit();
-                        AssocPersistentSubentId {
-                            class_name,
-                            dependent_on_compound_object,
-                            class_code,
-                            values,
-                            leading_flag,
-                        }
-                    } else {
-                        let class_name = reader.read_variable_text();
-                        let class_code = AssocPersistentSubentId::code_for_class_name(&class_name)
-                            .unwrap_or_default();
-                        let dependent_on_compound_object = reader.read_bit();
-                        AssocPersistentSubentId {
-                            class_name,
-                            dependent_on_compound_object,
-                            class_code,
-                            values: Vec::new(),
-                            leading_flag: false,
-                        }
-                    }
-                },
+                persistent_subent: read_persistent_subent(reader, version, dxf_version),
             })
         }
         "ASSOCACTION" => AssociativeData::Action(read_action(reader)),

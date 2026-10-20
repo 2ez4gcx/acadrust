@@ -387,6 +387,26 @@ impl DwgBitReader {
         }
     }
 
+    /// Read a BitShort when the stream may end before the value is complete.
+    ///
+    /// Unlike `read_bit_short`, this leaves the reader valid and returns
+    /// `None` when the prefix or its payload is truncated.  Auxiliary DWG
+    /// records sometimes omit optional tails, so callers can keep the fields
+    /// decoded before that tail without turning the whole record into an
+    /// unknown object.
+    pub fn try_read_bit_short(&mut self) -> Option<i16> {
+        if self.remaining_bits() < 2 {
+            return None;
+        }
+        match self.read_2bits() {
+            0 if self.remaining_bits() >= 16 => Some(self.read_raw_short()),
+            1 if self.remaining_bits() >= 8 => Some(self.read_byte() as i16),
+            2 => Some(0),
+            3 => Some(256),
+            _ => None,
+        }
+    }
+
     /// Read a BitShort and interpret as bool (non-zero = true).
     pub fn read_bit_short_as_bool(&mut self) -> bool {
         self.read_bit_short() != 0
@@ -411,6 +431,19 @@ impl DwgBitReader {
                 // 11: not used
                 0 // graceful fallback
             }
+        }
+    }
+
+    /// Read a BitLong without recording an error for a truncated payload.
+    pub fn try_read_bit_long(&mut self) -> Option<i32> {
+        if self.remaining_bits() < 2 {
+            return None;
+        }
+        match self.read_2bits() {
+            0 if self.remaining_bits() >= 32 => Some(self.read_raw_long() as i32),
+            1 if self.remaining_bits() >= 8 => Some(self.read_byte() as i32),
+            2 => Some(0),
+            _ => Some(0),
         }
     }
 
@@ -880,6 +913,60 @@ impl DwgBitReader {
             // outside the code page — decode them into Unicode chars.
             crate::io::dxf::code_page::decode_legacy_escapes(&decoded.replace('\0', ""))
         }
+    }
+
+    /// Read variable text without poisoning the stream when an optional value
+    /// is truncated.  The cursor may advance over a partial prefix, but no
+    /// stream error is recorded and the caller can continue with another
+    /// stream (for example, the main data stream after a text-stream tail).
+    pub fn try_read_variable_text(&mut self) -> Option<String> {
+        if self.dxf_version >= DxfVersion::AC1021 {
+            if self.text_stream_pos >= 0 {
+                let saved_pos = self.position_in_bits();
+                self.set_position_in_bits(self.text_stream_pos);
+                let result = self.try_read_unicode_text();
+                self.text_stream_pos = self.position_in_bits();
+                self.set_position_in_bits(saved_pos);
+                result
+            } else {
+                self.try_read_unicode_text()
+            }
+        } else {
+            let Some(length) = self.try_read_bit_short() else {
+                return None;
+            };
+            if length <= 0 {
+                return Some(String::new());
+            }
+            let length = length as usize;
+            if self.remaining_bits() < (length as i64).saturating_mul(8) {
+                return None;
+            }
+            let bytes = self.read_bytes(length);
+            let (decoded, _, _) = self.encoding.decode(&bytes);
+            Some(crate::io::dxf::code_page::decode_legacy_escapes(
+                &decoded.replace('\0', ""),
+            ))
+        }
+    }
+
+    fn try_read_unicode_text(&mut self) -> Option<String> {
+        let char_count = self.try_read_bit_short()?;
+        if char_count <= 0 {
+            return Some(String::new());
+        }
+        let byte_count = (char_count as usize).checked_mul(2)?;
+        if self.remaining_bits() < (byte_count as i64).saturating_mul(8) {
+            return None;
+        }
+        let bytes = self.read_bytes(byte_count);
+        let utf16: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        Some(decode_mif(
+            String::from_utf16_lossy(&utf16).replace('\0', ""),
+        ))
     }
 
     // ════════════════════════════════════════════════════════════════════════
