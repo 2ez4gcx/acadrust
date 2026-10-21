@@ -5755,8 +5755,7 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_3bit_double(anchor);
             }
             self.writer.write_bit_long(acis.wireframe_isolines);
-            let isoline_present =
-                acis.wireframe_isoline_present || !wires.is_empty() || !silhouettes.is_empty();
+            let isoline_present = acis.wireframe_isoline_present || !wires.is_empty();
             self.writer.write_bit(isoline_present);
 
             if isoline_present {
@@ -5764,27 +5763,28 @@ impl<'a> DwgObjectWriter<'a> {
                 for wire in wires {
                     self.write_wire(wire);
                 }
+            }
 
-                self.writer.write_bit_long(silhouettes.len() as i32);
-                for sil in silhouettes {
-                    if self.version.r2010_plus() {
-                        self.writer.write_bit_long_long(sil.viewport_id);
-                    } else {
-                        self.writer.write_bit_long(sil.viewport_id as i32);
-                    }
-                    self.writer.write_3bit_double(sil.target);
-                    self.writer.write_3bit_double(sil.view_direction);
-                    self.writer.write_3bit_double(sil.up_vector);
-                    self.writer.write_bit(sil.is_perspective);
-                    let has_wires = sil.has_wires || !sil.wires.is_empty();
-                    self.writer.write_bit(has_wires);
-                    if !has_wires {
-                        continue;
-                    }
-                    self.writer.write_bit_long(sil.wires.len() as i32);
-                    for wire in &sil.wires {
-                        self.write_wire(wire);
-                    }
+            // Silhouettes are independent of the isoline cache.
+            self.writer.write_bit_long(silhouettes.len() as i32);
+            for sil in silhouettes {
+                if self.version.r2010_plus() {
+                    self.writer.write_bit_long_long(sil.viewport_id);
+                } else {
+                    self.writer.write_bit_long(sil.viewport_id as i32);
+                }
+                self.writer.write_3bit_double(sil.target);
+                self.writer.write_3bit_double(sil.view_direction);
+                self.writer.write_3bit_double(sil.up_vector);
+                self.writer.write_bit(sil.is_perspective);
+                let has_wires = sil.has_wires || !sil.wires.is_empty();
+                self.writer.write_bit(has_wires);
+                if !has_wires {
+                    continue;
+                }
+                self.writer.write_bit_long(sil.wires.len() as i32);
+                for wire in &sil.wires {
+                    self.write_wire(wire);
                 }
             }
         }

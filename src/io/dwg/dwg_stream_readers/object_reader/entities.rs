@@ -5407,9 +5407,10 @@ fn read_acis_entity_impl(
     //   B wireframe_data_present
     //   if set: B point_present, [3BD point],
     //           BL isolines, B isoline_present,
-    //           if set: BL num_wires, wires..., BL num_silhouettes, sils...
-    // AutoCAD writes isoline_present=1 with zero counts when there is no
-    // wire cache.
+    //           if set: BL num_wires, wires...
+    //           BL num_silhouettes, sils...
+    // An empty wire cache can have either value of isoline_present; only
+    // the wire count is omitted when that flag is false.
     let wireframe_present = reader.read_bit();
     let mut point = Vector3::ZERO;
     let mut point_present = false;
@@ -5432,41 +5433,42 @@ fn read_acis_entity_impl(
             for _ in 0..num_wires {
                 wires.push(read_wire(reader));
             }
+        }
 
-            // Both cache arrays are absent when isoline_present is false.
-            // Reading a count then consumes the extra-body or revision tail.
-            let num_silhouettes = safe_count(reader.read_bit_long(), reader);
-            for _ in 0..num_silhouettes {
-                // Native R2010+ silhouettes store a BLL viewport identity.
-                // Earlier records use BL, including compact zero identities.
-                let viewport_id = if version.r2010_plus() {
-                    reader.read_bit_long_long()
-                } else {
-                    i64::from(reader.read_bit_long())
-                };
-                let target = reader.read_3bit_double();
-                let view_direction = reader.read_3bit_double();
-                let up_vector = reader.read_3bit_double();
-                let is_perspective = reader.read_bit();
-                let mut sil_wires = Vec::new();
-                let has_sil_wires = reader.read_bit();
-                if has_sil_wires {
-                    let num_sw = safe_count(reader.read_bit_long(), reader);
-                    sil_wires.reserve(num_sw as usize);
-                    for _ in 0..num_sw {
-                        sil_wires.push(read_wire(reader));
-                    }
+        // The isoline flag gates only the wire array. The silhouette
+        // count is always present in a wireframe block, including zero
+        // when there are no silhouettes (ODA DWG spec, section 20.4.41).
+        let num_silhouettes = safe_count(reader.read_bit_long(), reader);
+        for _ in 0..num_silhouettes {
+            // Native R2010+ silhouettes store a BLL viewport identity.
+            // Earlier records use BL, including compact zero identities.
+            let viewport_id = if version.r2010_plus() {
+                reader.read_bit_long_long()
+            } else {
+                i64::from(reader.read_bit_long())
+            };
+            let target = reader.read_3bit_double();
+            let view_direction = reader.read_3bit_double();
+            let up_vector = reader.read_3bit_double();
+            let is_perspective = reader.read_bit();
+            let mut sil_wires = Vec::new();
+            let has_sil_wires = reader.read_bit();
+            if has_sil_wires {
+                let num_sw = safe_count(reader.read_bit_long(), reader);
+                sil_wires.reserve(num_sw as usize);
+                for _ in 0..num_sw {
+                    sil_wires.push(read_wire(reader));
                 }
-                silhouettes.push(Silhouette {
-                    viewport_id,
-                    view_direction,
-                    up_vector,
-                    target,
-                    is_perspective,
-                    has_wires: has_sil_wires,
-                    wires: sil_wires,
-                });
             }
+            silhouettes.push(Silhouette {
+                viewport_id,
+                view_direction,
+                up_vector,
+                target,
+                is_perspective,
+                has_wires: has_sil_wires,
+                wires: sil_wires,
+            });
         }
     }
 
