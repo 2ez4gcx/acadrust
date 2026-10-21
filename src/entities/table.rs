@@ -1354,6 +1354,127 @@ impl Default for CellRange {
     }
 }
 
+// Laying merged ranges over a table's cells costs each range its area, so ranges that overlap
+// again and again (a file can list millions) cost far more than the table has cells. Ranges
+// that do not overlap cost at most one visit per cell and one per row they span
+// (`MERGE_VISITS_PER_CELL` leaves room for some overlap) plus a constant, so a well-formed
+// table never reaches the budget; only ranges past it are treated differently (see
+// `Table::set_merged_ranges` and `MergedCellIndex`). A range past the budget is skipped and
+// the ranges after it are still laid while they fit.
+const MERGE_VISITS_PER_CELL: usize = 4;
+const MERGE_VISIT_SLACK: usize = 1 << 16;
+
+/// Cell visits allowed for laying merged ranges over `cells` cells.
+fn merge_visit_budget(cells: usize) -> usize {
+    cells
+        .saturating_mul(MERGE_VISITS_PER_CELL)
+        .saturating_add(MERGE_VISIT_SLACK)
+}
+
+/// The index of each row's first cell in a table's cells taken row after row, followed by
+/// the number of cells.
+fn row_starts(rows: &[TableRow]) -> Vec<usize> {
+    let mut starts = Vec::with_capacity(rows.len() + 1);
+    let mut cells = 0usize;
+    for row in rows {
+        starts.push(cells);
+        cells = cells.saturating_add(row.cells.len());
+    }
+    starts.push(cells);
+    starts
+}
+
+/// The visits a range costs, an upper bound of what a loop over it touches:
+/// one per row it spans, plus its cells, counted at most as its area and at most as the cells
+/// those rows hold. Rows can hold fewer cells than the table has columns, and the area alone
+/// would make a range over short rows cost far more than it touches. `row_starts` comes from
+/// [`row_starts`].
+fn merge_visits(range: &CellRange, row_starts: &[usize]) -> usize {
+    let rows = row_starts.len().saturating_sub(1);
+    if range.top_row >= rows {
+        return 1;
+    }
+    let bottom = range.bottom_row.min(rows - 1);
+    let spanned = bottom.saturating_sub(range.top_row).saturating_add(1);
+    let columns = range
+        .right_col
+        .saturating_sub(range.left_col)
+        .saturating_add(1);
+    let held = row_starts[bottom + 1].saturating_sub(row_starts[range.top_row]);
+    spanned.saturating_add(held.min(spanned.saturating_mul(columns)))
+}
+
+/// For every cell of a table, the first of its merged ranges that contains it, which the DXF
+/// writer used to find by searching every range for every cell (cells × ranges). Built once:
+/// the ranges are laid over the cells in order, each claiming the cells no earlier range
+/// claimed, within `merge_visit_budget`. The answers are those of the search whenever the
+/// ranges fit the budget, which ranges that do not overlap always do; once overlapping ranges
+/// spend it, a range that no longer fits claims no cells and the ranges after it go on
+/// claiming while they fit.
+pub(crate) struct MergedCellIndex {
+    /// Index in `claims` of each row's first cell, then the number of cells.
+    row_starts: Vec<usize>,
+    /// The range claiming each cell (rows one after the other), or `UNCLAIMED`.
+    claims: Vec<u32>,
+}
+
+const UNCLAIMED: u32 = u32::MAX;
+
+impl MergedCellIndex {
+    pub(crate) fn new(table: &Table, ranges: &[CellRange]) -> Self {
+        let row_starts = row_starts(&table.rows);
+        let cells = row_starts.last().copied().unwrap_or(0);
+        let mut claims = vec![UNCLAIMED; cells];
+        let mut budget = merge_visit_budget(cells);
+        for (index, range) in ranges.iter().enumerate() {
+            let Ok(index) = u32::try_from(index) else {
+                break;
+            };
+            if index == UNCLAIMED {
+                break;
+            }
+            // A range past the budget is skipped: a later range, disjoint from it, may still
+            // fit.
+            let visits = merge_visits(range, &row_starts);
+            if visits > budget {
+                continue;
+            }
+            budget -= visits;
+            let rows = table
+                .rows
+                .iter()
+                .zip(&row_starts)
+                .take(range.bottom_row.saturating_add(1))
+                .skip(range.top_row);
+            for (row, start) in rows {
+                let end = row.cells.len().min(range.right_col.saturating_add(1));
+                for column in range.left_col..end {
+                    let claim = &mut claims[start + column];
+                    if *claim == UNCLAIMED {
+                        *claim = index;
+                    }
+                }
+            }
+        }
+        Self { row_starts, claims }
+    }
+
+    /// Index of the first range containing cell (`row`, `column`).
+    pub(crate) fn first(&self, row: usize, column: usize) -> Option<usize> {
+        let start = *self.row_starts.get(row)?;
+        let end = self
+            .row_starts
+            .get(row + 1)
+            .copied()
+            .unwrap_or(self.claims.len());
+        let slot = start.checked_add(column).filter(|slot| *slot < end)?;
+        match self.claims[slot] {
+            UNCLAIMED => None,
+            index => Some(index as usize),
+        }
+    }
+}
+
 /// One manual table-break position.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -1590,6 +1711,18 @@ impl Table {
             return Vec::new();
         }
 
+        // The kept ranges are hashed as they are kept, so finding a duplicate takes constant
+        // time instead of a search of every kept range (quadratic in the number of ranges a
+        // file lists: minutes for a million). Same ranges, same order.
+        let key = |range: &CellRange| {
+            (
+                range.top_row,
+                range.left_col,
+                range.bottom_row,
+                range.right_col,
+            )
+        };
+        let mut seen = std::collections::HashSet::with_capacity(self.merged_ranges.len());
         let mut ranges = Vec::new();
         for range in &self.merged_ranges {
             if range.top_row >= row_count
@@ -1605,7 +1738,7 @@ impl Table {
                 bottom_row: range.bottom_row.min(row_count - 1),
                 right_col: range.right_col.min(column_count - 1),
             };
-            if range.cell_count() > 1 && !ranges.contains(&range) {
+            if range.cell_count() > 1 && seen.insert(key(&range)) {
                 ranges.push(range);
             }
         }
@@ -1622,7 +1755,7 @@ impl Table {
                     bottom_row: row_index.saturating_add(height - 1).min(row_count - 1),
                     right_col: column_index.saturating_add(width - 1).min(column_count - 1),
                 };
-                if range.cell_count() > 1 && !ranges.contains(&range) {
+                if range.cell_count() > 1 && seen.insert(key(&range)) {
                     ranges.push(range);
                 }
             }
@@ -1639,20 +1772,32 @@ impl Table {
             }
         }
         self.merged_ranges = ranges;
+        // Marking the cells a range covers costs what `merge_visits` counts: its rows and the
+        // cells they hold within it. Within `merge_visit_budget`, which ranges that do not
+        // overlap never reach, every range marks exactly as before; past it (millions of large
+        // overlapping ranges took hours) a range that no longer fits still sets its anchor but
+        // leaves the cells it covers as the earlier ranges left them, and the ranges after it
+        // are marked while they fit.
+        let row_starts = row_starts(&self.rows);
+        let mut budget = merge_visit_budget(row_starts.last().copied().unwrap_or(0));
         for range in &self.merged_ranges {
-            for row in self
-                .rows
-                .iter_mut()
-                .take(range.bottom_row + 1)
-                .skip(range.top_row)
-            {
-                for cell in row
-                    .cells
+            let visits = merge_visits(range, &row_starts);
+            if visits <= budget {
+                budget -= visits;
+                for row in self
+                    .rows
                     .iter_mut()
-                    .take(range.right_col + 1)
-                    .skip(range.left_col)
+                    .take(range.bottom_row + 1)
+                    .skip(range.top_row)
                 {
-                    cell.merged = 1;
+                    for cell in row
+                        .cells
+                        .iter_mut()
+                        .take(range.right_col + 1)
+                        .skip(range.left_col)
+                    {
+                        cell.merged = 1;
+                    }
                 }
             }
             if let Some(cell) = self
@@ -2393,6 +2538,399 @@ mod tests {
         let flags = CellStateFlags::CONTENT_LOCKED | CellStateFlags::FORMAT_LOCKED;
         assert!(flags.contains(CellStateFlags::CONTENT_LOCKED));
         assert!(!flags.contains(CellStateFlags::LINKED));
+    }
+
+    // `canonical_merged_ranges` deduplicates in linear time. The tests below hold it to the
+    // previous quadratic algorithm, kept here as the reference, and to a time bound.
+
+    /// The previous algorithm: one `Vec::contains` over the kept ranges per range.
+    fn reference_canonical_merged_ranges(table: &Table) -> Vec<CellRange> {
+        let row_count = table.rows.len();
+        let column_count = table.columns.len();
+        if row_count == 0 || column_count == 0 {
+            return Vec::new();
+        }
+
+        let mut ranges = Vec::new();
+        for range in &table.merged_ranges {
+            if range.top_row >= row_count
+                || range.left_col >= column_count
+                || range.top_row > range.bottom_row
+                || range.left_col > range.right_col
+            {
+                continue;
+            }
+            let range = CellRange {
+                top_row: range.top_row,
+                left_col: range.left_col,
+                bottom_row: range.bottom_row.min(row_count - 1),
+                right_col: range.right_col.min(column_count - 1),
+            };
+            if range.cell_count() > 1 && !ranges.contains(&range) {
+                ranges.push(range);
+            }
+        }
+        for (row_index, row) in table.rows.iter().enumerate() {
+            for (column_index, cell) in row.cells.iter().take(column_count).enumerate() {
+                let height = cell.merge_height.max(1) as usize;
+                let width = cell.merge_width.max(1) as usize;
+                if height == 1 && width == 1 {
+                    continue;
+                }
+                let range = CellRange {
+                    top_row: row_index,
+                    left_col: column_index,
+                    bottom_row: row_index.saturating_add(height - 1).min(row_count - 1),
+                    right_col: column_index.saturating_add(width - 1).min(column_count - 1),
+                };
+                if range.cell_count() > 1 && !ranges.contains(&range) {
+                    ranges.push(range);
+                }
+            }
+        }
+        ranges
+    }
+
+    /// Deterministic xorshift64* numbers for the comparison inputs.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            self.0 = x;
+            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+
+        /// A number in `0..n` (`n` > 0).
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+
+        /// A cell span: mostly 1, else 0, negative, small, past the grid or huge.
+        fn span(&mut self) -> i32 {
+            match self.below(8) {
+                0 => 0,
+                1 => -(self.below(3) as i32) - 1,
+                2 => i32::MAX,
+                3 | 4 => self.below(12) as i32 + 1,
+                _ => 1,
+            }
+        }
+    }
+
+    /// A range from `rng`: coordinates up to 10 (some outside the grid, inverted or one
+    /// cell), or a duplicate, a range nested in or adjacent to an earlier one.
+    fn random_range(rng: &mut Rng, earlier: &[CellRange]) -> CellRange {
+        let pick = |rng: &mut Rng| earlier[rng.below(earlier.len())];
+        match rng.below(6) {
+            0 if !earlier.is_empty() => pick(rng),
+            1 if !earlier.is_empty() => {
+                let r = pick(rng);
+                CellRange::new(
+                    r.top_row + rng.below(2),
+                    r.left_col + rng.below(2),
+                    r.bottom_row.saturating_sub(rng.below(2)),
+                    r.right_col.saturating_sub(rng.below(2)),
+                )
+            }
+            2 if !earlier.is_empty() => {
+                let r = pick(rng);
+                if rng.below(2) == 0 {
+                    CellRange::new(r.top_row, r.right_col + 1, r.bottom_row, r.right_col + 2)
+                } else {
+                    CellRange::new(r.bottom_row + 1, r.left_col, r.bottom_row + 2, r.right_col)
+                }
+            }
+            _ => CellRange::new(rng.below(11), rng.below(11), rng.below(11), rng.below(11)),
+        }
+    }
+
+    /// A table of up to 8 × 8 cells, rows holding more or fewer cells than there are
+    /// columns, with random merged ranges and cell spans.
+    fn random_table(rng: &mut Rng) -> Table {
+        let mut table = Table::new(Vector3::ZERO, rng.below(9), rng.below(9));
+        for row in &mut table.rows {
+            match rng.below(6) {
+                0 => {
+                    let keep = rng.below(row.cells.len() + 1);
+                    row.cells.truncate(keep);
+                }
+                1 => row.cells.push(TableCell::new()),
+                _ => {}
+            }
+            for cell in &mut row.cells {
+                if rng.below(3) == 0 {
+                    cell.merge_width = rng.span();
+                    cell.merge_height = rng.span();
+                }
+            }
+        }
+        for _ in 0..rng.below(40) {
+            let range = random_range(rng, &table.merged_ranges);
+            table.merged_ranges.push(range);
+        }
+        table
+    }
+
+    #[test]
+    fn canonical_merged_ranges_match_the_original_algorithm() {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        let mut kept = 0;
+        for case in 0..5_000 {
+            let table = random_table(&mut rng);
+            let expected = reference_canonical_merged_ranges(&table);
+            kept += expected.len();
+            assert_eq!(
+                table.canonical_merged_ranges(),
+                expected,
+                "case {case}: {:?}",
+                table.merged_ranges
+            );
+        }
+        assert!(kept > 10_000, "the inputs keep ranges: {kept}");
+    }
+
+    /// Every range of two cells or more in a `rows` × `columns` grid, row by row.
+    fn every_range(rows: usize, columns: usize) -> Vec<CellRange> {
+        let mut out = Vec::new();
+        for top in 0..rows {
+            for left in 0..columns {
+                for bottom in top..rows {
+                    for right in left..columns {
+                        let range = CellRange::new(top, left, bottom, right);
+                        if range.cell_count() > 1 {
+                            out.push(range);
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn canonical_merged_ranges_take_linear_time() {
+        // 215,325 distinct ranges of a 30 × 30 table, plus a span on every cell: the
+        // original compared each range with every kept one, about 2.3e10 comparisons
+        // (minutes in a debug build).
+        let mut table = Table::new(Vector3::ZERO, 30, 30);
+        let ranges = every_range(30, 30);
+        assert_eq!(ranges.len(), 215_325);
+        table.merged_ranges = ranges.clone();
+        for row in &mut table.rows {
+            for cell in &mut row.cells {
+                cell.merge_width = 2;
+            }
+        }
+        let start = std::time::Instant::now();
+        let got = table.canonical_merged_ranges();
+        let elapsed = start.elapsed();
+        assert_eq!(got, ranges, "every span repeats a listed range");
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "{elapsed:?} for {} ranges",
+            ranges.len()
+        );
+    }
+
+    // `set_merged_ranges` and `MergedCellIndex` lay merged ranges over the cells within a
+    // visit budget. The tests below hold them to the previous algorithms, kept here as the
+    // references, and to time bounds.
+
+    /// The previous `set_merged_ranges`: every range marks all of its cells.
+    fn reference_set_merged_ranges(table: &mut Table, ranges: Vec<CellRange>) {
+        for row in &mut table.rows {
+            for cell in &mut row.cells {
+                cell.merge_width = 1;
+                cell.merge_height = 1;
+                cell.merged = 0;
+            }
+        }
+        table.merged_ranges = ranges;
+        for range in &table.merged_ranges {
+            for row in table
+                .rows
+                .iter_mut()
+                .take(range.bottom_row + 1)
+                .skip(range.top_row)
+            {
+                for cell in row
+                    .cells
+                    .iter_mut()
+                    .take(range.right_col + 1)
+                    .skip(range.left_col)
+                {
+                    cell.merged = 1;
+                }
+            }
+            if let Some(cell) = table
+                .rows
+                .get_mut(range.top_row)
+                .and_then(|row| row.cells.get_mut(range.left_col))
+            {
+                cell.merged = 0;
+                cell.merge_width = range.col_count() as i32;
+                cell.merge_height = range.row_count() as i32;
+            }
+        }
+    }
+
+    /// The previous DXF writer search: the first range containing the cell.
+    fn reference_first_range(ranges: &[CellRange], row: usize, column: usize) -> Option<usize> {
+        ranges.iter().position(|range| range.contains(row, column))
+    }
+
+    /// (merged, merge width, merge height) of every cell, row by row.
+    fn merge_state(table: &Table) -> Vec<Vec<(i32, i32, i32)>> {
+        table
+            .rows
+            .iter()
+            .map(|row| {
+                row.cells
+                    .iter()
+                    .map(|cell| (cell.merged, cell.merge_width, cell.merge_height))
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn set_merged_ranges_match_the_original_algorithm() {
+        let mut rng = Rng(0xD1B5_4A32_D192_ED03);
+        let mut overlapping = 0;
+        for case in 0..5_000 {
+            let table = random_table(&mut rng);
+            let ranges = table.canonical_merged_ranges();
+            let cells: usize = ranges.iter().map(CellRange::cell_count).sum();
+            if cells > table.rows.len() * table.columns.len() {
+                overlapping += 1;
+            }
+            let mut expected = table.clone();
+            reference_set_merged_ranges(&mut expected, ranges.clone());
+            let mut got = table.clone();
+            got.set_merged_ranges(ranges);
+            assert_eq!(merge_state(&got), merge_state(&expected), "case {case}");
+            assert_eq!(got.merged_ranges, expected.merged_ranges, "case {case}");
+        }
+        assert!(overlapping > 1_000, "the inputs overlap: {overlapping}");
+    }
+
+    #[test]
+    fn merged_cell_index_matches_the_original_search() {
+        let mut rng = Rng(0x94D0_49BB_1331_11EB);
+        for case in 0..5_000 {
+            let table = random_table(&mut rng);
+            let ranges = table.canonical_merged_ranges();
+            let index = MergedCellIndex::new(&table, &ranges);
+            for (r, row) in table.rows.iter().enumerate() {
+                for c in 0..row.cells.len() {
+                    assert_eq!(
+                        index.first(r, c),
+                        reference_first_range(&ranges, r, c),
+                        "case {case}, cell ({r}, {c}): {ranges:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// 1,048,576 distinct ranges of a 200 × 200 table, each at least 136 × 136 cells: they all
+    /// overlap.
+    fn overlapping_ranges() -> Vec<CellRange> {
+        let mut out = Vec::with_capacity(1 << 20);
+        for top in 0..32 {
+            for left in 0..32 {
+                for bottom in 168..200 {
+                    for right in 168..200 {
+                        out.push(CellRange::new(top, left, bottom, right));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn overlapping_merged_ranges_take_linear_time() {
+        // The original marked every cell of every range: about 2.4e10 cell writes.
+        let mut table = Table::new(Vector3::ZERO, 200, 200);
+        table.merged_ranges = overlapping_ranges();
+        let start = std::time::Instant::now();
+        table.sync_cells_from_merged_ranges();
+        let elapsed = start.elapsed();
+        assert_eq!(table.merged_ranges.len(), 1 << 20);
+        let corner = &table.rows[0].cells[0];
+        assert_eq!(
+            (corner.merged, corner.merge_width, corner.merge_height),
+            (0, 200, 200),
+            "anchors take the last range they anchor"
+        );
+        assert_eq!(table.rows[150].cells[150].merged, 1, "covered");
+        assert!(elapsed < std::time::Duration::from_secs(30), "{elapsed:?}");
+        let start = std::time::Instant::now();
+        let index = MergedCellIndex::new(&table, &table.merged_ranges);
+        let elapsed = start.elapsed();
+        assert_eq!(index.first(150, 150), Some(0), "claimed by the first range");
+        assert_eq!(
+            index.first(199, 199),
+            None,
+            "only ranges past the budget reach it"
+        );
+        assert!(elapsed < std::time::Duration::from_secs(30), "{elapsed:?}");
+    }
+
+    /// A range past the budget does not stop the ranges after it. In a
+    /// 300 × 300 table the first four of ten nested ranges spend most of the budget and the
+    /// other six do not fit; a range in the bottom row, which overlaps none of them, is still
+    /// merged, in the cells and in the writer's index alike.
+    #[test]
+    fn a_disjoint_range_after_an_over_budget_one_is_still_merged() {
+        let mut table = Table::new(Vector3::ZERO, 300, 300);
+        table.merged_ranges = (0..10)
+            .map(|k| CellRange::new(0, 0, 298, 299 - k))
+            .chain([CellRange::new(299, 0, 299, 1)])
+            .collect();
+        table.sync_cells_from_merged_ranges();
+        let anchor = &table.rows[299].cells[0];
+        assert_eq!(
+            (anchor.merged, anchor.merge_width, anchor.merge_height),
+            (0, 2, 1)
+        );
+        assert_eq!(table.rows[299].cells[1].merged, 1, "covered");
+        let index = MergedCellIndex::new(&table, &table.merged_ranges);
+        assert_eq!(index.first(299, 0), Some(10));
+        assert_eq!(index.first(299, 1), Some(10));
+        assert_eq!(index.first(299, 2), None);
+    }
+
+    /// A range over rows shorter than the column count costs the cells those rows hold, not
+    /// its area, so one range over 1,000 one-cell rows of a 10,000-column table is laid exactly
+    /// as before.
+    #[test]
+    fn ranges_over_short_rows_cost_the_cells_they_hold() {
+        let mut table = Table::new(Vector3::ZERO, 1_000, 1);
+        table.columns.resize_with(10_000, TableColumn::default);
+        table.merged_ranges = vec![CellRange::new(0, 0, 999, 9_999)];
+        let ranges = table.canonical_merged_ranges();
+        let mut expected = table.clone();
+        reference_set_merged_ranges(&mut expected, ranges.clone());
+        let mut got = table.clone();
+        got.set_merged_ranges(ranges.clone());
+        let (got, expected) = (merge_state(&got), merge_state(&expected));
+        assert_eq!(got.len(), expected.len());
+        let differs = got.iter().zip(&expected).position(|(a, b)| a != b);
+        assert_eq!(differs, None, "first row laid differently");
+        let index = MergedCellIndex::new(&table, &ranges);
+        for row in 0..1_000 {
+            assert_eq!(
+                index.first(row, 0),
+                reference_first_range(&ranges, row, 0),
+                "row {row}"
+            );
+        }
     }
 }
 
