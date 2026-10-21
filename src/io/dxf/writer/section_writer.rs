@@ -4,6 +4,8 @@
 //! HEADER, CLASSES, TABLES, BLOCKS, ENTITIES, and OBJECTS.
 
 mod associative;
+#[cfg(test)]
+mod table_tests;
 
 use crate::document::CadDocument;
 use crate::entities::*;
@@ -11217,19 +11219,24 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_double(142, col.width)?;
         }
 
-        // Write cells
+        self.write_table_cells(table)
+    }
+
+    /// Writes the cells, each with the first merged range that contains it, from an index built
+    /// once instead of a search of every range for every cell.
+    fn write_table_cells(&mut self, table: &table::Table) -> Result<()> {
         let merged_ranges = table.canonical_merged_ranges();
+        let index = table::MergedCellIndex::new(table, &merged_ranges);
         for (row_index, row) in table.rows.iter().enumerate() {
             for (column_index, cell) in row.cells.iter().enumerate() {
-                let merged_range = merged_ranges
-                    .iter()
-                    .find(|range| range.contains(row_index, column_index));
+                let merged_range = index
+                    .first(row_index, column_index)
+                    .and_then(|i| merged_ranges.get(i));
                 let anchor_range = merged_range
                     .filter(|range| range.top_row == row_index && range.left_col == column_index);
                 self.write_table_cell(cell, anchor_range, merged_range.is_some())?;
             }
         }
-
         Ok(())
     }
 
