@@ -5,6 +5,8 @@
 [![Documentation](https://docs.rs/acadrust/badge.svg)](https://docs.rs/acadrust)
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
 
+See [third-party notices](THIRD_PARTY_NOTICES.md) for DWG code provenance and attribution.
+
 **A pure Rust crate for reading, writing, and inspecting CAD files.**
 
 acadrust handles ASCII and binary DXF plus native binary DWG without requiring
