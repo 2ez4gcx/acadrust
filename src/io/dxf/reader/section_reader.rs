@@ -4531,7 +4531,7 @@ impl<'a> SectionReader<'a> {
             }
             "BLOCKALIGNMENTGRIP" => DynamicBlockData::AlignmentGrip(BlockOrientedGrip {
                 grip: dynamic_dxf_grip(&fields),
-                orientation: fields.point("AcDbBlockAlignmentGrip", 140),
+                orientation: fields.vector_140("AcDbBlockAlignmentGrip"),
             }),
             "BLOCKFLIPGRIP" => DynamicBlockData::FlipGrip(BlockFlipGrip {
                 grip: dynamic_dxf_grip(&fields),

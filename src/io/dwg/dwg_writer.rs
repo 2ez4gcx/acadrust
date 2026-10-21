@@ -1108,9 +1108,8 @@ fn prepare_header(
     if let Some(br) = document.block_records.get("*Model_Space") {
         h.model_space_block_handle = br.handle;
     }
-    if let Some(br) = document.block_records.get("*Paper_Space") {
-        h.paper_space_block_handle = br.handle;
-    }
+    h.paper_space_block_handle =
+        super::dwg_stream_writers::object_writer::paper_space_block_handle(document);
 
     // ── Sync current style handles (validate against actual objects) ──
     // CLAYER: must point to an actual layer; fall back to "0" if invalid

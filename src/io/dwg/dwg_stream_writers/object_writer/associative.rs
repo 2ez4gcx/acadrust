@@ -880,6 +880,15 @@ impl<'a> DwgObjectWriter<'a> {
                         self.write_constraint_node_common(node);
                         self.write_constraint_node_data(&node.data);
                     }
+                } else if self.version.r2013_plus(self.dxf_version) {
+                    // R2013+ keeps the registry fields even when the group has
+                    // no nodes. BricsCAD rejects the shorter BL-only form.
+                    self.writer.write_bit_long(value.effective_next_node_id());
+                    self.writer.write_bit_long(0);
+                    self.writer.write_bit_long(0);
+                    self.writer.write_bit(false);
+                    self.writer.write_bit_long(0);
+                    self.writer.write_bit_long(0);
                 } else {
                     self.writer.write_bit_long(0);
                 }

@@ -2288,7 +2288,7 @@ fn dwg_mtext_background_fill_byblock_r2018() {
 
 #[test]
 fn dwg_mtext_text_frame_r2018() {
-    // The text-frame bit (0x10) alone triggers the fill block only for R2018+.
+    // A frame alone has no background-fill payload in the R2018 layout.
     let mut mtext = MText::with_value("Framed", Vector3::new(0.0, 0.0, 0.0));
     mtext.background_fill_flags = 0x10; // TextFrame, no fill color bit
     mtext.background_scale = 2.0;
@@ -2296,11 +2296,11 @@ fn dwg_mtext_text_frame_r2018() {
 
     let rt = dwg_roundtrip_mtext(DxfVersion::AC1032, mtext.clone());
     assert_eq!(rt.background_fill_flags, 0x10, "R2018 text-frame flag");
-    assert_eq!(rt.background_scale, 2.0, "R2018 text-frame scale");
+    assert_eq!(rt.background_scale, 1.5, "R2018 text-frame default scale");
     assert_eq!(
         rt.background_color,
-        Color::from_index(5),
-        "R2018 text-frame color"
+        Color::ByLayer,
+        "R2018 text-frame default color"
     );
     assert_eq!(rt.value, "Framed", "R2018 text-frame value desynced");
 }

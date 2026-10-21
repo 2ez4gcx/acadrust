@@ -389,7 +389,13 @@ impl<'a> DwgObjectWriter<'a> {
         }
 
         // ── MAIN: entity mode (2 bits) ──
-        let entmode = entity_mode_override.unwrap_or_else(|| self.get_entity_mode(&owner_handle));
+        let entmode = if entity_mode_override == Some(1)
+            && owner_handle != self.paper_space_block_handle
+        {
+            0
+        } else {
+            entity_mode_override.unwrap_or_else(|| self.get_entity_mode(&owner_handle))
+        };
         self.writer.write_2bits(entmode);
 
         // ── HANDLE: owner (if entmode == 0) ──
@@ -1103,15 +1109,10 @@ impl<'a> DwgObjectWriter<'a> {
     /// Returns the 2-bit entity-mode value (per ODA spec §19.4.4):
     /// - 0 = owned (owner handle present) — VERTEX, ATTRIB, SEQEND,
     ///       or entity inside a named block
-    /// - 1 = paper-space entity (BB 01 → any *Paper_Space block)
+    /// - 1 = paper-space entity (BB 01 -> the active paper-space block)
     /// - 2 = model-space entity (BB 10 → *Model_Space)
     ///
-    /// AutoCAD uses entmode=1 for entities in ALL paper-space blocks,
-    /// not just the canonical `*Paper_Space`.  Additional layouts like
-    /// `*Paper_Space0`, `*Paper_Space1`, … also get entmode=1.  The
-    /// correct owner is determined by the BLOCK_HEADER's entity_handles
-    /// list, not by the entity's owner handle (which is omitted for
-    /// entmode != 0).
+    /// Other paper-space layouts retain an explicit owner handle.
     fn get_entity_mode(&self, owner_handle: &Handle) -> u8 {
         for br in self.document.block_records.iter() {
             if br.handle == *owner_handle {
@@ -1122,7 +1123,7 @@ impl<'a> DwgObjectWriter<'a> {
                 // Paper-space mode names the active layout's *Paper_Space;
                 // the other layouts' *Paper_SpaceN records, like named
                 // blocks, store their owner.
-                if upper == "*PAPER_SPACE" {
+                if br.handle == self.paper_space_block_handle {
                     return 1; // paper space (BB 01)
                 }
                 return 0; // owner handle follows

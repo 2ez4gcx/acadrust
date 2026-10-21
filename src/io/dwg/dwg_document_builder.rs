@@ -1147,8 +1147,8 @@ impl DwgDocumentBuilder {
 
         // ── Deduplicate block names ────────────────────────────────────
         //
-        // DWG binary format stores ALL paper-space blocks as "*Paper_Space"
-        // and anonymous blocks share names ("*U", "*D", etc.).  Our
+        // Some DWG producers store repeated bare paper-space and anonymous
+        // names ("*Paper_Space", "*U", "*D", etc.). Our
         // Table<BlockRecord> is keyed by name, so duplicates would
         // overwrite each other.  Rename duplicates using the DXF
         // convention: *Paper_Space, *Paper_Space0, *Paper_Space1, …

@@ -77,10 +77,18 @@ impl<'a> DwgObjectWriter<'a> {
                     | EntityType::PolyfaceMesh(_)
                     | EntityType::PolygonMesh(_)
             ) || matches!(entity, EntityType::Insert(i) if !i.attributes.is_empty() || i.seqend_handle.is_some());
+            // Native frame-only records may contain the optional fill payload.
+            // Normalize them to the R2018 layout when rewriting the drawing.
+            let frame_only_mtext = self.version.r2018_plus(self.dxf_version)
+                && matches!(entity, EntityType::MText(text) if text.background_fill_flags & 0x11 == 0x10);
+            let stale_paper_owner = entity.common().entity_mode == Some(1)
+                && entity.common().owner_handle != self.paper_space_block_handle;
             let ok = self.version.r2004_plus()
                 && raw.version == self.dxf_version
                 && !self.raw_excluded_handles.contains(&handle.value())
                 && !compound
+                && !frame_only_mtext
+                && !stale_paper_owner
                 && !(acis && self.version.r2013_plus(self.dxf_version))
                 && !self.owner_overrides.contains_key(&handle)
                 // EED naming an application this drawing has no APPID for
@@ -917,13 +925,9 @@ impl<'a> DwgObjectWriter<'a> {
             // Background flags BL 90 (0 = no background)
             self.writer.write_bit_long(e.background_fill_flags);
 
-            // The background-fill block is written when the UseBackgroundFillColor
-            // bit (0x01) is set, or — for R2018+ — when the TextFrame bit (0x10)
-            // is set. Mirrors read_mtext.
-            if (e.background_fill_flags & 0x01) != 0
-                || (self.version.r2018_plus(self.dxf_version)
-                    && (e.background_fill_flags & 0x10) != 0)
-            {
+            // A frame alone does not carry fill properties in the R2018 layout.
+            // Including them shifts the annotative/column fields in AutoCAD.
+            if (e.background_fill_flags & 0x01) != 0 {
                 // Background scale factor BD 45
                 self.writer.write_bit_double(e.background_scale);
                 // Background color CMC 63

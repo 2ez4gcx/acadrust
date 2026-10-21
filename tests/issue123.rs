@@ -211,6 +211,45 @@ fn graphic_lengths_are_checked_before_allocation_in_both_encodings() {
 }
 
 #[test]
+fn negative_graphic_lengths_are_rejected_and_lengths_that_fit_are_read() {
+    let payload = [7u8; 32];
+    let cases = [
+        (DxfVersion::AC1015, -1, false),
+        (DxfVersion::AC1015, 32, true),
+        (DxfVersion::AC1024, 32, true),
+    ];
+    for (version, length, fits) in cases {
+        let dwg_version = DwgVersion::from_dxf_version(version).unwrap();
+        let mut writer = DwgBitWriter::new(dwg_version, version);
+        if version == DxfVersion::AC1015 {
+            writer.write_raw_long(0); // Deferred common-data size field.
+        }
+        writer.write_handle_undefined(1);
+        writer.write_bit_short(0); // No extended data.
+        writer.write_bit(true); // Graphic data follows.
+        if version == DxfVersion::AC1015 {
+            writer.write_raw_long(length as i32);
+        } else {
+            writer.write_bit_long_long(length);
+        }
+        writer.write_bytes(&payload);
+        let mut reader = merged_main(writer, version);
+        let objects = DwgObjectReader::new(Vec::new(), version, HashMap::new()).unwrap();
+        let common = objects.read_common_entity_data(&mut reader, OBJ_LINE);
+        let graphic = common.graphic_data.unwrap_or_default();
+        if fits {
+            // The entity fields after the graphic data are missing, so the record still
+            // reports a truncation; only the graphic bytes matter here.
+            assert_eq!(graphic, payload, "{version:?}");
+        } else {
+            assert!(graphic.is_empty(), "{version:?}");
+            let error = reader.check_error().unwrap_err().to_string();
+            assert!(error.contains("Invalid DWG count -1"), "{error}");
+        }
+    }
+}
+
+#[test]
 fn valid_lwpolyline_over_the_old_count_cap_roundtrips_without_truncation() {
     const COUNT: usize = 100_001;
     for version in [DxfVersion::AC1015, DxfVersion::AC1024] {

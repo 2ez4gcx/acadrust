@@ -850,6 +850,41 @@ pub fn read_proxy_entity(
     } else {
         false
     };
+    let (payload, text_payload, object_ids) = read_proxy_payload(reader, current_handle);
+    if let Some(envelope) =
+        crate::objects::semantic_property::decode_registered_class_envelope(&payload)
+    {
+        return ExtendedEntityData::RegisteredClass(RegisteredClassEntityData {
+            dxf_name: envelope.dxf_name,
+            cpp_class_name: envelope.cpp_class_name,
+            properties: envelope.properties,
+            payload: envelope.payload,
+            object_ids,
+        });
+    }
+    ExtendedEntityData::Proxy(ProxyEntityData {
+        proxy_id: 498,
+        class_id,
+        dxf_subclass,
+        version: version_value,
+        dwg_version,
+        maintenance_version,
+        from_dxf,
+        graphics: crate::objects::ProxyPayload::from_bytes(&proxy_data),
+        payload,
+        text_payload,
+        object_ids,
+    })
+}
+
+pub(crate) fn read_proxy_payload(
+    reader: &mut DwgMergedReader,
+    current_handle: u64,
+) -> (
+    crate::objects::ProxyPayload,
+    crate::objects::ProxyPayload,
+    Vec<crate::objects::ProxyObjectReference>,
+) {
     let object_data_bits = reader.main_remaining_bits() as u32;
     let mut object_data = vec![0u8; object_data_bits.div_ceil(8) as usize];
     for bit_index in 0..object_data_bits as usize {
@@ -865,8 +900,24 @@ pub fn read_proxy_entity(
         }
     }
     let mut object_ids = Vec::new();
-    while reader.handle_remaining_bits() >= 8 {
+    // R2010+ records carry the exact handle-stream length in the object
+    // framing. The backing byte slice is rounded up, so using its full
+    // length would interpret padding bits as another object reference.
+    let handle_bits = if reader.dxf_version() >= DxfVersion::AC1024 {
+        reader.get_handle_bits().max(0)
+    } else {
+        reader.handle_remaining_bits()
+    };
+    let handle_start = reader.handle_remaining_bits();
+    let mut handle_remaining = handle_bits.min(handle_start);
+    while handle_remaining >= 8 {
+        let before = reader.handle_remaining_bits();
         let (handle, reference_type) = reader.read_handle_reference(current_handle);
+        let consumed = before.saturating_sub(reader.handle_remaining_bits());
+        if consumed <= 0 || consumed > handle_remaining {
+            break;
+        }
+        handle_remaining -= consumed;
         let kind = match reference_type {
             crate::io::dwg::dwg_reference_type::DwgReferenceType::SoftOwnership => {
                 crate::objects::ProxyReferenceKind::SoftOwnership
@@ -889,31 +940,11 @@ pub fn read_proxy_entity(
             kind,
         });
     }
-    let payload = crate::objects::ProxyPayload::from_bits(&object_data, object_data_bits);
-    if let Some(envelope) =
-        crate::objects::semantic_property::decode_registered_class_envelope(&payload)
-    {
-        return ExtendedEntityData::RegisteredClass(RegisteredClassEntityData {
-            dxf_name: envelope.dxf_name,
-            cpp_class_name: envelope.cpp_class_name,
-            properties: envelope.properties,
-            payload: envelope.payload,
-            object_ids,
-        });
-    }
-    ExtendedEntityData::Proxy(ProxyEntityData {
-        proxy_id: 498,
-        class_id,
-        dxf_subclass,
-        version: version_value,
-        dwg_version,
-        maintenance_version,
-        from_dxf,
-        graphics: crate::objects::ProxyPayload::from_bytes(&proxy_data),
-        payload,
-        text_payload: crate::objects::ProxyPayload::from_bits(&text_data, text_data_bits),
+    (
+        crate::objects::ProxyPayload::from_bits(&object_data, object_data_bits),
+        crate::objects::ProxyPayload::from_bits(&text_data, text_data_bits),
         object_ids,
-    })
+    )
 }
 
 pub fn read_line(reader: &mut DwgMergedReader, version: DwgVersion) -> LineData {
@@ -1542,6 +1573,34 @@ pub fn read_mtext(
     version: DwgVersion,
     dxf_version: DxfVersion,
 ) -> MTextData {
+    if !version.r2018_plus(dxf_version) {
+        return read_mtext_layout(reader, version, dxf_version, false);
+    }
+
+    let checkpoint = reader.clone();
+    let text = read_mtext_layout(reader, version, dxf_version, false);
+    if text.background_flags & 0x11 == 0x10
+        && (reader.check_error().is_err() || reader.main_remaining_bits() != 0)
+    {
+        // Some native AC1032 producers also store fill properties for a frame.
+        // Accept that layout only when it consumes the complete entity record.
+        let mut alternate = checkpoint;
+        let native = read_mtext_layout(&mut alternate, version, dxf_version, true);
+        if alternate.check_error().is_ok() && alternate.main_remaining_bits() == 0 {
+            *reader = alternate;
+            return native;
+        }
+        reader.invalidate("Invalid frame-only MTEXT layout");
+    }
+    text
+}
+
+fn read_mtext_layout(
+    reader: &mut DwgMergedReader,
+    version: DwgVersion,
+    dxf_version: DxfVersion,
+    frame_fill_properties: bool,
+) -> MTextData {
     let insertion_point = reader.read_3bit_double();
     let normal = reader.read_3bit_double();
     let x_direction = reader.read_3bit_double();
@@ -1579,10 +1638,9 @@ pub fn read_mtext(
         // 0x10 = text frame (R2018+).
         background_flags = reader.read_bit_long();
 
-        // The background-fill block follows when the UseBackgroundFillColor bit
-        // (0x01) is set, or — for R2018+ — when the TextFrame bit (0x10) is set.
+        // Fill properties are conditional on bit 0x01 in the R2018 layout.
         if (background_flags & 0x01) != 0
-            || (version.r2018_plus(dxf_version) && (background_flags & 0x10) != 0)
+            || (frame_fill_properties && (background_flags & 0x10) != 0)
         {
             // Background scale factor BD 45 (default 1.5)
             background_scale = reader.read_bit_double();
