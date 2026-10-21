@@ -22,6 +22,7 @@ use std::sync::Arc;
 /// - `position`: Current byte read position in the stream
 /// - `bit_shift`: Current bit offset within the current byte (0–7)
 /// - `last_byte`: The most recently read byte from the stream
+#[derive(Clone)]
 pub struct DwgBitReader {
     /// Source data buffer.
     data: Arc<[u8]>,

@@ -20,6 +20,7 @@ use crate::entities::{
     PointCloudExCrop, PointCloudExData, ProxyEntityData, RegisteredClassEntityData, RemoteTextData,
     SectionObjectData, SurfaceData, SurfaceKind, SurfaceSweepOptions,
 };
+use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
 use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use crate::io::dwg::dwg_version::DwgVersion;
 use crate::types::{Color, DxfVersion, Handle, LineWeight, Vector2, Vector3};
@@ -5096,6 +5097,45 @@ pub struct SurfaceEntityData {
     pub history_handle: u64,
 }
 
+/// Writers disagree on whether an absent isoline cache still stores an
+/// empty silhouette count: some files keep a zero BL there, others go
+/// straight to the modeler tail. Take the count only when the AcDs tail
+/// (empty-body bit, material bindings, revision) fills the main stream
+/// after it and not without it.
+fn skip_empty_silhouette_count(reader: &mut DwgMergedReader) {
+    let end = reader.position_in_bits() + reader.main_remaining_bits();
+    let here = reader.main().clone();
+    if acds_modeler_tail_fits(here.clone(), end) {
+        return;
+    }
+    let mut after = here;
+    if after.read_bit_long() == 0 && acds_modeler_tail_fits(after, end) {
+        reader.read_bit_long();
+    }
+}
+
+fn acds_modeler_tail_fits(mut probe: DwgBitReader, end: i64) -> bool {
+    // A cleared bit means an extra modeler body follows; not probed here.
+    if !probe.read_bit() {
+        return false;
+    }
+    let materials = probe.read_bit_long();
+    if !(0..=4096).contains(&materials) {
+        return false;
+    }
+    for _ in 0..materials {
+        probe.read_bit_long();
+        probe.read_bit_long();
+    }
+    probe.read_bit();
+    probe.read_bit_long();
+    probe.read_bit_short();
+    probe.read_bit_short();
+    probe.read_bytes(8);
+    probe.read_bit_long();
+    !probe.has_error() && probe.position_in_bits() == end
+}
+
 /// Read modeler-geometry (ACIS) data shared by 3DSOLID, REGION, BODY.
 ///
 /// This reads both `DECODE_3DSOLID` (acis data) and the wireframe +
@@ -5410,6 +5450,13 @@ fn read_acis_entity_impl(
         }
         isolines = reader.read_bit_long();
         isoline_present = reader.read_bit();
+        if !isoline_present
+            && has_ds_data
+            && version.r2013_plus(dxf_version)
+            && inline_end.is_none()
+        {
+            skip_empty_silhouette_count(reader);
+        }
         if isoline_present {
             let num_wires = safe_count(reader.read_bit_long(), reader);
             for _ in 0..num_wires {
