@@ -2951,11 +2951,26 @@ impl<R: Read + Seek> DwgReader<R> {
         // Count the page descriptors actually parsed: the declared count is file
         // data, and -1 reads as u64::MAX, which would lift this bound entirely.
         let page_count = section.pages.len();
-        if total_size > page_count.saturating_mul(max_page_size) {
-            return Err(DxfError::Parse(format!(
-                "AC18 section '{}' size {} exceeds its {} page(s) of {} bytes",
-                section_name, total_size, page_count, max_page_size
-            )));
+        let page_capacity = page_count.saturating_mul(max_page_size);
+        if total_size > page_capacity {
+            // Some AC1032 writers include a small amount of section padding in the
+            // declared size, beyond the sum of the parsed page capacities. Keep the
+            // bounded allocation and zero-filled tail, while rejecting a declaration
+            // that is clearly unrelated to the pages it names.
+            let hard_limit = page_capacity.saturating_mul(2);
+            if page_capacity == 0 || total_size > hard_limit {
+                return Err(DxfError::Parse(format!(
+                    "AC18 section '{}' size {} exceeds its {} page(s) of {} bytes",
+                    section_name, total_size, page_count, max_page_size
+                )));
+            }
+            self.notifications.notify(
+                NotificationType::Warning,
+                format!(
+                    "AC18 section '{}' declared size {} is slightly larger than its {} page(s) of {} bytes; retaining the bounded section",
+                    section_name, total_size, page_count, max_page_size
+                ),
+            );
         }
 
         let mut result = vec![0u8; total_size];

@@ -149,6 +149,22 @@ fn inflate_section(bytes: &[u8], section: &str, data_size: u64) -> Vec<u8> {
     })
 }
 
+/// Makes a section declare a small amount of padding beyond the sum of its parsed page
+/// capacities. AC1032 files in the wild use this form for the objects section.
+fn overshoot_section(bytes: &[u8], section: &str, extra: u64) -> Vec<u8> {
+    rewrite_section_map(bytes, |name, descriptor| {
+        if name != section {
+            return descriptor;
+        }
+        let page_count = i32_at(&descriptor, 8).max(0) as u64;
+        let page_size = i32_at(&descriptor, 12).max(0) as u64;
+        let capacity = page_count.saturating_mul(page_size);
+        let mut descriptor = descriptor;
+        descriptor[..8].copy_from_slice(&capacity.saturating_add(extra).to_le_bytes());
+        descriptor
+    })
+}
+
 fn rs_index(i: usize) -> usize {
     AC21_HEADER + i / RS_DATA + (i % RS_DATA) * RS_BLOCKS
 }
@@ -219,6 +235,13 @@ fn ac18_section_size_is_bounded_by_its_parsed_pages() {
             "header section of {data_size} bytes: {text}"
         );
     }
+}
+
+#[test]
+fn ac18_small_section_capacity_overshoot_keeps_objects_readable() {
+    let bytes = dwg(DxfVersion::AC1032);
+    let padded = overshoot_section(&bytes, "AcDb:AcDbObjects", 1);
+    assert_eq!(entity_count(&padded), 3);
 }
 
 #[test]
