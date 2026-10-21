@@ -239,6 +239,22 @@ fn read_history_entity(
             acis_data,
         });
     }
+    // A history node's region profile can also be stored as a modeler body
+    // (cleared empty bit, then the modeler block) instead of a bit length
+    // and an entity body. The body's SAB header tells the two apart.
+    if type_code == super::common::OBJ_REGION as i32 {
+        let start = reader.position_in_bits();
+        if !reader.read_bit() {
+            let body = super::entities::read_extra_acis_data(reader, None);
+            if let Some(acis_data) = body.filter(|data| data.is_binary) {
+                return Some(crate::entities::EmbeddedEntity::Body {
+                    type_code,
+                    acis_data,
+                });
+            }
+        }
+        reader.set_position_in_bits(start);
+    }
     let bit_length = safe_count(reader.read_bit_long(), reader) as usize;
     crate::io::dwg::embedded_entity::read_embedded_entity_bits(
         reader,
