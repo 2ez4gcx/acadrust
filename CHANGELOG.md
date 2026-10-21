@@ -18,6 +18,10 @@
   The serialized structs gain fields; positional formats require a separate
   compatibility strategy.
 
+- **DWG 2010 associative arcs** - Preserve the observed terminal AC1024
+  three-scalar edge-arc layout without synthesizing a fourth value. Modern
+  four-scalar arcs and nested curve layouts retain their existing contracts.
+
 - **Genuine DXF R12 output** - `DxfWriter::with_version(DxfVersion::AC1009)`
   writes a real R12 file: no handles, CLASSES or OBJECTS, R12 table records,
   and R12 entities only. LWPOLYLINE becomes a 2D POLYLINE with its bulges,
