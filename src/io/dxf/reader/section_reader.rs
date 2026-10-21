@@ -3392,8 +3392,7 @@ impl<'a> SectionReader<'a> {
         let mut base_point = Vector3::new(0.0, 0.0, 0.0);
         let mut description = String::new();
         let mut xref_path = String::new();
-        let mut layer = String::from("0");
-        let mut handle = Handle::NULL;
+        let mut common = EntityCommon::default();
         // BLOCK entity code 70 = the authoritative block-type flags
         // (1=anonymous, 2=has-attributes, 4=xref, 8=xref-overlay).
         let mut block_flags: i16 = 0;
@@ -3402,6 +3401,9 @@ impl<'a> SectionReader<'a> {
 
         // Read BLOCK entity properties
         while let Some(pair) = self.reader.read_pair()? {
+            if self.try_read_common_entity_code(&pair, &mut common)? {
+                continue;
+            }
             match pair.code {
                 0 => {
                     // Start of next entity - put it back and break
@@ -3423,16 +3425,6 @@ impl<'a> SectionReader<'a> {
                 1 => {
                     // XRef path
                     xref_path = pair.value_string.clone();
-                }
-                5 => {
-                    // Handle
-                    if let Ok(h) = u64::from_str_radix(&pair.value_string, 16) {
-                        handle = Handle::new(h);
-                    }
-                }
-                8 => {
-                    // Layer
-                    layer = pair.value_string.clone();
                 }
                 10 | 20 | 30 => {
                     // Base point coordinates
@@ -3478,8 +3470,7 @@ impl<'a> SectionReader<'a> {
 
         // Create Block entity
         let mut block = Block::new(block_name.clone(), base_point);
-        block.common.handle = handle;
-        block.common.layer = layer.clone();
+        block.common = common;
         block.description = description;
         block.xref_path = xref_path;
 
@@ -3519,12 +3510,16 @@ impl<'a> SectionReader<'a> {
                             document.block_records.add_or_replace(br);
                         }
 
+                        if block.common.handle.is_null() {
+                            block.common.handle = document.allocate_handle();
+                        }
+
                         if let Some(block_record) = document.block_records.get_mut(&block_name) {
                             block_record.entity_handles = entity_handles;
                             block_record.xref_path = block.xref_path.clone();
                             block_record.base_point = block.base_point;
-                            // The BLOCK marker is not kept in the entity list,
-                            // so its description only survives on the record.
+                            // The BLOCK marker's description is also stored here
+                            // because the record is authoritative for block output.
                             block_record.description = block.description.clone();
                             // Block-type flags come from the BLOCK entity's
                             // code 70 (the BLOCK_RECORD's code 70 is units).
@@ -3536,13 +3531,17 @@ impl<'a> SectionReader<'a> {
                             // identities. Keep missing source handles null so
                             // the post-read pass can assign fresh handles after
                             // it has seen every identity in the file.
-                            block_record.block_entity_handle = handle;
+                            block_record.block_entity_handle = block.common.handle;
                             block_record.block_end_handle = block_end.common.handle;
+                            block.common.owner_handle = block_record.handle;
                         }
 
-                        // Note: Block and BlockEnd are block definition markers, not drawing entities.
-                        // They are not added to the document's main entity list.
-                        // The block content is stored in the BlockRecord.
+                        // Keep the structural marker in the entity store so its common
+                        // data (including XDATA) is available to both format writers.
+                        document.add_loaded_entity(EntityType::Block(block));
+
+                        // Block and BlockEnd remain structural markers, excluded
+                        // from normal entity iteration and block membership.
 
                         committed = true;
                         break;

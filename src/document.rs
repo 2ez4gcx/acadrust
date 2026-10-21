@@ -5034,9 +5034,11 @@ impl CadDocument {
             }
         }
         for e in self.entities.iter() {
-            let h = e.common().handle.value();
-            if h > 0 {
-                used_handles.insert(h);
+            if !matches!(e.as_ref(), EntityType::Block(_) | EntityType::BlockEnd(_)) {
+                let h = e.common().handle.value();
+                if h > 0 {
+                    used_handles.insert(h);
+                }
             }
         }
         // Snapshot the handles used by NON-object records. Object keys are
@@ -5136,7 +5138,9 @@ impl CadDocument {
                 used_handles.insert(handle.value());
             }
         }
+        let mut marker_remaps = Vec::new();
         for br in self.block_records.iter_mut() {
+            let old_block_handle = br.block_entity_handle;
             if br.block_entity_handle.is_null()
                 || used_handles.contains(&br.block_entity_handle.value())
             {
@@ -5144,15 +5148,50 @@ impl CadDocument {
                 self.next_handle += 1;
                 br.block_entity_handle = h;
             }
+            if old_block_handle != br.block_entity_handle {
+                marker_remaps.push((old_block_handle, br.block_entity_handle, br.handle, true));
+            }
             used_handles.insert(br.block_entity_handle.value());
 
+            let old_end_handle = br.block_end_handle;
             if br.block_end_handle.is_null() || used_handles.contains(&br.block_end_handle.value())
             {
                 let h = Handle::new(self.next_handle);
                 self.next_handle += 1;
                 br.block_end_handle = h;
             }
+            if old_end_handle != br.block_end_handle {
+                marker_remaps.push((old_end_handle, br.block_end_handle, br.handle, false));
+            }
             used_handles.insert(br.block_end_handle.value());
+        }
+        for (old_handle, new_handle, owner, is_block) in marker_remaps {
+            if old_handle.is_null() {
+                continue;
+            }
+            let Some(index) = self.entities.iter().position(|entity| {
+                entity.common().handle == old_handle
+                    && if is_block {
+                        matches!(entity.as_ref(), EntityType::Block(_))
+                    } else {
+                        matches!(entity.as_ref(), EntityType::BlockEnd(_))
+                    }
+            }) else {
+                continue;
+            };
+            let marker = Arc::make_mut(&mut self.entities[index]);
+            marker.common_mut().handle = new_handle;
+            marker.common_mut().owner_handle = owner;
+            self.entity_index.remove(&old_handle);
+            if let Some((other_index, _)) = self
+                .entities
+                .iter()
+                .enumerate()
+                .find(|(_, entity)| entity.common().handle == old_handle)
+            {
+                self.entity_index.insert(old_handle, other_index);
+            }
+            self.entity_index.insert(new_handle, index);
         }
 
         // --- 1d. Resolve object handle collisions ---

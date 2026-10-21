@@ -2092,10 +2092,20 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Write BLOCK entity
         self.writer.write_string(0, "BLOCK")?;
-        self.writer
-            .write_handle(5, block_record.block_entity_handle)?;
-        self.writer.write_handle(330, owner)?;
-        self.writer.write_subclass("AcDbEntity")?;
+        let mut common = document
+            .entity_index
+            .get(&block_record.block_entity_handle)
+            .and_then(|&index| match document.entities[index].as_ref() {
+                EntityType::Block(block) => Some(block.common.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| EntityCommon {
+                handle: block_record.block_entity_handle,
+                owner_handle: owner,
+                ..Default::default()
+            });
+        common.owner_handle = owner;
+        self.write_common_entity_data(&common, owner)?;
         // Paper space flag (group code 67) for all paper space blocks
         if is_paper_space {
             self.writer.write_i16(67, 1)?;
@@ -2114,6 +2124,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         if !block_record.description.is_empty() {
             self.writer.write_string(4, &block_record.description)?;
         }
+        self.write_xdata(&common.extended_data)?;
 
         // Write entities inside block definition:
         // - Model space entities go to ENTITIES section (not here)
