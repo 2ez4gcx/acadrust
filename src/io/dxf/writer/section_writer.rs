@@ -7,7 +7,7 @@ mod associative;
 
 use crate::document::CadDocument;
 use crate::entities::*;
-use crate::error::Result;
+use crate::error::{DxfError, Result};
 use crate::objects::{
     BlockEvalValue, BlockVisibilityParameter, BookColor, DataObject, DataObjectData, Dictionary,
     DictionaryVariable, DictionaryWithDefault, DimSubtype, DynamicBlockData, DynamicBlockObject,
@@ -102,6 +102,8 @@ pub struct SectionWriter<'a, W: DxfStreamWriter> {
     loft_input_entities: HashMap<Handle, EmbeddedEntity>,
     /// Extra registration required by the loft-reference XDATA extension.
     loft_reference_appid: Option<Handle>,
+    /// Original DWG context used for opaque proxy payloads.
+    source_dwg_context: Option<(DxfVersion, u8)>,
 }
 
 impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
@@ -125,12 +127,17 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             block_record_names: HashMap::new(),
             loft_input_entities: HashMap::new(),
             loft_reference_appid: None,
+            source_dwg_context: None,
         }
     }
 
     /// Build the set of all handles that will appear in the output DXF.
     /// Call this before writing BLOCKS / ENTITIES / OBJECTS.
     pub fn build_valid_handles(&mut self, document: &CadDocument) {
+        self.source_dwg_context = Some((
+            document.dwg_source_version.unwrap_or(document.version),
+            document.maintenance_version,
+        ));
         let mut set = HashSet::new();
         // Object handles — but EXCLUDE unsupported objects read from DWG that
         // have no DXF representation (Unknown with no raw_dxf_codes):
@@ -3785,7 +3792,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         Ok(())
     }
 
-    /// Write an unknown entity, preserving raw group codes if available.
+    /// Preserve DXF groups, or convert a DWG-only entity to a standard proxy.
     fn write_unknown_entity(
         &mut self,
         entity: &crate::entities::UnknownEntity,
@@ -3801,9 +3808,140 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             Ok(())
         } else {
-            // No raw data — skip this entity
-            Ok(())
+            let graphics = entity.common.graphic_data.as_deref().unwrap_or_default();
+            let has_graphics = !graphics.is_empty();
+            let mut data = ProxyEntityData {
+                proxy_id: 498,
+                class_id: if entity.dwg_type_code > 0 {
+                    i32::from(entity.dwg_type_code)
+                } else {
+                    499
+                },
+                dxf_subclass: String::new(),
+                version: 0,
+                dwg_version: 0,
+                maintenance_version: 0,
+                from_dxf: false,
+                graphics: Default::default(),
+                payload: Default::default(),
+                text_payload: Default::default(),
+                object_ids: Vec::new(),
+            };
+            if entity.raw_dwg_data.is_some() {
+                if let Err(error) = self.decode_unknown_proxy_data(entity, &mut data) {
+                    if !has_graphics {
+                        return Err(DxfError::NotImplemented(format!(
+                            "Cannot export unknown entity {} at handle {}: {error}",
+                            entity.dxf_name, entity.common.handle
+                        )));
+                    }
+                }
+            } else if !has_graphics {
+                return Err(DxfError::NotImplemented(format!(
+                    "Cannot export unknown entity {} at handle {}: no DXF data, DWG payload, or proxy graphics",
+                    entity.dxf_name, entity.common.handle
+                )));
+            }
+
+            self.writer.write_entity_type("ACAD_PROXY_ENTITY")?;
+            let mut common = entity.common.clone();
+            common.graphic_data = None;
+            self.write_common_entity_data(&common, owner)?;
+            self.writer.write_subclass("AcDbProxyEntity")?;
+            self.write_proxy_body_dxf(
+                498,
+                data.class_id,
+                data.dwg_version,
+                data.maintenance_version,
+                false,
+                Some(graphics),
+                &data.payload,
+                &data.text_payload,
+                &data.object_ids,
+            )?;
+            // Unknown entities bypass the shared XDATA wrapper because their
+            // saved DXF groups may already contain it. This new proxy does not.
+            self.write_xdata(&entity.common.extended_data)
         }
+    }
+
+    fn decode_unknown_proxy_data(
+        &self,
+        entity: &UnknownEntity,
+        proxy: &mut ProxyEntityData,
+    ) -> Result<()> {
+        use crate::io::dwg::dwg_stream_readers::object_reader::{
+            entities::read_proxy_payload, DwgObjectReader,
+        };
+        let source = entity
+            .dwg_source_version
+            .or_else(|| entity.common.raw_record.as_ref().map(|raw| raw.version))
+            .or_else(|| self.source_dwg_context.map(|(version, _)| version))
+            .ok_or_else(|| DxfError::NotImplemented("missing source DWG version".into()))?;
+        if source < DxfVersion::AC1012 {
+            return Err(DxfError::NotImplemented(
+                "pre-R13 opaque DWG payload".into(),
+            ));
+        }
+        let objects = DwgObjectReader::new(Vec::new(), source, HashMap::new())?;
+        let (type_code, mut reader) = objects.read_raw_record(
+            entity.raw_dwg_data.as_deref().unwrap_or_default(),
+            entity.dwg_handle_bits,
+        )?;
+        if type_code <= 0 || (entity.dwg_type_code > 0 && type_code != entity.dwg_type_code) {
+            return Err(DxfError::Parse(
+                "opaque DWG entity type does not match its record".into(),
+            ));
+        }
+        let common = objects.read_common_entity_data(&mut reader, type_code);
+        reader.check_error()?;
+        if common.common.handle != entity.common.handle.value() {
+            return Err(DxfError::Parse(format!(
+                "opaque DWG entity handle {} does not match expected handle {}",
+                common.common.handle, entity.common.handle
+            )));
+        }
+        if reader.main_remaining_bits() > i64::from(u32::MAX)
+            || reader.text_remaining_bits() > i64::from(u32::MAX)
+        {
+            return Err(DxfError::NotImplemented(
+                "opaque DWG payload exceeds proxy limits".into(),
+            ));
+        }
+        // Only class-specific streams belong in the proxy, never the captured
+        // common header, graphic metafile, or merged-record framing.
+        let (payload, text_payload, object_ids) =
+            read_proxy_payload(&mut reader, common.common.handle);
+        reader.check_error()?;
+        if self.dxf_version < DxfVersion::AC1021 && text_payload.bit_count != 0 {
+            return Err(DxfError::NotImplemented(
+                "target DXF cannot frame a DWG text stream".into(),
+            ));
+        }
+        if !self.valid_handles.is_empty()
+            && object_ids.iter().any(|reference| {
+                !reference.handle.is_null() && !self.valid_handles.contains(&reference.handle)
+            })
+        {
+            return Err(DxfError::NotImplemented(
+                "opaque DWG payload references objects absent from DXF".into(),
+            ));
+        }
+        let dwg_version = i32::from(
+            crate::io::dwg::dwg_stream_writers::aux_header_writer::dwg_internal_version(source),
+        );
+        let maintenance = self
+            .source_dwg_context
+            .filter(|(version, _)| *version == source)
+            .map_or(0, |(_, maintenance)| i32::from(maintenance));
+        proxy.class_id = i32::from(type_code);
+        proxy.dwg_version = dwg_version;
+        proxy.maintenance_version = maintenance;
+        proxy.version = (maintenance << 16) | dwg_version;
+        proxy.payload = payload;
+        proxy.text_payload = text_payload;
+        proxy.object_ids = object_ids;
+        Ok(())
     }
 
     /// Write POINT entity

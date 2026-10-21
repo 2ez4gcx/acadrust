@@ -261,7 +261,17 @@ impl DwgObjectReader {
                 self.data.len()
             )));
         }
-        let merged_data: Arc<[u8]> = Arc::from(&self.data[pos..pos + size]);
+        self.read_raw_record(&self.data[pos..pos + size], handle_bits)
+    }
+
+    /// Decode an already captured merged record without adding file framing.
+    pub(crate) fn read_raw_record(
+        &self,
+        data: &[u8],
+        handle_bits: i64,
+    ) -> Result<(i16, DwgMergedReader)> {
+        let size = data.len();
+        let merged_data: Arc<[u8]> = Arc::from(data);
 
         // 4. For R2007+ (ThreeStream): read type_code from a temp reader,
         //    then manually construct the three sub-readers with correct
