@@ -388,7 +388,7 @@ impl DwgMergedReader {
         self.main.read_bit_double_with_default(default)
     }
     pub fn read_cm_color(&mut self) -> Color {
-        self.main.read_cm_color()
+        self.read_cm_color_with_names().0
     }
     pub fn read_cm_color_with_names(&mut self) -> (Color, Option<String>, Option<String>) {
         if self.dxf_version < DxfVersion::AC1018 {
