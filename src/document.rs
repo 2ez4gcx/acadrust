@@ -3780,6 +3780,7 @@ impl CadDocument {
     }
 
     pub fn ensure_model_layout(&mut self) {
+        self.ensure_layout_dictionary_registration();
         // Layouts name their record; a record left without the back link
         // (R13/R14 block headers have none) takes it from its layout.
         let owners: HashMap<Handle, Handle> = self
@@ -3915,6 +3916,92 @@ impl CadDocument {
             record.layout = handle;
         }
         self.objects.insert(handle, ObjectType::Layout(layout));
+    }
+
+    /// Complete the root dictionary's `ACAD_LAYOUT` registration.
+    ///
+    /// Pre-R2000 DWG files carry no `ACAD_LAYOUT` entry in the root
+    /// dictionary: the R13/R14 writer strips it (that named-object-dictionary
+    /// reference does not exist in the R14 format) while the layout
+    /// dictionary itself survives as a regular object owned by the root.
+    /// Loading such a file used to leave the model non-canonical — the
+    /// layout dictionary reachable only through its own `owner` back-link —
+    /// so every later save (DXF or DWG, any version) serialized it as an
+    /// orphan and strict handle-graph verification rejected the output.
+    ///
+    /// This is the entry-side mirror of the owner completion for ownerless
+    /// layout-dictionary members: when the layout dictionary exists but the
+    /// root lost its entry, complete the registration and re-point the
+    /// header handle. Idempotent — a document whose root already carries
+    /// the entry is returned untouched apart from the header-pointer sync.
+    fn ensure_layout_dictionary_registration(&mut self) {
+        let root = self.header.named_objects_dict_handle;
+
+        // The root's existing registration is canonical when present.
+        let registered = match self.objects.get(&root) {
+            Some(ObjectType::Dictionary(dict)) => dict.get("ACAD_LAYOUT"),
+            _ => None,
+        };
+
+        // Resolve the layout dictionary: root entry first, then the header
+        // pointer, then the dictionary that owns LAYOUT objects (prefer one
+        // owned by the root; lowest handle keeps the choice deterministic).
+        let mut dict_handle = registered.unwrap_or(Handle::NULL);
+        if dict_handle.is_null() {
+            let header = self.header.acad_layout_dict_handle;
+            if matches!(self.objects.get(&header), Some(ObjectType::Dictionary(_))) {
+                dict_handle = header;
+            }
+        }
+        if dict_handle.is_null() {
+            let mut candidates: Vec<Handle> = self
+                .objects
+                .iter()
+                .filter_map(|(_handle, object)| match object {
+                    ObjectType::Layout(layout) if !layout.owner.is_null() => Some(layout.owner),
+                    _ => None,
+                })
+                .filter(|owner| {
+                    matches!(self.objects.get(owner), Some(ObjectType::Dictionary(_)))
+                })
+                .collect();
+            candidates.sort_unstable();
+            candidates.dedup();
+            dict_handle = candidates
+                .iter()
+                .copied()
+                .find(|&owner| {
+                    matches!(self.objects.get(&owner),
+                        Some(ObjectType::Dictionary(dict)) if dict.owner == root)
+                })
+                .or_else(|| candidates.first().copied())
+                .unwrap_or(Handle::NULL);
+        }
+        if dict_handle.is_null() {
+            // No layout dictionary anywhere — `ensure_model_layout`'s own
+            // path creates one together with the Model layout when needed.
+            return;
+        }
+
+        // Complete the registration when the root lost the entry. A null
+        // owner is completed to the root (the ACAD_LAYOUT dictionary is a
+        // root child in every well-formed drawing); a non-null owner is
+        // left for the existing repair passes to normalize.
+        if registered.is_none() {
+            if let Some(ObjectType::Dictionary(dict)) = self.objects.get_mut(&dict_handle) {
+                if dict.owner.is_null() {
+                    dict.owner = root;
+                }
+            }
+            if let Some(ObjectType::Dictionary(root_dict)) = self.objects.get_mut(&root) {
+                if root_dict.get("ACAD_LAYOUT").is_none() {
+                    root_dict.add_entry("ACAD_LAYOUT", dict_handle);
+                }
+            }
+        }
+
+        // Keep the header pointer canonical either way.
+        self.header.acad_layout_dict_handle = dict_handle;
     }
 
     /// Get the number of entities.
