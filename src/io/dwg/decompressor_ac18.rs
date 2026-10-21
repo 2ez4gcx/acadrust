@@ -17,6 +17,8 @@
 //! Based on the ODA (Open Design Alliance) specification and matched against
 //! the compressor in [`super::compression`].
 
+use super::size_limits::MAX_DATA_PAGE_SIZE;
+
 /// Decompress AC18 LZ77-compressed data.
 ///
 /// # Arguments
@@ -26,7 +28,9 @@
 /// # Returns
 /// Decompressed data, truncated to `decompressed_size`.
 pub fn decompress_ac18(source: &[u8], decompressed_size: usize) -> Vec<u8> {
-    let mut output = Vec::with_capacity(decompressed_size);
+    // `decompressed_size` comes from the file. Reserve at most one data page up front;
+    // the output still grows up to `decompressed_size` as data arrives.
+    let mut output = Vec::with_capacity(decompressed_size.min(MAX_DATA_PAGE_SIZE));
     let mut si = 0; // source index
 
     if source.is_empty() || decompressed_size == 0 {
