@@ -3932,26 +3932,30 @@ impl CadDocument {
     /// This is the entry-side mirror of the owner completion for ownerless
     /// layout-dictionary members: when the layout dictionary exists but the
     /// root lost its entry, complete the registration and re-point the
-    /// header handle. Idempotent — a document whose root already carries
-    /// the entry is returned untouched apart from the header-pointer sync.
+    /// header handle. Idempotent — a document whose root carries any
+    /// `ACAD_LAYOUT` entry is left untouched.
     fn ensure_layout_dictionary_registration(&mut self) {
         let root = self.header.named_objects_dict_handle;
 
-        // The root's existing registration is canonical when present.
+        // Any root entry, even an ambiguous or dangling one, is the reader's
+        // to resolve; only a stripped entry is completed here.
         let registered = match self.objects.get(&root) {
-            Some(ObjectType::Dictionary(dict)) => dict.get("ACAD_LAYOUT"),
-            _ => None,
-        };
-
-        // Resolve the layout dictionary: root entry first, then the header
-        // pointer, then the dictionary that owns LAYOUT objects (prefer one
-        // owned by the root; lowest handle keeps the choice deterministic).
-        let mut dict_handle = registered.unwrap_or(Handle::NULL);
-        if dict_handle.is_null() {
-            let header = self.header.acad_layout_dict_handle;
-            if matches!(self.objects.get(&header), Some(ObjectType::Dictionary(_))) {
-                dict_handle = header;
+            Some(ObjectType::Dictionary(dict)) => {
+                dict.entries.iter().any(|(name, _)| name == "ACAD_LAYOUT")
             }
+            _ => true,
+        };
+        if registered {
+            return;
+        }
+
+        // Resolve the layout dictionary: the header pointer, then the
+        // dictionary that owns LAYOUT objects (prefer one owned by the root;
+        // lowest handle keeps the choice deterministic).
+        let mut dict_handle = Handle::NULL;
+        let header = self.header.acad_layout_dict_handle;
+        if matches!(self.objects.get(&header), Some(ObjectType::Dictionary(_))) {
+            dict_handle = header;
         }
         if dict_handle.is_null() {
             let mut candidates: Vec<Handle> = self
@@ -3983,24 +3987,18 @@ impl CadDocument {
             return;
         }
 
-        // Complete the registration when the root lost the entry. A null
-        // owner is completed to the root (the ACAD_LAYOUT dictionary is a
-        // root child in every well-formed drawing); a non-null owner is
-        // left for the existing repair passes to normalize.
-        if registered.is_none() {
-            if let Some(ObjectType::Dictionary(dict)) = self.objects.get_mut(&dict_handle) {
-                if dict.owner.is_null() {
-                    dict.owner = root;
-                }
-            }
-            if let Some(ObjectType::Dictionary(root_dict)) = self.objects.get_mut(&root) {
-                if root_dict.get("ACAD_LAYOUT").is_none() {
-                    root_dict.add_entry("ACAD_LAYOUT", dict_handle);
-                }
+        // Complete the registration. A null owner is completed to the root
+        // (the ACAD_LAYOUT dictionary is a root child in every well-formed
+        // drawing); a non-null owner is left for the existing repair passes
+        // to normalize.
+        if let Some(ObjectType::Dictionary(dict)) = self.objects.get_mut(&dict_handle) {
+            if dict.owner.is_null() {
+                dict.owner = root;
             }
         }
-
-        // Keep the header pointer canonical either way.
+        if let Some(ObjectType::Dictionary(root_dict)) = self.objects.get_mut(&root) {
+            root_dict.add_entry("ACAD_LAYOUT", dict_handle);
+        }
         self.header.acad_layout_dict_handle = dict_handle;
     }
 
