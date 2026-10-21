@@ -202,6 +202,9 @@ pub struct HeaderVariables {
     pub retain_xref_visibility: bool,
     /// DISPSILH - Silhouette display for 3D objects
     pub display_silhouette: bool,
+    /// PELLIPSE - ELLIPSE draws a polyline approximation instead of a true
+    /// ellipse (DWG header only; DXF has no such variable).
+    pub create_ellipse_as_polyline: bool,
     /// SPLFRAME - Display spline control polygon
     pub spline_frame: bool,
     /// DELOBJ - Delete source objects for regions/solids
@@ -795,6 +798,7 @@ impl Default for HeaderVariables {
             world_view: true,
             retain_xref_visibility: true,
             display_silhouette: true,
+            create_ellipse_as_polyline: false,
             spline_frame: false,
             delete_objects: true,
             record_solid_history: false,
