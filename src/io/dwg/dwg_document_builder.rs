@@ -7581,6 +7581,8 @@ impl DwgDocumentBuilder {
                 "ACDB_MLEADEROBJECTCONTEXTDATA_CLASS"
                     | "ACDBASSOCGEOMDEPENDENCY"
                     | "ASSOCGEOMDEPENDENCY"
+                    | "ACDBASSOC2DCONSTRAINTGROUP"
+                    | "ASSOC2DCONSTRAINTGROUP"
                     | "ACDBASSOCEDGEACTIONPARAM"
                     | "ASSOCEDGEACTIONPARAM"
                     | "LSDEFINITION"

@@ -2,6 +2,11 @@
 
 ### 0.6.5
 
+- **Constraint-group interoperability (issue #135)** - Corrects R2010 circle
+  and arc layouts and native inline DWG/DXF output. Sparse node IDs no longer
+  act as array counts. Unsupported groups retain bounded DWG records with
+  diagnostics, and DXF export rejects undecoded groups instead of dropping them.
+  Adds source-only Rust regressions and an AutoCAD validation harness.
 - **DWG mesh face budget (issue #141)** - MESH faces are no longer capped at a
   fixed 250,000 faces and 1,000,000 indices. The cap scales with installed and
   available memory (never below those historical limits) and can be replaced

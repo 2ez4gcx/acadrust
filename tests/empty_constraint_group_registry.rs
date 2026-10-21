@@ -83,6 +83,36 @@ fn empty_constraint_group_round_trips_through_dwg() {
 }
 
 #[test]
+fn empty_r2010_inline_group_preserves_its_sparse_id_seed() {
+    let (mut document, handle) = document();
+    document.version = DxfVersion::AC1024;
+    let Some(ObjectType::Associative(object)) = document.objects.get_mut(&handle) else {
+        unreachable!()
+    };
+    let AssociativeData::ConstraintGroup(group) = &mut object.data else {
+        unreachable!()
+    };
+    group.next_node_id = 1_000_000;
+    let bytes = DwgWriter::write_to_vec(&document).unwrap();
+    let loaded = DwgReader::from_stream(Cursor::new(bytes))
+        .read_with_stats()
+        .unwrap();
+    assert!(
+        loaded.stats.diagnostics.is_empty(),
+        "{:?}",
+        loaded.stats.diagnostics
+    );
+    let Some(ObjectType::Associative(object)) = loaded.document.objects.get(&handle) else {
+        panic!("group must remain typed")
+    };
+    let AssociativeData::ConstraintGroup(group) = &object.data else {
+        unreachable!()
+    };
+    assert!(group.nodes.is_empty());
+    assert_eq!(group.next_node_id, 1_000_000);
+}
+
+#[test]
 fn mental_ray_render_settings_survive_dxf_to_dwg_without_stream_shift() {
     let mut document = CadDocument::with_version(DxfVersion::AC1032);
     document.classes.add_or_update(DxfClass::new(
