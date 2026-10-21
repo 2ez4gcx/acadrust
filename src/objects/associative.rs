@@ -17,7 +17,9 @@ pub struct AssociativeObject {
     pub dxf_name: String,
     pub cpp_class_name: String,
     pub data: AssociativeData,
-    #[cfg_attr(feature = "serde", serde(skip))]
+    /// Known source version, retained as provenance without raw-record storage.
+    /// Missing values in field-named Serde input default to `None`.
+    #[cfg_attr(feature = "serde", serde(default))]
     pub source_version: Option<DxfVersion>,
 }
 

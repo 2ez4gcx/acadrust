@@ -287,7 +287,13 @@ pub struct R12EntityMetadata {
     pub child_viewports: Vec<Option<u16>>,
 }
 
-/// Common entity data shared by all entities
+/// Common entity data shared by all entities.
+///
+/// With the `serde` feature, native references and flags are retained alongside
+/// the public appearance fields. Older field-named input (such as JSON) without
+/// these fields defaults optional references and `entity_mode` to `None`, and
+/// flags to zero. Positional formats require a separate compatibility strategy.
+/// Raw DWG records, graphic bytes and the derived data-store bit remain excluded.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct EntityCommon {
@@ -298,7 +304,7 @@ pub struct EntityCommon {
     /// DWG layer handle as read from the file. Preserved so consumers can tell
     /// an entity on layer "0" from one whose layer reference did not resolve
     /// (the DWG reader falls back to `layer = "0"` in that case).
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub layer_handle: Option<Handle>,
     /// Color
     pub color: Color,
@@ -308,7 +314,7 @@ pub struct EntityCommon {
     pub linetype: String,
     /// DWG linetype handle. Preserved so R13/R14 entities can round-trip
     /// non-ByLayer linetypes even when the table name cannot be resolved.
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub linetype_handle: Option<Handle>,
     /// Linetype scale factor (default 1.0)
     pub linetype_scale: f64,
@@ -334,33 +340,33 @@ pub struct EntityCommon {
 
     // ── Native reference/round-trip fields ──
     /// AcDbColor object handle for a color-book color — R2004+.
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub color_book_handle: Option<Handle>,
     /// Full visual-style override handle — R2010+; DXF code 348.
     pub full_visual_style_handle: Option<Handle>,
     /// Face visual-style override handle — R2010+.
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub face_visual_style_handle: Option<Handle>,
     /// Edge visual-style override handle — R2010+.
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub edge_visual_style_handle: Option<Handle>,
     /// Material flags (BB: 00=bylayer, 01=byblock, 10=reserved, 11=handle) — R2007+
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub material_flags: u8,
     /// Material handle (only valid when material_flags == 0b11) — R2007+
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub material_handle: Option<Handle>,
     /// Shadow flags (RC) — R2007+
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub shadow_flags: u8,
     /// Plotstyle flags (BB: 00=bylayer, 01=byblock, 10=reserved, 11=handle) — R2000+
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub plotstyle_flags: u8,
     /// Plotstyle handle (only valid when plotstyle_flags == 0b11) — R2000+
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub plotstyle_handle: Option<Handle>,
     /// Entity mode (0=owned, 1=paper, 2=model) — raw DWG value for round-trip
-    #[cfg_attr(feature = "serde", serde(skip))]
+    #[cfg_attr(feature = "serde", serde(default))]
     pub entity_mode: Option<u8>,
     /// Native AC1009 viewport references retained across edits and DWG writes.
     #[cfg_attr(feature = "serde", serde(default))]
@@ -384,18 +390,7 @@ pub struct EntityCommon {
 
 impl EntityCommon {
     fn preserve_storage_data_from(&mut self, source: &Self) {
-        self.layer_handle = source.layer_handle;
-        self.linetype_handle = source.linetype_handle;
         self.graphic_data = source.graphic_data.clone();
-        self.color_book_handle = source.color_book_handle;
-        self.face_visual_style_handle = source.face_visual_style_handle;
-        self.edge_visual_style_handle = source.edge_visual_style_handle;
-        self.material_flags = source.material_flags;
-        self.material_handle = source.material_handle;
-        self.shadow_flags = source.shadow_flags;
-        self.plotstyle_flags = source.plotstyle_flags;
-        self.plotstyle_handle = source.plotstyle_handle;
-        self.entity_mode = source.entity_mode;
         self.r12_metadata = source.r12_metadata.clone();
         self.has_ds_data = source.has_ds_data;
     }
@@ -557,8 +552,12 @@ pub enum EntityType {
 
 impl EntityType {
     /// Restore storage-only data omitted from serde after editing the public
-    /// representation of an entity. The source and destination must have the
-    /// same variant and identity; callers remain responsible for that check.
+    /// representation of an entity. Serialized common references and flags keep
+    /// their edited values, including `None` and zero. For legacy R12 editing,
+    /// source `r12_metadata` is still restored even though it is serialized.
+    /// The source `raw_record` replay cache is not restored.
+    /// The source and destination must have the same variant and identity;
+    /// callers remain responsible for that check.
     pub fn preserve_storage_data_from(&mut self, source: &Self) {
         self.common_mut()
             .preserve_storage_data_from(source.common());

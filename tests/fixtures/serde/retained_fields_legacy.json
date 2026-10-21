@@ -1,0 +1,183 @@
+{
+  "associative": {
+    "cpp_class_name": "AcDbAssoc",
+    "data": "Unknown",
+    "dxf_name": "ASSOC",
+    "handle": 0,
+    "owner": 0,
+    "reactors": [],
+    "xdictionary_handle": null
+  },
+  "common": {
+    "color": "ByLayer",
+    "color_name": null,
+    "extended_data": {
+      "records": []
+    },
+    "full_visual_style_handle": 42,
+    "handle": 0,
+    "invisible": false,
+    "layer": "LegacyLayer",
+    "line_weight": "ByLayer",
+    "linetype": "",
+    "linetype_scale": 1.0,
+    "owner_handle": 0,
+    "r12_metadata": null,
+    "reactors": [],
+    "transparency": "by_layer",
+    "xdictionary_handle": null
+  },
+  "helix": {
+    "axis_base_point": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+    },
+    "axis_vector": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 1.0
+    },
+    "common": {
+      "color": "ByLayer",
+      "color_name": null,
+      "extended_data": {
+        "records": []
+      },
+      "full_visual_style_handle": 42,
+      "handle": 0,
+      "invisible": false,
+      "layer": "LegacyLayer",
+      "line_weight": "ByLayer",
+      "linetype": "",
+      "linetype_scale": 1.0,
+      "owner_handle": 0,
+      "r12_metadata": null,
+      "reactors": [],
+      "transparency": "by_layer",
+      "xdictionary_handle": null
+    },
+    "constraint": "TurnHeight",
+    "handedness": true,
+    "maintenance_version": 0,
+    "major_version": 29,
+    "radius": 1.0,
+    "spline": {
+      "begin_tangent": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "common": {
+        "color": "ByLayer",
+        "color_name": null,
+        "extended_data": {
+          "records": []
+        },
+        "full_visual_style_handle": 42,
+        "handle": 0,
+        "invisible": false,
+        "layer": "LegacyLayer",
+        "line_weight": "ByLayer",
+        "linetype": "",
+        "linetype_scale": 1.0,
+        "owner_handle": 0,
+        "r12_metadata": null,
+        "reactors": [],
+        "transparency": "by_layer",
+        "xdictionary_handle": null
+      },
+      "control_points": [],
+      "control_tolerance": 0.0,
+      "cv_frame_visible": false,
+      "degree": 3,
+      "dwg_flags1": 0,
+      "dxf_flags": 0,
+      "end_tangent": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "fit_points": [],
+      "fit_tolerance": 0.0,
+      "flags": {
+        "closed": false,
+        "linear": false,
+        "periodic": false,
+        "planar": false,
+        "rational": false
+      },
+      "knot_parameterization": 0,
+      "knot_tolerance": 0.0,
+      "knots": [],
+      "normal": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 1.0
+      },
+      "weights": []
+    },
+    "start_point": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+    },
+    "turn_height": 1.0,
+    "turns": 3.0
+  },
+  "spline": {
+    "begin_tangent": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+    },
+    "common": {
+      "color": "ByLayer",
+      "color_name": null,
+      "extended_data": {
+        "records": []
+      },
+      "full_visual_style_handle": 42,
+      "handle": 0,
+      "invisible": false,
+      "layer": "LegacyLayer",
+      "line_weight": "ByLayer",
+      "linetype": "",
+      "linetype_scale": 1.0,
+      "owner_handle": 0,
+      "r12_metadata": null,
+      "reactors": [],
+      "transparency": "by_layer",
+      "xdictionary_handle": null
+    },
+    "control_points": [],
+    "control_tolerance": 0.0,
+    "cv_frame_visible": false,
+    "degree": 3,
+    "dwg_flags1": 0,
+    "dxf_flags": 0,
+    "end_tangent": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0
+    },
+    "fit_points": [],
+    "fit_tolerance": 0.0,
+    "flags": {
+      "closed": false,
+      "linear": false,
+      "periodic": false,
+      "planar": false,
+      "rational": false
+    },
+    "knot_parameterization": 0,
+    "knot_tolerance": 0.0,
+    "knots": [],
+    "normal": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 1.0
+    },
+    "weights": []
+  }
+}

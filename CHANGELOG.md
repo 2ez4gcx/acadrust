@@ -2,6 +2,22 @@
 
 ### Unreleased
 
+- **Serde reference and provenance retention** - With the `serde` feature,
+  `EntityCommon` now includes `layer_handle`, `linetype_handle`,
+  `color_book_handle`, `face_visual_style_handle`, `edge_visual_style_handle`,
+  `material_flags`, `material_handle`, `shadow_flags`, `plotstyle_flags`,
+  `plotstyle_handle` and `entity_mode`. `Spline.dwg_scenario` (including an
+  embedded Helix spline) and `AssociativeObject.source_version` are also
+  included. Older field-named input, such as JSON, without these fields remains
+  readable: optional values default to `None` and flags to zero. Supplied values
+  are retained without normalization. `preserve_storage_data_from` respects edits
+  to these serialized fields, including explicit `None` and zero; existing R12
+  metadata restoration remains unchanged. Raw DWG records, graphic bytes and
+  private document storage remain outside this change; ordinary Serde is not a
+  complete CAD snapshot.
+  The serialized structs gain fields; positional formats require a separate
+  compatibility strategy.
+
 - **Genuine DXF R12 output** - `DxfWriter::with_version(DxfVersion::AC1009)`
   writes a real R12 file: no handles, CLASSES or OBJECTS, R12 table records,
   and R12 entities only. LWPOLYLINE becomes a 2D POLYLINE with its bulges,
