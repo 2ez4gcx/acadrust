@@ -34,6 +34,26 @@
 //! | AC1027      | R2013   | Paged + LZ77 |
 //! | AC1032      | R2018   | Paged + LZ77 |
 
+/// Text from a caught decoder panic, for diagnostics instead of an unwind.
+pub(crate) fn unwind_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| payload.downcast_ref::<&str>().map(|message| (*message).to_string()))
+        .unwrap_or_else(|| "Record decoder failed".to_string())
+}
+
+#[cfg(test)]
+mod unwind_tests {
+    #[test]
+    fn unwind_message_uses_the_panic_text() {
+        let owned: Box<dyn std::any::Any + Send> = Box::new("array count".to_string());
+        assert_eq!(super::unwind_message(owned.as_ref()), "array count");
+        let borrowed: Box<dyn std::any::Any + Send> = Box::new("truncated");
+        assert_eq!(super::unwind_message(borrowed.as_ref()), "truncated");
+    }
+}
+
 pub mod annotative_eed;
 pub mod checksum;
 pub mod compression;

@@ -5260,14 +5260,50 @@ pub(super) fn read_extra_acis_data(
     None
 }
 
+fn empty_acis_entity() -> AcisEntityData {
+    AcisEntityData {
+        acis_empty: true,
+        sat_data: String::new(),
+        sab_data: Vec::new(),
+        is_binary: false,
+        version: 0,
+        point: Vector3::ZERO,
+        has_history: false,
+        isolines: 0,
+        wireframe_data_present: false,
+        wireframe_point_present: false,
+        wireframe_isoline_present: false,
+        acis_empty_bit: true,
+        extra_acis_data: None,
+        wires: Vec::new(),
+        silhouettes: Vec::new(),
+        revision: AcisRevision::default(),
+        materials: Vec::new(),
+    }
+}
+
+fn acis_or_reject(
+    reader: &DwgMergedReader,
+    data: Option<AcisEntityData>,
+    message: &str,
+) -> AcisEntityData {
+    match data {
+        Some(data) => data,
+        None => {
+            reader.invalidate(message);
+            empty_acis_entity()
+        }
+    }
+}
+
 pub fn read_acis_entity(
     reader: &mut DwgMergedReader,
     version: DwgVersion,
     dxf_version: DxfVersion,
     has_ds_data: bool,
 ) -> AcisEntityData {
-    read_acis_entity_impl(reader, version, dxf_version, has_ds_data, true, false, None)
-        .expect("database ACIS decoding retains unrecognized legacy payloads")
+    let data = read_acis_entity_impl(reader, version, dxf_version, has_ds_data, true, false, None);
+    acis_or_reject(reader, data, "Unrecognized DWG modeler payload")
 }
 
 /// Solid-history B-rep objects keep their modeler body inline even in R2013+
@@ -5277,8 +5313,8 @@ pub(super) fn read_history_acis_entity(
     version: DwgVersion,
     dxf_version: DxfVersion,
 ) -> AcisEntityData {
-    read_acis_entity_impl(reader, version, dxf_version, false, false, true, None)
-        .expect("history ACIS decoding retains unrecognized modeler payloads")
+    let data = read_acis_entity_impl(reader, version, dxf_version, false, false, true, None);
+    acis_or_reject(reader, data, "Unrecognized DWG history modeler payload")
 }
 
 /// Embedded construction profiles have no database handle or AcDs entry.
@@ -5702,7 +5738,7 @@ pub fn read_surface(
     has_ds_data: bool,
     kind: SurfaceKind,
 ) -> SurfaceEntityData {
-    let mut acis = read_acis_entity_impl(
+    let Some(mut acis) = read_acis_entity_impl(
         reader,
         version,
         dxf_version,
@@ -5710,8 +5746,17 @@ pub fn read_surface(
         false,
         false,
         None,
-    )
-    .expect("database surface decoding retains unrecognized legacy payloads");
+    ) else {
+        reader.invalidate("Unrecognized DWG surface modeler payload");
+        return SurfaceEntityData {
+            acis: empty_acis_entity(),
+            modeler_format_version: 0,
+            u_isolines: 0,
+            v_isolines: 0,
+            surface_data: SurfaceData::Generic,
+            history_handle: 0,
+        };
+    };
     // Surface records do not have the 3DSOLID history-id handle slot.
     let history_handle = 0;
     // The modeler version is already part of the ACIS header. Native
@@ -5996,6 +6041,21 @@ mod tests {
         let data = writer.merge();
         let hsb = writer.handle_start_bits();
         DwgMergedReader::new(data, dxf, hsb)
+    }
+
+    #[test]
+    fn truncated_surface_sets_a_reader_error_instead_of_panicking() {
+        let dwg = DwgVersion::AC18;
+        let dxf = DxfVersion::AC1018;
+        let mut reader = make_reader(dwg, dxf, |writer| {
+            writer.write_bit(false);
+        });
+        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            read_surface(&mut reader, dwg, dxf, false, SurfaceKind::Generic)
+        }));
+        let surface = decoded.expect("surface decode must not panic");
+        assert!(surface.acis.acis_empty || reader.check_error().is_err());
+        assert!(reader.check_error().is_err());
     }
 
     #[test]

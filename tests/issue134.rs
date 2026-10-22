@@ -253,6 +253,44 @@ fn broken_common_metadata_and_wrong_handles_still_fail_strict_reads() {
 }
 
 #[test]
+fn failsafe_keeps_a_framed_object_and_returns_the_decode_error() {
+    let (source, healthy, auxiliary, ..) = auxiliary_fixture(
+        DxfVersion::AC1032,
+        "CONTEXTDATAMANAGER",
+        540,
+        false,
+        false,
+    );
+    let bytes = DwgWriter::write_to_vec(&source).unwrap();
+    let strict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        DwgReader::from_stream(Cursor::new(bytes.clone())).read()
+    }))
+    .expect("strict read must not panic");
+    let error = strict.expect_err("strict read reports the bad record").to_string();
+    assert!(error.starts_with("Parse error:"), "{error}");
+    assert!(!error.contains("panicked"), "{error}");
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        DwgReader::from_stream_with_options(Cursor::new(bytes), DwgReadOptions::failsafe())
+            .read_with_stats()
+    }))
+    .expect("failsafe read must not panic")
+    .expect("failsafe returns the drawing");
+    assert!(outcome.document.get_entity(healthy).is_some());
+    assert!(matches!(
+        outcome.document.objects.get(&auxiliary),
+        Some(ObjectType::Unknown { type_name, raw_dwg_data: Some(_), .. })
+            if type_name == "CONTEXTDATAMANAGER"
+    ));
+    assert!(outcome.stats.diagnostics.iter().any(|diagnostic| {
+        diagnostic.record_handle == Some(auxiliary.value())
+            && diagnostic.message.contains("CONTEXTDATAMANAGER")
+            && !diagnostic.message.contains("panicked")
+    }));
+    assert_eq!(outcome.stats.skipped_source_records, 0);
+}
+
+#[test]
 fn other_known_object_decode_failures_still_fail_strict_reads() {
     for (name, type_code) in [
         ("CONTEXTDATAMANAGER", 540),

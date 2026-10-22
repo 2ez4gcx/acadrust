@@ -956,18 +956,23 @@ impl DwgDocumentBuilder {
                     let reactors = non_entity.reactors.clone();
                     (obj_handle, type_code, eed_raw, xdic, reactors)
                 }));
+                let panic_message = result
+                    .as_ref()
+                    .err()
+                    .map(|payload| crate::io::dwg::unwind_message(payload.as_ref()));
                 let (obj_handle, type_code, eed_raw_pass1, xdic_pass1, reactors_pass1) =
                     match result {
                         Ok(v) if reader.check_error().is_ok() => v,
                         _ => {
                             skipped_pass1 += 1;
+                            let reason = reader
+                                .check_error()
+                                .err()
+                                .map(|error| error.to_string())
+                                .or(panic_message)
+                                .unwrap_or_else(|| "record decoder failed".to_string());
                             let message = format!(
-                                "Invalid table common data at handle {handle:#X}: {}",
-                                reader
-                                    .check_error()
-                                    .err()
-                                    .map(|e| e.to_string())
-                                    .unwrap_or_else(|| "record decoder panicked".to_string())
+                                "Invalid table common data at handle {handle:#X}: {reason}"
                             );
                             self.notifications
                                 .notify(NotificationType::Error, message.clone());
@@ -1198,11 +1203,21 @@ impl DwgDocumentBuilder {
                         }
                     }
                     Ok(None) if reader.check_error().is_ok() => {}
-                    _ => {
+                    other => {
                         skipped_pass1 += 1;
+                        let reason = reader
+                            .check_error()
+                            .err()
+                            .map(|error| error.to_string())
+                            .or_else(|| match &other {
+                                Err(payload) => {
+                                    Some(crate::io::dwg::unwind_message(payload.as_ref()))
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| "record decoder failed".to_string());
                         let message = format!(
-                            "Skipped corrupt table record at handle {:#X}, type_code={}",
-                            handle, type_code
+                            "Skipped corrupt table record at handle {handle:#X}, type_code={type_code}: {reason}"
                         );
                         self.notifications
                             .notify(NotificationType::Error, message.clone());
@@ -1946,20 +1961,30 @@ impl DwgDocumentBuilder {
                 Ok(record) => record,
                 Err(_) => continue,
             };
-            let common = self
-                .obj_reader
-                .read_common_non_entity_data(&mut reader, type_code);
-            if type_code == OBJ_DICTIONARY {
-                let data = objects::read_dictionary(&mut reader, self.obj_reader.version());
-                variable_entries.extend(
-                    data.entries
-                        .into_iter()
-                        .map(|entry| (entry.name, entry.handle)),
-                );
-            } else {
-                let data = objects::read_dictionary_variable(&mut reader);
-                variable_values.insert(common.common.handle, data.value);
+            // Lighting lookup is optional. A bad dictionary must not abort the
+            // drawing read; the record pass reports that object on its own.
+            let probed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let common = self
+                    .obj_reader
+                    .read_common_non_entity_data(&mut reader, type_code);
+                if reader.check_error().is_err() {
+                    return None;
+                }
+                if type_code == OBJ_DICTIONARY {
+                    let data = objects::read_dictionary(&mut reader, self.obj_reader.version());
+                    Some((None, data.entries))
+                } else {
+                    let data = objects::read_dictionary_variable(&mut reader);
+                    Some((Some((common.common.handle, data.value)), Vec::new()))
+                }
+            }));
+            let Ok(Some((variable, entries))) = probed else {
+                continue;
+            };
+            if let Some((handle, value)) = variable {
+                variable_values.insert(handle, value);
             }
+            variable_entries.extend(entries.into_iter().map(|entry| (entry.name, entry.handle)));
         }
         let photometric_lighting = variable_entries.iter().any(|(name, handle)| {
             name.eq_ignore_ascii_case("LIGHTINGUNITS")
@@ -2049,28 +2074,39 @@ impl DwgDocumentBuilder {
                     if let Some(message) = reader
                         .check_error()
                         .err()
-                        .map(|e| e.to_string())
-                        .or_else(|| result.err().map(|_| "Record decoder panicked".to_string()))
-                    {
-                        let recovered = (raw_type_code >= 500
-                            && !entity_class_numbers.contains(&raw_type_code)
-                            && !is_entity_type(type_code)
-                            && Self::is_recoverable_auxiliary_class(
-                                &class_names,
-                                raw_type_code,
-                                type_code,
-                            ))
-                        .then(|| {
-                            self.recover_auxiliary_object(
-                                handle,
-                                raw_type_code,
-                                type_code,
-                                offset,
-                                &class_names,
-                            )
+                        .map(|error| error.to_string())
+                        .or_else(|| {
+                            result
+                                .as_ref()
+                                .err()
+                                .map(|payload| crate::io::dwg::unwind_message(payload.as_ref()))
                         })
-                        .flatten();
-                        let recoverable = recovered.is_some();
+                    {
+                        let non_entity = raw_type_code >= 500
+                            && !entity_class_numbers.contains(&raw_type_code)
+                            && !is_entity_type(type_code);
+                        let auxiliary = Self::is_recoverable_auxiliary_class(
+                            &class_names,
+                            raw_type_code,
+                            type_code,
+                        );
+                        // Strict mode keeps only the known auxiliary set, and
+                        // that failure is still reported. Failsafe keeps every
+                        // non-entity whose framing and common data survived,
+                        // so one bad payload does not drop the record or abort
+                        // the process.
+                        let recovered = (non_entity && (self.failsafe || auxiliary))
+                            .then(|| {
+                                self.recover_auxiliary_object(
+                                    handle,
+                                    raw_type_code,
+                                    type_code,
+                                    offset,
+                                    &class_names,
+                                )
+                            })
+                            .flatten();
+                        let recoverable = recovered.is_some() && (self.failsafe || auxiliary);
                         // Never commit fabricated entities or expose them to visitors.
                         chunk.output.entities.truncate(entity_start);
                         chunk.output.section_view_style = section_style;

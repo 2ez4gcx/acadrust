@@ -1114,6 +1114,26 @@ impl<R: Read + Seek> DwgReader<R> {
             ) -> Option<crate::entities::EntityType>,
         >,
     ) -> std::result::Result<crate::io::read::ReadOutcome, DxfError> {
+        // A decoder bug must reach the caller as `DxfError`, including when
+        // failsafe is on. Record-level failures are handled inside the builder.
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.read_drawing(visit))) {
+            Ok(result) => result,
+            Err(payload) => Err(DxfError::Parse(format!(
+                "DWG reader failed: {}",
+                crate::io::dwg::unwind_message(payload.as_ref())
+            ))),
+        }
+    }
+
+    fn read_drawing(
+        &mut self,
+        visit: Option<
+            &mut dyn FnMut(
+                &crate::document::CadDocument,
+                crate::entities::EntityType,
+            ) -> Option<crate::entities::EntityType>,
+        >,
+    ) -> std::result::Result<crate::io::read::ReadOutcome, DxfError> {
         let failsafe = self.options.failsafe;
         let perf = std::env::var_os("PERF").is_some();
         let total_started = web_time::Instant::now();
