@@ -166,6 +166,10 @@ impl PendingVertex {
             PendingVertex::PfaceFace(data, _) => data.handle,
         }
     }
+
+    fn handle_value(&self) -> u64 {
+        self.handle().value()
+    }
 }
 
 /// The child handles an R2004+ polyline lists, in drawing order. Records
@@ -175,6 +179,80 @@ fn read_owned_vertex_handles(reader: &mut DwgMergedReader, owned_count: i32) -> 
     (0..owned_count.clamp(0, 1 << 24))
         .map(|_| reader.read_handle())
         .collect()
+}
+
+/// Put collected polyline children into drawing order.
+///
+/// R2004+ polylines carry that order as their owned-handle list. R13–R2000
+/// polylines link the same children with each record's next-entity handle.
+/// A list or chain that does not cover every child leaves the handle-sorted
+/// collection unchanged.
+fn order_pending_vertices(
+    verts: &mut [PendingVertex],
+    owned: Option<&[u64]>,
+    next_handles: &HashMap<Handle, Handle>,
+) {
+    let ranks = if let Some(order) = owned.filter(|order| !order.is_empty()) {
+        let mut ranks = HashMap::with_capacity(order.len());
+        for (index, handle) in order.iter().enumerate() {
+            ranks.entry(*handle).or_insert(index);
+        }
+        ranks
+    } else if let Some(ranks) =
+        vertex_chain_ranks(verts.iter().map(PendingVertex::handle_value), next_handles)
+    {
+        ranks
+    } else {
+        return;
+    };
+    verts.sort_by_key(|vertex| {
+        ranks
+            .get(&vertex.handle_value())
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
+}
+
+/// Drawing-order ranks from the prev/next chain, when that chain visits
+/// every child exactly once.
+fn vertex_chain_ranks(
+    handles: impl IntoIterator<Item = u64>,
+    next_handles: &HashMap<Handle, Handle>,
+) -> Option<HashMap<u64, usize>> {
+    if next_handles.is_empty() {
+        return None;
+    }
+    let mut members = HashSet::new();
+    for handle in handles {
+        if handle == 0 || !members.insert(handle) {
+            return None;
+        }
+    }
+    if members.is_empty() {
+        return None;
+    }
+    let mut incoming = HashSet::new();
+    for handle in &members {
+        if let Some(next) = next_handles.get(&Handle::from(*handle)) {
+            if members.contains(&next.value()) {
+                incoming.insert(next.value());
+            }
+        }
+    }
+    let mut heads = members.difference(&incoming).copied();
+    let head = heads.next()?;
+    if heads.next().is_some() {
+        return None;
+    }
+    let mut ranks = HashMap::with_capacity(members.len());
+    let mut current = head;
+    while members.contains(&current) && ranks.insert(current, ranks.len()).is_none() {
+        let Some(next) = next_handles.get(&Handle::from(current)) else {
+            break;
+        };
+        current = next.value();
+    }
+    (ranks.len() == members.len()).then_some(ranks)
 }
 
 /// Pending polyline entities awaiting vertex assembly.
@@ -689,10 +767,9 @@ impl DwgDocumentBuilder {
         document.vx_table.clear();
         document.vx_control_entries.clear();
         let mut handles = self.obj_reader.handles();
-        // Sort handles numerically so that entity records are processed in
-        // allocation order.  This ensures polyline vertex records are
-        // encountered in the correct sequence (the writer allocates
-        // sequential handles for child entities).
+        // Decode records in handle order. Polyline children are put back into
+        // drawing order afterwards: the owned-handle list on R2004+, or the
+        // next-entity chain on R13–R2000.
         handles.sort_unstable();
         let mut skipped_pass1 = 0u32;
         let mut skipped_pass2 = 0u32;
@@ -2219,13 +2296,11 @@ impl DwgDocumentBuilder {
         // ── Post-pass: Assemble polyline vertices and add to document ──
         for (poly_handle, mut entity) in pending.polylines {
             if let Some(mut verts) = pending.vertices.remove(&poly_handle) {
-                if let Some(order) = pending.vertex_order.get(&poly_handle) {
-                    let rank: HashMap<u64, usize> =
-                        order.iter().enumerate().map(|(i, h)| (*h, i)).collect();
-                    verts.sort_by_key(|v| {
-                        rank.get(&v.handle().value()).copied().unwrap_or(usize::MAX)
-                    });
-                }
+                order_pending_vertices(
+                    &mut verts,
+                    pending.vertex_order.get(&poly_handle).map(Vec::as_slice),
+                    &entity_next_handles,
+                );
                 match &mut entity {
                     EntityType::Polyline2D(ref mut e) => {
                         e.vertices = verts
@@ -8367,6 +8442,43 @@ fn map_entity_common(
     // right modeler entity in object-stream order.
     common.has_ds_data = data.has_ds_data;
     common
+}
+
+#[cfg(test)]
+mod vertex_chain_tests {
+    use super::vertex_chain_ranks;
+    use crate::types::Handle;
+    use std::collections::HashMap;
+
+    fn links(pairs: &[(u64, u64)]) -> HashMap<Handle, Handle> {
+        pairs
+            .iter()
+            .copied()
+            .map(|(from, to)| (Handle::new(from), Handle::new(to)))
+            .collect()
+    }
+
+    #[test]
+    fn an_inserted_vertex_keeps_its_place_in_the_chain() {
+        // Drawing order is 10, 50, 11, 12. Handle 50 was allocated later.
+        let ranks = vertex_chain_ranks(
+            [10, 50, 11, 12],
+            &links(&[(10, 50), (50, 11), (11, 12), (12, 0)]),
+        )
+        .expect("complete chain");
+        assert_eq!(
+            [ranks[&10], ranks[&50], ranks[&11], ranks[&12]],
+            [0, 1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn a_broken_or_ambiguous_chain_is_left_alone() {
+        assert!(vertex_chain_ranks([10, 20, 30], &links(&[(10, 20)])).is_none());
+        assert!(vertex_chain_ranks([10, 20], &HashMap::new()).is_none());
+        assert!(vertex_chain_ranks([10, 20, 30], &links(&[(10, 20), (20, 10), (30, 0)])).is_none());
+        assert!(vertex_chain_ranks([0, 10], &links(&[(10, 0)])).is_none());
+    }
 }
 
 #[cfg(test)]
