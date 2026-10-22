@@ -5099,22 +5099,22 @@ pub struct SurfaceEntityData {
 
 /// Writers disagree on whether an absent isoline cache still stores an
 /// empty silhouette count: some files keep a zero BL there, others go
-/// straight to the modeler tail. Take the count only when the AcDs tail
-/// (empty-body bit, material bindings, revision) fills the main stream
-/// after it and not without it.
-fn skip_empty_silhouette_count(reader: &mut DwgMergedReader) {
+/// straight to the modeler tail. Take the count only when the complete tail
+/// (empty-body bit, material bindings, and optional revision) fills the main
+/// stream after it and not without it. Never infer a missing material count.
+fn skip_empty_silhouette_count(reader: &mut DwgMergedReader, with_revision: bool) {
     let end = reader.position_in_bits() + reader.main_remaining_bits();
     let here = reader.main().clone();
-    if acds_modeler_tail_fits(here.clone(), end) {
+    if modeler_tail_fits(here.clone(), end, with_revision) {
         return;
     }
     let mut after = here;
-    if after.read_bit_long() == 0 && acds_modeler_tail_fits(after, end) {
+    if after.read_bit_long() == 0 && modeler_tail_fits(after, end, with_revision) {
         reader.read_bit_long();
     }
 }
 
-fn acds_modeler_tail_fits(mut probe: DwgBitReader, end: i64) -> bool {
+fn modeler_tail_fits(mut probe: DwgBitReader, end: i64, with_revision: bool) -> bool {
     // A cleared bit means an extra modeler body follows; not probed here.
     if !probe.read_bit() {
         return false;
@@ -5127,12 +5127,14 @@ fn acds_modeler_tail_fits(mut probe: DwgBitReader, end: i64) -> bool {
         probe.read_bit_long();
         probe.read_bit_long();
     }
-    probe.read_bit();
-    probe.read_bit_long();
-    probe.read_bit_short();
-    probe.read_bit_short();
-    probe.read_bytes(8);
-    probe.read_bit_long();
+    if with_revision {
+        probe.read_bit();
+        probe.read_bit_long();
+        probe.read_bit_short();
+        probe.read_bit_short();
+        probe.read_bytes(8);
+        probe.read_bit_long();
+    }
     !probe.has_error() && probe.position_in_bits() == end
 }
 
@@ -5455,7 +5457,17 @@ fn read_acis_entity_impl(
             && version.r2013_plus(dxf_version)
             && inline_end.is_none()
         {
-            skip_empty_silhouette_count(reader);
+            skip_empty_silhouette_count(reader, true);
+        } else if !isoline_present
+            && dxf_version == DxfVersion::AC1024
+            && acis_version == 2
+            && !has_ds_data
+            && !inline_layout
+            && inline_end.is_none()
+        {
+            // Native DWG 2010 REGIONs can retain BL(0) silhouettes despite
+            // an absent isoline cache. Require the exact material-tail bound.
+            skip_empty_silhouette_count(reader, false);
         }
         if isoline_present {
             let num_wires = safe_count(reader.read_bit_long(), reader);
@@ -5463,8 +5475,8 @@ fn read_acis_entity_impl(
                 wires.push(read_wire(reader));
             }
 
-            // Both cache arrays are absent when isoline_present is false.
-            // Reading a count then consumes the extra-body or revision tail.
+            // Populated cache arrays require isoline_present. Optional empty
+            // silhouette counts with no isoline cache were bounded above.
             let num_silhouettes = safe_count(reader.read_bit_long(), reader);
             for _ in 0..num_silhouettes {
                 // Native R2010+ silhouettes store a BLL viewport identity.

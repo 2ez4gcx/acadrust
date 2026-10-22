@@ -2,6 +2,10 @@
 
 ### Unreleased
 
+- **DWG 2010 REGION tails** - Read an empty silhouette count retained after
+  an absent isoline cache when the complete bounded material tail validates.
+  Preserve the count-free layout and existing truncated-stream checks.
+
 - **Serde reference and provenance retention** - With the `serde` feature,
   `EntityCommon` now includes `layer_handle`, `linetype_handle`,
   `color_book_handle`, `face_visual_style_handle`, `edge_visual_style_handle`,
