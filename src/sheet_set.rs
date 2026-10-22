@@ -1145,6 +1145,7 @@ pub fn relative_path(folder: &std::path::Path, file: &std::path::Path) -> Option
     Some(out.join("\\"))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn normalize_path(p: &std::path::Path) -> String {
     use std::path::Component;
     let mut out = std::path::PathBuf::new();
