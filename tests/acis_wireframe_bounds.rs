@@ -326,3 +326,50 @@ fn acds_material_bindings_survive_modeler_entity_roundtrips() {
         }
     }
 }
+
+// Bodies upgraded from AC1012-AC1024 keep their wireframe header without an
+// isoline cache. The AcDs-backed writer must still emit the silhouette count
+// that the reader expects in every wireframe block.
+#[test]
+fn acds_wireframe_without_isolines_keeps_the_silhouette_count() {
+    for version in [DxfVersion::AC1027, DxfVersion::AC1032] {
+        let mut document = CadDocument::with_version(version);
+        let geometry = acadrust::entities::acis::primitives::build_box([0.0; 3], 2.0, 3.0, 4.0);
+        let mut data = AcisData::from_sab(SabWriter::write(&geometry));
+        data.wireframe_data_present = true;
+        data.wireframe_isoline_present = false;
+        data.wireframe_isolines = 4;
+        let mut solid = Solid3D::new();
+        solid.acis_data = data.clone();
+        let mut region = Region::new();
+        region.acis_data = data.clone();
+        let mut body = Body::new();
+        body.acis_data = data.clone();
+        let mut surface = Surface::new(SurfaceKind::Plane);
+        surface.acis_data = data.clone();
+        let handles: Vec<_> = [
+            EntityType::Solid3D(solid),
+            EntityType::Region(region),
+            EntityType::Body(body),
+            EntityType::Surface(Box::new(surface)),
+        ]
+        .into_iter()
+        .map(|entity| document.add_entity(entity).unwrap())
+        .collect();
+        let bytes = DwgWriter::write_to_vec(&document).unwrap();
+        let restored = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
+        for handle in handles {
+            let actual = match restored.get_entity(handle) {
+                Some(EntityType::Solid3D(entity)) => &entity.acis_data,
+                Some(EntityType::Region(entity)) => &entity.acis_data,
+                Some(EntityType::Body(entity)) => &entity.acis_data,
+                Some(EntityType::Surface(entity)) => &entity.acis_data,
+                other => panic!("{version:?}: modeler entity {handle:?} lost: {other:?}"),
+            };
+            assert!(actual.wireframe_data_present);
+            assert!(!actual.wireframe_isoline_present);
+            assert_eq!(actual.wireframe_isolines, 4);
+            assert!(actual.has_data());
+        }
+    }
+}

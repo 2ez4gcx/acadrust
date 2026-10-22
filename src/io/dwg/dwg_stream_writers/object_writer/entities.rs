@@ -5441,8 +5441,10 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit(acis.wireframe_isoline_present);
         if acis.wireframe_isoline_present {
             self.writer.write_bit_long(0); // wires
-            self.writer.write_bit_long(0); // silhouettes
         }
+        // The silhouette count is present in every wireframe block,
+        // independently of the isoline cache.
+        self.writer.write_bit_long(0);
         // COMMON_3DSOLID has an extra-modeler-data gate only when the
         // AcDs-backed entity contains a wireframe section.
         self.writer.write_bit(acis.extra_acis_data.is_none());
