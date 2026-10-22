@@ -1272,6 +1272,8 @@ fn prepare_header(
 
     // DIMBLK / DIMBLK1 / DIMBLK2 / DIMLDRBLK. DXF stores the names; a DWG
     // stores the block handles. A null handle is the default closed-filled arrow.
+    // A name such as ArchTick selects the block _ArchTick, and a handle that
+    // names no block is cleared.
     crate::document::apply_dimension_arrow_header(&document.block_records, &mut h);
 
     // ── Correct HANDSEED ──
