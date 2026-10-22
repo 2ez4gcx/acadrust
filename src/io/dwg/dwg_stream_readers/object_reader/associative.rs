@@ -354,8 +354,22 @@ fn read_surface_action(
 ) -> AssocSurfaceActionBody {
     let action_body = read_action_body(reader);
     let parameter_body = read_parameter_body(reader, version, dxf_version);
-    let surface_body = read_surface_body(reader);
-    let path_status = reader.read_bit_long();
+    // An R2004 plane-surface action stores the action and parameter bodies
+    // only. The surface-body dependency handle and the path/class fields are
+    // absent, and reading them walks off the end of the record.
+    let has_surface_tail = reader.main_remaining_bits() >= 8
+        && reader.handle_remaining_bits() >= 8
+        && !reader.has_error();
+    let surface_body = if has_surface_tail {
+        read_surface_body(reader)
+    } else {
+        AssocSurfaceBody::default()
+    };
+    let path_status = if has_surface_tail {
+        reader.read_bit_long()
+    } else {
+        0
+    };
     let mut value = AssocSurfaceActionBody {
         kind,
         action_body,
@@ -369,7 +383,8 @@ fn read_surface_action(
         | AssocSurfaceActionKind::Patch
         | AssocSurfaceActionKind::EdgeChamfer
         | AssocSurfaceActionKind::EdgeFillet => {}
-        _ => value.class_version = reader.read_bit_long(),
+        _ if has_surface_tail => value.class_version = reader.read_bit_long(),
+        _ => {}
     }
     match kind {
         AssocSurfaceActionKind::Extend => value.option = reader.read_byte(),
@@ -1577,4 +1592,40 @@ pub fn read_associative_data(
         _ => return None,
     };
     Some(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_surface_action;
+    use crate::io::dwg::dwg_reference_type::DwgReferenceType::HardPointer;
+    use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+    use crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter;
+    use crate::io::dwg::dwg_version::DwgVersion;
+    use crate::objects::AssocSurfaceActionKind;
+    use crate::types::DxfVersion;
+
+    #[test]
+    fn r2004_plane_surface_action_ends_after_the_parameter_body() {
+        let dwg = DwgVersion::AC18;
+        let dxf = DxfVersion::AC1018;
+        let mut writer = DwgMergedWriter::new(dwg, dxf);
+        writer.write_bit_long(1); // action body version
+        writer.write_bit_long(0); // parameter version
+        writer.write_bit_long(0); // minor
+        writer.write_bit_long(1); // one dependency
+        writer.write_handle(HardPointer, 0x50E);
+        writer.write_bit_long(0); // marker
+        writer.write_bit_long(0); // no values
+        writer.write_bit_long(0); // empty-value marker
+        writer.write_handle(HardPointer, 0x50D);
+        let mut reader = DwgMergedReader::new(writer.merge(), dxf, writer.handle_start_bits());
+        let action = read_surface_action(&mut reader, dwg, dxf, AssocSurfaceActionKind::Plane);
+        reader.check_error().expect("plane action");
+        assert_eq!(action.action_body.version, 1);
+        assert_eq!(action.parameter_body.dependencies.len(), 1);
+        assert_eq!(action.parameter_body.dependencies[0].value(), 0x50E);
+        assert_eq!(action.parameter_body.dependency.value(), 0x50D);
+        assert_eq!(action.surface_body.dependency.value(), 0);
+        assert_eq!(action.class_version, 0);
+    }
 }

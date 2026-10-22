@@ -5702,10 +5702,7 @@ pub fn read_surface(
     has_ds_data: bool,
     kind: SurfaceKind,
 ) -> SurfaceEntityData {
-    // The optional extra modeler block belongs to AcDs-backed surfaces. On
-    // inline ACIS surfaces the next fields are the surface isoline counts;
-    // probing them as an extra ACIS payload shifts the record by one bit.
-    let acis = read_acis_entity_impl(
+    let mut acis = read_acis_entity_impl(
         reader,
         version,
         dxf_version,
@@ -5718,8 +5715,26 @@ pub fn read_surface(
     // Surface records do not have the 3DSOLID history-id handle slot.
     let history_handle = 0;
     // The modeler version is already part of the ACIS header. Native
-    // surfaces begin with the two isoline counts immediately after it.
+    // surfaces begin with the two isoline counts immediately after it,
+    // except when an R2004 surface keeps a second modeler body there.
+    // That body uses the extra-modeler framing (unknown bit, version,
+    // SAB/SAT) while the COMMON_3DSOLID gate stays set, so the shared
+    // solid reader leaves it in the stream. Accept it only when the
+    // following isoline counts are plausible; otherwise rewind.
     let modeler_format_version = 1;
+    if acis.extra_acis_data.is_none() && !reader.has_error() {
+        let body_start = reader.position_in_bits();
+        if let Some(body) = read_extra_acis_data(reader, None) {
+            let mut peek = reader.clone();
+            let u = peek.read_bit_short();
+            let v = peek.read_bit_short();
+            if (0..=512).contains(&u) && (0..=512).contains(&v) && !peek.has_error() {
+                acis.extra_acis_data = Some(body);
+            } else {
+                reader.set_position_in_bits(body_start);
+            }
+        }
+    }
     let u_isolines = reader.read_bit_short();
     let v_isolines = reader.read_bit_short();
     let surface_data = match kind {
@@ -5981,6 +5996,34 @@ mod tests {
         let data = writer.merge();
         let hsb = writer.handle_start_bits();
         DwgMergedReader::new(data, dxf, hsb)
+    }
+
+    #[test]
+    fn r2004_surface_keeps_a_second_modeler_body_ahead_of_isolines() {
+        let sab = crate::entities::acis::SabWriter::write(&crate::entities::acis::primitives::build_box(
+            [0.0, 0.0, 0.0],
+            1.0,
+            2.0,
+            3.0,
+        ));
+        let dwg = DwgVersion::AC18;
+        let dxf = DxfVersion::AC1018;
+        let mut reader = make_reader(dwg, dxf, |writer| {
+            writer.write_bit(true); // no inline primary body
+            writer.write_bit(false); // no wireframe cache
+            writer.write_bit(true); // COMMON_3DSOLID extra gate stays set
+            writer.write_bit(false);
+            writer.write_bit_short(2);
+            writer.write_bytes(&sab);
+            writer.write_bit_short(6);
+            writer.write_bit_short(4);
+        });
+        let surface = read_surface(&mut reader, dwg, dxf, false, SurfaceKind::Generic);
+        reader.check_error().expect("surface record");
+        assert_eq!(surface.u_isolines, 6);
+        assert_eq!(surface.v_isolines, 4);
+        let extra = surface.acis.extra_acis_data.expect("second modeler body");
+        assert_eq!(extra.sab_data, sab);
     }
 
     #[test]
