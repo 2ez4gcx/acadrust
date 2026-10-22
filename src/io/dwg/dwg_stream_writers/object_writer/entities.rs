@@ -4279,11 +4279,18 @@ impl<'a> DwgObjectWriter<'a> {
         // 91 Leader LineColor (CMC)
         self.writer.write_cm_color(&e.line_color);
 
-        // 341 LeaderLineTypeID (handle) - HardPointer
+        // 341 LeaderLineTypeID (handle) - HardPointer. Without one, ByBlock:
+        // AutoCAD's default for a multileader's leader lines.
         let lt = e
             .line_type_handle
             .filter(|handle| !handle.is_null())
-            .unwrap_or(self.document.header.bylayer_linetype_handle);
+            .unwrap_or_else(|| {
+                self.document
+                    .line_types
+                    .get("ByBlock")
+                    .map(|lt| lt.handle)
+                    .unwrap_or(self.document.header.byblock_linetype_handle)
+            });
         self.writer
             .write_handle(DwgReferenceType::HardPointer, lt.value());
 
