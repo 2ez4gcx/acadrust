@@ -11758,10 +11758,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         let data = ole.encoded_payload();
         if !data.is_empty() {
             self.writer.write_i32(90, data.len() as i32)?;
-            // Write binary data in 127-byte hex chunks (code 310)
+            // Write binary data in 127-byte hex chunks (code 310), encoded by the
+            // stream writer (one string per byte made a 10 MB OLE object take seconds).
             for chunk in data.chunks(127) {
-                let hex: String = chunk.iter().map(|b| format!("{:02X}", b)).collect();
-                self.writer.write_string(310, &hex)?;
+                self.writer.write_binary(310, chunk)?;
             }
         }
         self.writer.write_string(1, "OLE")?;
