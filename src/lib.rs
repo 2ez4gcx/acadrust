@@ -28,7 +28,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! acadrust = { version = "0.6.5", features = ["serde", "import"] }
+//! acadrust = { version = "0.6.6", features = ["serde", "import"] }
 //! ```
 //!
 //! Use `default-features = false` to omit acadrust's Rayon dependency and run
@@ -36,7 +36,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! acadrust = { version = "0.6.5", default-features = false }
+//! acadrust = { version = "0.6.6", default-features = false }
 //! ```
 //!
 //! Cargo features are additive, so another dependency can enable `parallel`.

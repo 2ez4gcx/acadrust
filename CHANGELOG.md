@@ -1,6 +1,6 @@
 ## Changelog
 
-### 0.6.5
+### 0.6.6
 
 - **Optional DWG parallelism (issue #156)** - Adds a default-enabled `parallel`
   Cargo feature for native DWG reading and writing. Disabling default features
@@ -16,9 +16,60 @@
 - **DWG mesh face budget (issue #141)** - MESH faces are no longer capped at a
   fixed 250,000 faces and 1,000,000 indices. The cap scales with installed and
   available memory (never below those historical limits) and can be replaced
-  with `DwgReadOptions::max_mesh_faces` / `max_mesh_face_indices`, or removed
-  with `DwgReadOptions::with_unlimited_mesh`. A mesh that still exceeds the
+  with `DwgReadOptions::with_mesh_limits` or the `max_mesh_faces` and
+  `max_mesh_face_indices` fields, or removed with
+  `DwgReadOptions::with_unlimited_mesh`. A mesh that still exceeds the
   budget is kept up to the cap and reported.
+- **DWG allocation safety (issues #149 and #151)** - Validates AC18 and AC21
+  page-map, section-map, page, and section sizes before allocating or
+  decompressing. Small AC18 section padding is kept and reported. Declarations
+  above twice the parsed page capacity are rejected.
+- **Decode failures stay errors** - An unrecognized modeler payload or a panic
+  inside a record becomes a diagnostic or a parse error. Failsafe keeps a
+  non-entity whose framing and common data are intact.
+- **R2004 surfaces and R2007 solid history (issue #159)** - R2004 surfaces keep
+  the second modeler body while the extra-body flag is set. R2007 history
+  regions accept a bare SAB with no bit length. Plane-surface actions from
+  that era end after the parameter body.
+- **Legacy polyline vertex order (issue #160)** - R13 through R2000 polyline
+  vertices follow the next-entity chain.
+- **BLOCK marker XDATA (issue #154)** - Structural BLOCK markers keep their
+  common entity data and XDATA through DXF and DXF–DWG–DXF conversions.
+- **Unknown DWG entities (issue #145)** - DWG-only unknown entities are written
+  as `ACAD_PROXY_ENTITY` records, including proxy graphics, opaque class
+  payloads, and references. A payload that cannot be represented returns an
+  error.
+- **Empty constraint groups (issue #146)** - An R2013+ `ASSOC2DCONSTRAINTGROUP`
+  with no nodes still writes the root, class table, and registry. Pre-R2013
+  output keeps the short form.
+- **R2007 color names (issue #152)** - Optional color and book names are read
+  from the text stream, so later main-stream fields stay aligned.
+- **Frame-only MTEXT (issue #142)** - R2018 frame-only MTEXT writes its
+  annotative and column fields without a fill payload.
+- **Paper-space block names (issue #143)** - Layout block names stay unique,
+  and the active paper block follows its header handle.
+- **Alignment grips (issue #144)** - Alignment grip orientations are three
+  doubles at group codes 140/141/142. Older acadrust output still reads.
+- **Table merged ranges** - Canonicalizing, applying, and writing merged ranges
+  is bounded by the table size.
+- **Silhouette wireframes** - Silhouette counts are read and written whether or
+  not isolines are present.
+- **Truncated DWG records** - Truncated AC1014 header trailers are accepted,
+  and truncated associative dependencies are preserved.
+- **Explode, mirror, and rotate** - Explode follows more AutoCAD results for
+  leaders, dimensions, tables, wipeouts, MLINE caps, MLEADER breaks, hatches,
+  and modeler boundaries. Mirror is split into focused operations. Entity
+  tools include `ROTATE` and `ROTATE3D`.
+- **AC1009 R11/R12** - Documents Release 11 and Release 12 as the shared AC1009
+  DWG format and expands native fixture coverage. See
+  [R11/R12 support status](src/docs/ac1009_support.md).
+- **Provenance (issue #153)** - Records ACadSharp attribution and the DWG
+  specification sources in [third-party notices](THIRD_PARTY_NOTICES.md).
+- **Benchmarks (issue #148)** - Adds a fixture-free mixed-content AC1032 DWG
+  benchmark.
+
+### 0.6.5
+
 - **Genuine DXF R12 output** - `DxfWriter::with_version(DxfVersion::AC1009)`
   writes a real R12 file: no handles, CLASSES or OBJECTS, R12 table records,
   and R12 entities only. LWPOLYLINE becomes a 2D POLYLINE with its bulges,

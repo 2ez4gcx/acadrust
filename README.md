@@ -16,7 +16,7 @@ an installed CAD application. File support spans DXF and DWG R12 through R2018+.
 
 ```toml
 [dependencies]
-acadrust = "0.6.5"
+acadrust = "0.6.6"
 ```
 
 ```rust
@@ -46,7 +46,7 @@ Enable optional features as needed:
 
 ```toml
 [dependencies]
-acadrust = { version = "0.6.5", features = ["serde", "import"] }
+acadrust = { version = "0.6.6", features = ["serde", "import"] }
 ```
 
 To run DWG work sequentially on the calling thread and omit acadrust's Rayon
@@ -54,7 +54,7 @@ dependency, disable default features:
 
 ```toml
 [dependencies]
-acadrust = { version = "0.6.5", default-features = false }
+acadrust = { version = "0.6.6", default-features = false }
 ```
 
 Cargo features are additive: another dependency enabling `acadrust/parallel`
@@ -70,7 +70,7 @@ application-owned pool once and reuse it for all DWG jobs:
 
 ```toml
 [dependencies]
-acadrust = "0.6.5"
+acadrust = "0.6.6"
 rayon = "1"
 ```
 
