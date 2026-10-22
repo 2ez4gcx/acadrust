@@ -1269,6 +1269,24 @@ fn prepare_header(
         }
     }
 
+    // DIMBLK / DIMBLK1 / DIMBLK2 / DIMLDRBLK — arrow blocks are block records;
+    // a null handle is the default (closed filled) arrow.
+    {
+        let valid_block = |h: Handle| -> bool {
+            h.is_null() || document.block_records.iter().any(|br| br.handle == h)
+        };
+        for slot in [
+            &mut h.dim_arrow_block_handle,
+            &mut h.dim_arrow_block1_handle,
+            &mut h.dim_arrow_block2_handle,
+            &mut h.dim_leader_arrow_block_handle,
+        ] {
+            if !valid_block(*slot) {
+                *slot = Handle::NULL;
+            }
+        }
+    }
+
     // ── Correct HANDSEED ──
     let max_handle = handle_map.iter().map(|&(ha, _)| ha).max().unwrap_or(0);
     if h.handle_seed <= max_handle {

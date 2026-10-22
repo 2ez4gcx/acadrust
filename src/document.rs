@@ -314,6 +314,10 @@ pub struct HeaderVariables {
     pub dwf_3d_precision: f64,
     /// DIMFXL - Fixed extension line length
     pub dim_fixed_ext_line_length: f64,
+    /// DIMFXLON - Extension lines have the fixed length DIMFXL
+    pub dim_fixed_ext_line_on: bool,
+    /// DIMARCSYM - Arc length symbol placement (0 before the text, 1 above, 2 none)
+    pub dim_arc_symbol: i16,
     /// DIMJOGANG - Jogged radius dimension angle (radians)
     pub dim_jog_angle: f64,
     /// DIMTFILL - Dimension text background fill
@@ -642,6 +646,8 @@ pub struct HeaderVariables {
     pub dim_arrow_block1_handle: Handle,
     /// Dimension arrow block 2 handle
     pub dim_arrow_block2_handle: Handle,
+    /// Leader arrow block handle (DIMLDRBLK)
+    pub dim_leader_arrow_block_handle: Handle,
     /// DIMLWD - Dimension line weight
     pub dim_line_weight: i16,
     /// DIMLWE - Extension line weight
@@ -860,6 +866,8 @@ impl Default for HeaderVariables {
             polysolid_height: 4.0,
             dwf_3d_precision: 2.0,
             dim_fixed_ext_line_length: 1.0,
+            dim_fixed_ext_line_on: false,
+            dim_arc_symbol: 0,
             dim_jog_angle: std::f64::consts::FRAC_PI_4,
             dim_text_fill: 0,
             dim_text_fill_color: Color::ByBlock,
@@ -1032,6 +1040,7 @@ impl Default for HeaderVariables {
             dim_arrow_block_handle: Handle::NULL,
             dim_arrow_block1_handle: Handle::NULL,
             dim_arrow_block2_handle: Handle::NULL,
+            dim_leader_arrow_block_handle: Handle::NULL,
             dim_line_weight: -2,     // ByBlock
             dim_ext_line_weight: -2, // ByBlock
 
