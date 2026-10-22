@@ -1375,6 +1375,18 @@ pub struct AssocDimensionReference {
     pub has_last_point_reference: bool,
 }
 
+impl AssocDimensionReference {
+    /// Whether a reference with this osnap type and number of referenced
+    /// objects stores its main sub-entity (subent type, GS marker, xref
+    /// paths). A reference that snaps to no object has none to describe:
+    /// AutoCAD writes an `_End` "last point" reference with no objects as
+    /// class name, osnap type, object count, distance, point and the
+    /// continuation bit only, in DWG and DXF alike.
+    pub fn stores_main_subentity(osnap_type: u8, object_count: usize) -> bool {
+        osnap_type != 0 && object_count > 0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AssocDimensionAssociation {

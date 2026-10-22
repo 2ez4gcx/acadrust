@@ -720,7 +720,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 for xref in &reference.xrefs {
                     self.writer.write_handle(331, *xref)?;
                 }
-                if reference.osnap_type != 0 {
+                if AssocDimensionReference::stores_main_subentity(
+                    reference.osnap_type,
+                    reference.xrefs.len(),
+                ) {
                     self.writer.write_i32(73, reference.main_subent_type)?;
                     self.writer.write_i32(91, reference.main_gs_marker)?;
                     for path in &reference.xref_paths {
