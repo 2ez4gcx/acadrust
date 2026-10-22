@@ -220,7 +220,26 @@ pub(crate) fn read_document(
     let header = header::read_header_with_code_page(data, code_page_override)?;
     let code_page = code_page_override.unwrap_or(header.variables.code_page.as_str());
     let mut table_records = tables::decode_tables(data, &header.tables, code_page)?;
-    let tables = ensure_table_defaults(tables::entity_tables(&table_records));
+    let mut tables = ensure_table_defaults(tables::entity_tables(&table_records));
+    // R11 dimension blocks share one table name (`*D`) while each BLOCK entity
+    // carries the distinct name (`*D0`, `*D1`, …). Dimensions address the table
+    // by index, so the shared name has to be replaced before those indexes are
+    // turned into DXF names.
+    if header.layout.blocks_size != 0 {
+        let preview = section_records(
+            data,
+            header.layout.blocks_start,
+            header.layout.blocks_size,
+            16,
+            &BLOCK_ENTITIES_BEGIN,
+            &BLOCK_ENTITIES_END,
+            &tables,
+            code_page,
+            Some(header.tables[9]),
+        )?;
+        adopt_distinct_block_names(&mut table_records[0], &preview, header.layout.blocks_start);
+        tables = ensure_table_defaults(tables::entity_tables(&table_records));
+    }
     let entities = section_records(
         data,
         header.layout.entities_start,
@@ -513,6 +532,70 @@ fn parse_dxf_records(data: &[u8], code_page: &str) -> Result<DxfRecords> {
     Ok(records)
 }
 
+fn adopt_distinct_block_names(
+    rows: &mut [EntityRecord],
+    blocks: &SectionRecords,
+    blocks_start: u32,
+) {
+    // Only duplicated table names lose their index identity. A unique name
+    // stays as stored so a differing BLOCK string cannot rename another block.
+    let mut counts = std::collections::HashMap::<String, usize>::new();
+    for row in rows.iter() {
+        *counts
+            .entry(row.string(2).to_ascii_uppercase())
+            .or_default() += 1;
+    }
+    let mut claimed: std::collections::HashSet<String> = rows
+        .iter()
+        .map(|row| row.string(2).to_ascii_uppercase())
+        .collect();
+    for row in rows.iter_mut() {
+        let current = row.string(2).to_ascii_uppercase();
+        if counts.get(&current).copied().unwrap_or(0) < 2 {
+            continue;
+        }
+        let offset = row.integer(90, 0) as u32 & 0x3fff_ffff;
+        let Some(address) = blocks_start.checked_add(offset) else {
+            continue;
+        };
+        let Some(name) = blocks.records.iter().find_map(|positioned| {
+            let record = positioned.record.as_ref()?;
+            if positioned.address != address || record.kind != "BLOCK" {
+                return None;
+            }
+            let name = record.string(2);
+            if name.is_empty() {
+                None
+            } else {
+                Some(name.to_owned())
+            }
+        }) else {
+            continue;
+        };
+        let claimed_name = name.to_ascii_uppercase();
+        if claimed_name == current || claimed.contains(&claimed_name) {
+            continue;
+        }
+        claimed.insert(claimed_name);
+        row.pairs.retain(|(code, _)| *code != 2);
+        row.pairs.push((2, name));
+    }
+}
+
+fn records_reference_application(records: &DxfRecords, application: &str) -> bool {
+    records
+        .entities
+        .iter()
+        .chain(records.blocks.iter())
+        .chain(records.tables.iter().flatten())
+        .any(|record| {
+            record
+                .pairs
+                .iter()
+                .any(|(code, value)| *code == 1001 && value.eq_ignore_ascii_case(application))
+        })
+}
+
 fn complete_table_records(document: &CadDocument, records: &mut DxfRecords) {
     // Restore native AC1009 usage words which have no DXF counterpart.
     for rows in &mut records.tables {
@@ -538,7 +621,13 @@ fn complete_table_records(document: &CadDocument, records: &mut DxfRecords) {
         !record.string(2).eq_ignore_ascii_case("BYLAYER")
             && !record.string(2).eq_ignore_ascii_case("BYBLOCK")
     });
-    records.tables[7].retain(|record| !record.string(2).eq_ignore_ascii_case("ACADANNOTATIVE"));
+    // `AcadAnnotative` is synthesized for newer documents. Keep it when the
+    // drawing's extended data actually names the application; otherwise the
+    // entity encoder cannot resolve that reference.
+    let keep_annotative = records_reference_application(records, "ACADANNOTATIVE");
+    records.tables[7].retain(|record| {
+        keep_annotative || !record.string(2).eq_ignore_ascii_case("ACADANNOTATIVE")
+    });
     let mut in_system_space = false;
     records.blocks.retain(|record| {
         if record.kind == "BLOCK" {

@@ -320,3 +320,139 @@ fn legacy_header_indices_resolve_to_imported_table_handles() {
         );
     }
 }
+
+#[test]
+fn adopt_only_splits_duplicated_block_table_names() {
+    use super::entities::PositionedRecord;
+    use super::traversal::SectionRecords;
+
+    let mut rows = vec![
+        record("BLOCK", &[(2, "KEEP"), (90, "0")]),
+        record("BLOCK", &[(2, "*D"), (90, "10")]),
+        record("BLOCK", &[(2, "*D"), (90, "20")]),
+        record("BLOCK", &[(2, "*D"), (90, "30")]),
+    ];
+    let blocks = SectionRecords {
+        records: ["RENAMED", "*D0", "KEEP", "*D1"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| PositionedRecord {
+                offset: index as u32 * 10,
+                address: index as u32 * 10,
+                size: 0,
+                record: Some(record("BLOCK", &[(2, name)])),
+                jump_address: None,
+                sequence_owner: None,
+            })
+            .collect(),
+        ..SectionRecords::default()
+    };
+    super::adopt_distinct_block_names(&mut rows, &blocks, 0);
+    assert_eq!(rows[0].string(2), "KEEP");
+    assert_eq!(rows[1].string(2), "*D0");
+    assert_eq!(rows[2].string(2), "*D");
+    assert_eq!(rows[3].string(2), "*D1");
+}
+
+fn with_point(mut record: EntityRecord, code: i32, x: f64, y: f64, z: f64) -> EntityRecord {
+    record.pairs.push((code, x.to_string()));
+    record.pairs.push((code + 10, y.to_string()));
+    record.pairs.push((code + 20, z.to_string()));
+    record
+}
+
+fn collapse_block_table_names(bytes: &mut [u8]) {
+    let size = u16::from_le_bytes(bytes[0x2c..0x2e].try_into().unwrap()) as usize;
+    let count = u16::from_le_bytes(bytes[0x2e..0x30].try_into().unwrap()) as usize;
+    let address = u32::from_le_bytes(bytes[0x32..0x36].try_into().unwrap()) as usize;
+    for index in 0..count {
+        let start = address + index * size;
+        let record = &mut bytes[start..start + size];
+        record[1..33].fill(0);
+        record[1..3].copy_from_slice(b"*D");
+        let checksum = crate::io::dwg::crc::crc16(0xC0C1, &record[..size - 2]);
+        record[size - 2..].copy_from_slice(&checksum.to_le_bytes());
+    }
+}
+
+#[test]
+fn duplicate_r11_dimension_block_names_keep_entity_identity() {
+    let blocks = vec![
+        with_point(record("BLOCK", &[(2, "*D0")]), 10, 0.0, 0.0, 0.0),
+        with_point(
+            with_point(record("LINE", &[(8, "0")]), 10, 0.0, 0.0, 0.0),
+            11,
+            1.0,
+            0.0,
+            0.0,
+        ),
+        record("ENDBLK", &[]),
+        with_point(record("BLOCK", &[(2, "*D1")]), 10, 0.0, 0.0, 0.0),
+        with_point(
+            with_point(record("LINE", &[(8, "0")]), 10, 2.0, 0.0, 0.0),
+            11,
+            3.0,
+            0.0,
+            0.0,
+        ),
+        record("ENDBLK", &[]),
+    ];
+    let mut tables: [Vec<EntityRecord>; 10] = std::array::from_fn(|_| Vec::new());
+    tables[0] = vec![
+        record("BLOCK", &[(2, "*D0"), (70, "1")]),
+        record("BLOCK", &[(2, "*D1"), (70, "1")]),
+    ];
+    let refs = ensure_table_defaults(tables::entity_tables(&tables));
+    let encoded = entities::encode_entities(&blocks, &refs, 0, "ANSI_1252").unwrap();
+    let mut offsets = Vec::new();
+    let mut position = 0;
+    while position < encoded.len() {
+        if encoded[position] & 127 == 12 {
+            offsets.push(position as u32);
+        }
+        let size = u16::from_le_bytes([encoded[position + 2], encoded[position + 3]]) as usize;
+        position += size;
+    }
+    assert_eq!(offsets.len(), 2);
+    for (row, offset) in tables[0].iter_mut().zip(offsets) {
+        row.pairs.push((90, (offset | 0x4000_0000).to_string()));
+    }
+    let mut dimension = with_point(
+        record("DIMENSION", &[(2, "*D1"), (8, "0"), (70, "1")]),
+        10,
+        5.0,
+        5.0,
+        0.0,
+    );
+    dimension = with_point(dimension, 11, 6.0, 6.0, 0.0);
+    let mut bytes = fixture(0x1000, &tables, &[dimension], &blocks);
+    collapse_block_table_names(&mut bytes);
+
+    let doc = read_document(&bytes, None, None).unwrap();
+    let names: Vec<_> = doc
+        .block_records
+        .iter()
+        .map(|block| block.name.clone())
+        .collect();
+    assert!(names.iter().any(|name| name == "*D0"), "{names:?}");
+    assert!(names.iter().any(|name| name == "*D1"), "{names:?}");
+    let dimension = doc
+        .entities()
+        .find(|entity| matches!(entity, EntityType::Dimension(_)))
+        .expect("dimension");
+    let EntityType::Dimension(dimension) = dimension else {
+        unreachable!()
+    };
+    assert_eq!(dimension.base().block_name, "*D1");
+    assert_eq!(
+        doc.audit()
+            .count(crate::audit::AuditIssueCode::DuplicateHandle),
+        0
+    );
+    let picture = doc.entities_in_block("*D1").collect::<Vec<_>>();
+    assert_eq!(picture.len(), 1);
+    let EntityType::Line(line) = picture[0] else {
+        panic!("dimension picture lost its line");
+    };
+    assert_eq!(line.start, crate::types::Vector3::new(2.0, 0.0, 0.0));
+}

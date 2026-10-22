@@ -4,10 +4,56 @@ use acadrust::entities::{Face3D, Solid};
 use acadrust::io::dwg::DwgVersion;
 use acadrust::tables::BlockRecord;
 use acadrust::tables::Layer;
+use acadrust::xdata::{ExtendedDataRecord, XDataValue};
 use acadrust::{
     Arc, CadDocument, Circle, DwgReader, DwgWriter, DxfVersion, Ellipse, EntityType, Line, MText,
     Point, Text, Vector3,
 };
+
+fn bytes_contain(bytes: &[u8], needle: &[u8]) -> bool {
+    bytes.windows(needle.len()).any(|window| window == needle)
+}
+
+#[test]
+fn ac1009_write_keeps_annotative_application_when_extended_data_names_it() {
+    let mut document = CadDocument::with_version(DxfVersion::AC1009);
+    let mut line = Line::from_coords(0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    let mut record = ExtendedDataRecord::new("ACADANNOTATIVE");
+    record.add_value(XDataValue::String("AnnotativeData".into()));
+    line.common.extended_data.add_record(record);
+    document.add_entity(EntityType::Line(line)).unwrap();
+
+    let bytes = DwgWriter::write_to_vec(&document).unwrap();
+    assert!(
+        bytes_contain(&bytes, b"ACADANNOTATIVE") || bytes_contain(&bytes, b"AcadAnnotative"),
+        "referenced annotative application was dropped from the R12 table"
+    );
+    let restored = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
+    let entity = restored.entities().next().expect("line");
+    let record = entity
+        .common()
+        .extended_data
+        .records()
+        .iter()
+        .find(|record| {
+            record
+                .application_name
+                .eq_ignore_ascii_case("ACADANNOTATIVE")
+        })
+        .expect("annotative extended data");
+    assert!(record
+        .values
+        .iter()
+        .any(|value| matches!(value, XDataValue::String(text) if text == "AnnotativeData")));
+}
+
+#[test]
+fn ac1009_write_omits_unreferenced_annotative_application() {
+    let document = CadDocument::with_version(DxfVersion::AC1009);
+    let bytes = DwgWriter::write_to_vec(&document).unwrap();
+    assert!(!bytes_contain(&bytes, b"AcadAnnotative"));
+    assert!(!bytes_contain(&bytes, b"ACADANNOTATIVE"));
+}
 
 #[test]
 fn ac1009_keeps_imported_layout_references_when_applying_legacy_header() {
