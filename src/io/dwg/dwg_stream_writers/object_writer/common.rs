@@ -1114,22 +1114,32 @@ impl<'a> DwgObjectWriter<'a> {
     ///
     /// Other paper-space layouts retain an explicit owner handle.
     fn get_entity_mode(&self, owner_handle: &Handle) -> u8 {
-        for br in self.document.block_records.iter() {
-            if br.handle == *owner_handle {
-                let upper = br.name.to_ascii_uppercase();
-                if upper == "*MODEL_SPACE" {
-                    return 2; // model space (BB 10)
-                }
+        self.entity_modes.get(owner_handle).copied().unwrap_or(0)
+    }
+
+    /// The entity mode of each block record's entities, by the record's
+    /// handle, built once per writer: searching the block records for every
+    /// entity made writing a drawing with many blocks quadratic. The first
+    /// record with a handle decides, as a search of the table in order would.
+    pub(super) fn build_entity_modes(
+        document: &crate::document::CadDocument,
+        paper_space_block_handle: Handle,
+    ) -> std::collections::HashMap<Handle, u8> {
+        let mut modes = std::collections::HashMap::with_capacity(document.block_records.len());
+        for br in document.block_records.iter() {
+            let mode = if br.name.eq_ignore_ascii_case("*MODEL_SPACE") {
+                2 // model space (BB 10)
+            } else if br.handle == paper_space_block_handle {
                 // Paper-space mode names the active layout's *Paper_Space;
                 // the other layouts' *Paper_SpaceN records, like named
                 // blocks, store their owner.
-                if br.handle == self.paper_space_block_handle {
-                    return 1; // paper space (BB 01)
-                }
-                return 0; // owner handle follows
-            }
+                1 // paper space (BB 01)
+            } else {
+                0 // owner handle follows
+            };
+            modes.entry(br.handle).or_insert(mode);
         }
-        0
+        modes
     }
 }
 

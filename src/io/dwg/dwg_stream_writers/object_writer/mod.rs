@@ -149,6 +149,10 @@ pub struct DwgObjectWriter<'a> {
     /// Cached fallback for owners without a direct extension-dictionary handle.
     pub(super) xdic_owner_index: std::sync::Arc<std::collections::HashMap<Handle, Handle>>,
     pub(super) block_users: std::sync::Arc<std::collections::HashMap<Handle, Vec<Handle>>>,
+    /// Entity mode by owner block record handle (see `get_entity_mode`), built once: looking
+    /// the owner up among the block records for every entity made writing a drawing with many
+    /// blocks quadratic.
+    pub(super) entity_modes: std::sync::Arc<std::collections::HashMap<Handle, u8>>,
 }
 
 struct ParallelEntityBatch {
@@ -290,6 +294,10 @@ impl<'a> DwgObjectWriter<'a> {
             linetype_handles: std::collections::HashMap::new(),
             xdic_owner_index: std::sync::Arc::new(Self::build_xdic_owner_index(document)),
             block_users: std::sync::Arc::new(Self::build_block_users(document)),
+            entity_modes: std::sync::Arc::new(Self::build_entity_modes(
+                document,
+                paper_space_block_handle(document),
+            )),
         })
     }
 
@@ -2098,6 +2106,7 @@ impl<'a> DwgObjectWriter<'a> {
             raw_excluded_handles: self.raw_excluded_handles.clone(),
             xdic_owner_index: self.xdic_owner_index.clone(),
             block_users: self.block_users.clone(),
+            entity_modes: self.entity_modes.clone(),
             owner_overrides: std::collections::HashMap::new(),
             linetype_handles: std::collections::HashMap::new(),
         };
