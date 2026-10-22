@@ -5145,8 +5145,12 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     self.write_attrib(att, insert_handle)?;
                 }
             }
-            // SEQEND terminates the attribute sequence
-            let seqend_handle = self.allocate_handle();
+            // SEQEND terminates the attribute sequence; it keeps the
+            // handle it was read with (DWG or DXF), as the DWG writer does.
+            let seqend_handle = insert
+                .seqend_handle
+                .filter(|handle| !handle.is_null())
+                .unwrap_or_else(|| self.allocate_handle());
             self.writer.write_entity_type("SEQEND")?;
             self.writer.write_handle(5, seqend_handle)?;
             self.writer.write_handle(330, insert_handle)?;
