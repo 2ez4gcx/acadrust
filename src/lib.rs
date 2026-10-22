@@ -20,15 +20,62 @@
 //!
 //! ## Feature Flags
 //!
-//! | Feature | Description |
-//! |---------|-------------|
-//! | `serde` | Enables `serde::Serialize` and `serde::Deserialize` implementations. |
-//! | `import` | Enables STL, COLLADA, OBJ, glTF/GLB, and FBX importers. |
+//! | Feature | Default | Description |
+//! |---------|---------|-------------|
+//! | `parallel` | Yes | Rayon parallelism for native DWG reading and writing. |
+//! | `serde` | No | Enables `serde::Serialize` and `serde::Deserialize` implementations. |
+//! | `import` | No | Enables STL, COLLADA, OBJ, glTF/GLB, and FBX importers. |
 //!
 //! ```toml
 //! [dependencies]
 //! acadrust = { version = "0.6.5", features = ["serde", "import"] }
 //! ```
+//!
+//! Use `default-features = false` to omit acadrust's Rayon dependency and run
+//! DWG work sequentially on the calling thread:
+//!
+//! ```toml
+//! [dependencies]
+//! acadrust = { version = "0.6.5", default-features = false }
+//! ```
+//!
+//! Cargo features are additive, so another dependency can enable `parallel`.
+//! Applications already disabling default features must explicitly enable
+//! `parallel` to retain native parallelism. WebAssembly stays sequential.
+//!
+//! ## Limit DWG Concurrency
+//!
+//! With `parallel` enabled on native targets, DWG reads and writes use the
+//! current Rayon pool, falling back to Rayon's shared global pool. Add
+//! `rayon = "1"` to your application's dependencies, create a pool once, and
+//! reuse it for all batches to share a worker limit with acadrust's internal
+//! work:
+//!
+//! ```rust,no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! # #[cfg(all(feature = "parallel", not(target_arch = "wasm32")))]
+//! # {
+//! use acadrust::DwgReader;
+//! use rayon::prelude::*;
+//!
+//! let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
+//! let paths = ["first.dwg", "second.dwg"];
+//! let counts: Vec<usize> = pool.install(|| {
+//!     paths.par_iter().map(|path| {
+//!         let mut reader = DwgReader::from_file(path)?;
+//!         let doc = reader.read()?;
+//!         Ok(doc.entities().count())
+//!     }).collect::<acadrust::Result<_>>()
+//! })?;
+//! println!("Entity counts: {counts:?}");
+//! # }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Wrap DWG writes in `pool.install` too. Calls outside this pool and separate
+//! pools are not covered by its limit. A one-thread pool still uses a Rayon
+//! worker; disabling `parallel` keeps acadrust's work on its calling thread.
 //!
 //! ## Quick Start — DXF
 //!

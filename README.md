@@ -38,6 +38,7 @@ DXF, use `DxfWriter::new_binary(&doc)`.
 
 | Feature | Default | Adds |
 |---------|---------|------|
+| `parallel` | Yes | Rayon parallelism for native DWG reading and writing |
 | `serde` | No | `Serialize` and `Deserialize` implementations for document types |
 | `import` | No | STL, COLLADA, OBJ, glTF/GLB, and FBX importers |
 
@@ -47,6 +48,58 @@ Enable optional features as needed:
 [dependencies]
 acadrust = { version = "0.6.5", features = ["serde", "import"] }
 ```
+
+To run DWG work sequentially on the calling thread and omit acadrust's Rayon
+dependency, disable default features:
+
+```toml
+[dependencies]
+acadrust = { version = "0.6.5", default-features = false }
+```
+
+Cargo features are additive: another dependency enabling `acadrust/parallel`
+can enable it for your application too. Existing applications using
+`default-features = false` must add `features = ["parallel"]` to retain native
+parallelism. WebAssembly remains sequential regardless of this feature.
+
+### Limit DWG concurrency
+
+Native DWG reads and writes use the current Rayon pool, or Rayon's shared
+global pool when called outside a pool. To bound concurrency, create an
+application-owned pool once and reuse it for all DWG jobs:
+
+```toml
+[dependencies]
+acadrust = "0.6.5"
+rayon = "1"
+```
+
+```rust
+use acadrust::DwgReader;
+use rayon::prelude::*;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
+    let paths = ["first.dwg", "second.dwg"];
+
+    let counts: Vec<usize> = pool.install(|| {
+        paths.par_iter().map(|path| {
+            let mut reader = DwgReader::from_file(path)?;
+            let doc = reader.read()?;
+            Ok(doc.entities().count())
+        }).collect::<acadrust::Result<_>>()
+    })?;
+
+    println!("Entity counts: {counts:?}");
+    Ok(())
+}
+```
+
+The batch and acadrust's internal parallel work share these four workers;
+reuse the same `pool` for later batches and wrap writes in `pool.install` too.
+Separate pools or DWG calls outside this pool are not covered by its limit.
+A one-thread pool still executes work on a Rayon worker; disabling `parallel`
+keeps acadrust's work on its calling thread.
 
 ## Features
 

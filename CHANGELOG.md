@@ -2,6 +2,12 @@
 
 ### 0.6.5
 
+- **Optional DWG parallelism (issue #156)** - Adds a default-enabled `parallel`
+  Cargo feature for native DWG reading and writing. Disabling default features
+  omits acadrust's Rayon dependency and runs its work on the calling thread.
+  Applications already using `default-features = false` must explicitly enable
+  `parallel` to retain native parallelism; WebAssembly remains sequential.
+  Documents how to reuse an application-owned Rayon pool to limit concurrency.
 - **Constraint-group interoperability (issue #135)** - Corrects R2010 circle
   and arc layouts and native inline DWG/DXF output. Sparse node IDs no longer
   act as array counts. Unsupported groups retain bounded DWG records with
