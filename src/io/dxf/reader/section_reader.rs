@@ -2139,6 +2139,18 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
+                "$DIMFXLON" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_fixed_ext_line_on = p.as_i16() == Some(1);
+                    }
+                }
+                "$DIMARCSYM" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_arc_symbol = v;
+                        }
+                    }
+                }
                 "$DIMJOGANG" => {
                     if let Some(p) = self.reader.read_pair()? {
                         if let Some(v) = p.as_double() {

@@ -1269,6 +1269,10 @@ fn prepare_header(
         }
     }
 
+    // DIMBLK / DIMBLK1 / DIMBLK2 / DIMLDRBLK. DXF stores the names; a DWG
+    // stores the block handles. A null handle is the default closed-filled arrow.
+    crate::document::apply_dimension_arrow_header(&document.block_records, &mut h);
+
     // ── Correct HANDSEED ──
     let max_handle = handle_map.iter().map(|&(ha, _)| ha).max().unwrap_or(0);
     if h.handle_seed <= max_handle {

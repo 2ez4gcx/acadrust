@@ -437,6 +437,7 @@ impl DxfReader {
             stream_completed,
             diagnostics,
         );
+        crate::document::sync_dimension_arrow_header(&mut document);
         document.source_path = self.source_path.take();
         crate::objects::restore_visual_style_roundtrip(&mut document);
         crate::objects::restore_table_style_roundtrip(&mut document);

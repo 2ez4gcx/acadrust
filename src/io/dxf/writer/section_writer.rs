@@ -611,6 +611,34 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         })?;
         self.write_header_variable("$DIMPOST", |w| w.write_string(1, &hdr.dim_post))?;
         self.write_header_variable("$DIMAPOST", |w| w.write_string(1, &hdr.dim_alt_post))?;
+        for (variable, stored, handle) in [
+            (
+                "$DIMBLK",
+                hdr.dim_arrow_block.as_str(),
+                hdr.dim_arrow_block_handle,
+            ),
+            (
+                "$DIMBLK1",
+                hdr.dim_arrow_block1.as_str(),
+                hdr.dim_arrow_block1_handle,
+            ),
+            (
+                "$DIMBLK2",
+                hdr.dim_arrow_block2.as_str(),
+                hdr.dim_arrow_block2_handle,
+            ),
+            (
+                "$DIMLDRBLK",
+                hdr.dim_leader_arrow_block.as_str(),
+                hdr.dim_leader_arrow_block_handle,
+            ),
+        ] {
+            let name =
+                crate::document::dimension_arrow_dxf_name(&document.block_records, stored, handle);
+            if !name.is_empty() {
+                self.write_header_variable(variable, |w| w.write_string(1, &name))?;
+            }
+        }
         self.write_header_variable("$DIMSTYLE", |w| {
             w.write_string(2, &hdr.current_dimstyle_name)
         })?;
@@ -661,6 +689,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.write_header_variable("$DIMFXL", |w| {
                 w.write_double(40, hdr.dim_fixed_ext_line_length)
             })?;
+            self.write_header_variable("$DIMFXLON", |w| {
+                w.write_i16(70, if hdr.dim_fixed_ext_line_on { 1 } else { 0 })
+            })?;
+            self.write_header_variable("$DIMARCSYM", |w| w.write_i16(70, hdr.dim_arc_symbol))?;
             // DIMJOGANG valid range is 5°..90°
             self.write_header_variable("$DIMJOGANG", |w| {
                 w.write_double(

@@ -675,7 +675,7 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
     }
 
     if r2007_plus(v) {
-        w.write_bit_short(0); // DIMARCSYM
+        w.write_bit_short(h.dim_arc_symbol); // DIMARCSYM
     }
 
     // ── Dimension sizes (Common) ──
@@ -738,7 +738,7 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
 
     // R2007+: DIMFXLON
     if r2007_plus(v) {
-        w.write_bit(false); // DimensionIsExtensionLineLengthFixed
+        w.write_bit(h.dim_fixed_ext_line_on); // DimensionIsExtensionLineLengthFixed
     }
 
     // R2010+: extra dimension fields
@@ -753,10 +753,14 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
     // R2000+ dimension handles
     if r2000_plus(v) {
         w.write_handle_ref(DwgReferenceType::HardPointer, h.dim_text_style_handle);
-        w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL); // DIMLDRBLK
-        w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL); // DIMBLK
-        w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL); // DIMBLK1
-        w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL); // DIMBLK2
+        // DIMLDRBLK, DIMBLK, DIMBLK1, DIMBLK2
+        w.write_handle_ref(
+            DwgReferenceType::HardPointer,
+            h.dim_leader_arrow_block_handle,
+        );
+        w.write_handle_ref(DwgReferenceType::HardPointer, h.dim_arrow_block_handle);
+        w.write_handle_ref(DwgReferenceType::HardPointer, h.dim_arrow_block1_handle);
+        w.write_handle_ref(DwgReferenceType::HardPointer, h.dim_arrow_block2_handle);
     }
 
     // R2007+ dimension linetype handles
