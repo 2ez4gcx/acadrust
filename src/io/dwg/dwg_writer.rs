@@ -1021,8 +1021,9 @@ fn uses_paged_format(version: DxfVersion) -> bool {
 /// dictionary, causing IntelliCAD (and other CAD apps) to report
 /// "null object id" for every object.
 ///
-/// Also updates EXTMIN/EXTMAX from the computed model-space extents so that
-/// "Zoom Extents" works correctly when the file is first opened.
+/// A document without EXTMIN/EXTMAX (the 1e20 defaults) gets the computed
+/// model-space extents, so that "Zoom Extents" works when the file is first
+/// opened; extents the document holds are kept.
 fn prepare_header(
     document: &CadDocument,
     handle_map: &[(u64, u32)],
@@ -1280,9 +1281,23 @@ fn prepare_header(
     }
 
     // ── Update model-space extents ──
+    // Extents the document already holds (read from a file, or set by the
+    // caller) are kept: EXTMIN/EXTMAX are what the authoring application last
+    // computed, and the entity bounding boxes are no substitute (an XLINE or
+    // RAY is unbounded, and block references are boxed by their insertion
+    // point). Only a document without extents gets the computed ones.
+    let (min, max) = (h.model_space_extents_min, h.model_space_extents_max);
+    let has_extents = [min.x, min.y, min.z, max.x, max.y, max.z]
+        .iter()
+        .all(|c| c.is_finite() && c.abs() < 1e20)
+        && min.x <= max.x
+        && min.y <= max.y
+        && min.z <= max.z;
     if let Some(ref ext) = extents {
-        h.model_space_extents_min = ext.min;
-        h.model_space_extents_max = ext.max;
+        if !has_extents {
+            h.model_space_extents_min = ext.min;
+            h.model_space_extents_max = ext.max;
+        }
     }
 
     h
