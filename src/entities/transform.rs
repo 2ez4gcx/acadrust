@@ -527,7 +527,7 @@ pub(crate) fn transform_dimension(e: &mut Dimension, transform: &Transform) {
         }
         Dimension::Ordinate(_) => unreachable!(),
     }
-    e.base_mut().actual_measurement = e.measurement();
+    e.base_mut().actual_measurement = e.stored_measurement();
 }
 
 // ── Hatch ────────────────────────────────────────────────────────────────────

@@ -454,11 +454,11 @@ impl DimensionAngular2Ln {
     pub fn new(vertex: Vector3, first_point: Vector3, second_point: Vector3) -> Self {
         let mut base = DimensionBase::new(DimensionType::Angular);
 
-        // Calculate angle between the two lines
+        // Calculate angle between the two lines; files store it in radians.
         let v1 = (first_point - vertex).normalize();
         let v2 = (second_point - vertex).normalize();
         let angle = v1.dot(&v2).acos();
-        base.actual_measurement = angle.to_degrees();
+        base.actual_measurement = angle;
 
         Self {
             base,
@@ -536,11 +536,11 @@ impl DimensionAngular3Pt {
     pub fn new(vertex: Vector3, first_point: Vector3, second_point: Vector3) -> Self {
         let mut base = DimensionBase::new(DimensionType::Angular3Point);
 
-        // Calculate angle
+        // Calculate angle; files store it in radians.
         let v1 = (first_point - vertex).normalize();
         let v2 = (second_point - vertex).normalize();
         let angle = v1.dot(&v2).acos();
-        base.actual_measurement = angle.to_degrees();
+        base.actual_measurement = angle;
 
         Self {
             base,
@@ -982,6 +982,17 @@ impl Dimension {
             Dimension::Ordinate(d) => d.measurement(),
             Dimension::Arc(d) => d.measurement(),
             Dimension::LargeRadial(d) => d.measurement(),
+        }
+    }
+
+    /// The measurement a file stores (DXF group 42, the DWG actual
+    /// measurement): an angular dimension's angle in radians, any other
+    /// dimension's [`measurement`](Self::measurement).
+    pub fn stored_measurement(&self) -> f64 {
+        match self {
+            Dimension::Angular2Ln(d) => d.measurement_radians(),
+            Dimension::Angular3Pt(d) => d.measurement_radians(),
+            _ => self.measurement(),
         }
     }
 }

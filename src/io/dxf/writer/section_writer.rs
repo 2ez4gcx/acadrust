@@ -4396,11 +4396,13 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         if base.insertion_point != Vector3::ZERO {
             self.writer.write_point3d(12, base.insertion_point)?;
         }
-        // Bit 0x80 marks text positioned at a user-defined location.
+        // Bit 0x80 marks text positioned at a user-defined location; bit
+        // 0x20 says the dimension's block is referenced by this dimension
+        // only, which every dimension's own geometry block is.
         let type_flags = if base.text_user_positioned {
-            type_flags | 0x80
+            type_flags | 0xA0
         } else {
-            type_flags
+            type_flags | 0x20
         };
         self.writer.write_i16(70, type_flags)?;
         self.writer.write_double(42, base.actual_measurement)?;
