@@ -9847,12 +9847,14 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Leader line color
         self.write_color_i32(91, mleader.line_color)?;
 
-        // Leader line type handle (code 341; use ByLayer if null or ByBlock)
+        // Leader line type handle (code 341). A ByBlock leader stays ByBlock
+        // (it is AutoCAD's default for a multileader's leader lines); only a
+        // missing one is written as ByBlock, the same default.
         {
             let h = mleader
                 .line_type_handle
-                .filter(|h| *h != Handle::NULL && *h != self.byblock_linetype_handle)
-                .unwrap_or(self.bylayer_linetype_handle);
+                .filter(|h| *h != Handle::NULL)
+                .unwrap_or(self.byblock_linetype_handle);
             if h != Handle::NULL {
                 self.writer.write_handle(341, h)?;
             }
