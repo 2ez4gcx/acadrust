@@ -70,6 +70,12 @@
 
 ### 0.6.5
 
+- **DIMASSOC point references without objects** - A point reference that
+  snaps to no object, such as the `_End` last point AutoCAD chains after a
+  perpendicular snap, carries no main sub-entity. DWG and DXF now read and
+  write it without subent type, GS marker and xref paths, as AutoCAD does;
+  such drawings previously failed the strict read and needed recovery.
+
 - **DWG 2010 REGION tails** - Read an empty silhouette count retained after
   an absent isoline cache when the complete bounded material tail validates.
   Preserve the count-free layout and existing truncated-stream checks.
