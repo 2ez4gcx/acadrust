@@ -159,11 +159,12 @@ fn build_rich_document(version: DxfVersion) -> (CadDocument, usize) {
     count += 1;
 
     // ── Annotations ────────────────────────────────────────────────
-    doc.add_entity(EntityType::Leader(Leader::two_point(
-        Vector3::new(0.0, 0.0, 0.0),
-        Vector3::new(10.0, 10.0, 0.0),
-    )))
-    .unwrap();
+    // R2000+ DWG does not store the hook flag. This 45° text leader reads
+    // back hooked, so the source matches that derived state.
+    let mut leader =
+        Leader::two_point(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 10.0, 0.0));
+    leader.hookline_enabled = true;
+    doc.add_entity(EntityType::Leader(leader)).unwrap();
     count += 1;
 
     doc.add_entity(EntityType::Dimension(Box::new(Dimension::Linear(
@@ -1694,10 +1695,13 @@ dwg_entity_roundtrip!(
 );
 dwg_entity_roundtrip!(
     dwg_rt_leader,
-    EntityType::Leader(Leader::two_point(
-        Vector3::new(0.0, 0.0, 0.0),
-        Vector3::new(10.0, 10.0, 0.0)
-    ))
+    {
+        let mut leader =
+            Leader::two_point(Vector3::new(0.0, 0.0, 0.0), Vector3::new(10.0, 10.0, 0.0));
+        // R2000+ DWG derives the hook from this 45° last segment.
+        leader.hookline_enabled = true;
+        EntityType::Leader(leader)
+    }
 );
 dwg_entity_roundtrip!(
     dwg_rt_dimension,
