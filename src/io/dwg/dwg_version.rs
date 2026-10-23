@@ -9,9 +9,9 @@ use crate::types::DxfVersion;
 
 /// DWG format version, determining which stream writer features are used.
 ///
-/// R13 and later map to the C# inheritance chain:
+/// Release 11 and Release 12 both use AC1009. R13 and later map to the C# inheritance chain:
 /// `DwgStreamWriterAC12 → AC15 → AC18 → AC21 → AC24`.
-/// R12 uses the separate pre-R13 file format.
+/// R11/R12 use the separate pre-R13 file format.
 ///
 /// Each version adds or overrides specific encoding behaviors:
 /// - AC9: R12 pre-R13 format
@@ -23,7 +23,7 @@ use crate::types::DxfVersion;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DwgVersion {
-    /// R12 (AC1009) pre-R13 DWG format
+    /// R11/R12 (AC1009) pre-R13 DWG format
     AC9,
     /// R13/R14 baseline
     AC12,
@@ -85,8 +85,13 @@ impl DwgVersion {
         *self == DwgVersion::AC12
     }
 
-    /// R12 only.
+    /// R11/R12 only (the AC1009 family).
     pub fn r12_only(&self) -> bool {
+        *self == DwgVersion::AC9
+    }
+
+    /// Whether this is the shared AutoCAD Release 11/12 format family.
+    pub fn r11_r12(&self) -> bool {
         *self == DwgVersion::AC9
     }
 
@@ -227,7 +232,9 @@ mod tests {
     #[test]
     fn test_version_conditionals() {
         assert!(DwgVersion::AC9.r12_only());
+        assert!(DwgVersion::AC9.r11_r12());
         assert!(!DwgVersion::AC12.r12_only());
+        assert!(!DwgVersion::AC12.r11_r12());
 
         assert!(DwgVersion::AC12.r13_14_only());
         assert!(!DwgVersion::AC15.r13_14_only());
@@ -259,10 +266,7 @@ mod tests {
             Some(DwgVersion::AC9)
         );
         assert_eq!(DwgVersion::AC9.to_dxf_version_string(), "AC1009");
-        assert_eq!(
-            DwgVersion::AC9.version_string(DxfVersion::AC1009),
-            "AC1009"
-        );
+        assert_eq!(DwgVersion::AC9.version_string(DxfVersion::AC1009), "AC1009");
         assert!(!DwgVersion::AC9.uses_page_format());
         assert!(!DwgVersion::AC9.supports_true_color());
         assert!(!DwgVersion::AC9.uses_unicode_text());

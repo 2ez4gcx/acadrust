@@ -117,7 +117,10 @@ fn independent_204_and_205_headers_decode_nondefault_values_and_honor_edits() {
         assert_eq!(&saved[0x132..0x13a], &6.25_f64.to_le_bytes());
         assert_eq!(&saved[0x463..0x46b], &1.5_f64.to_le_bytes());
         assert_eq!(&saved[0x128..0x12a], &[0, 0]);
-        assert_eq!(read_header(&saved).unwrap().num_header_variables, 205);
+        assert_eq!(
+            read_header(&saved).unwrap().num_header_variables,
+            if count == 204 { 204 } else { 205 }
+        );
         let restored = read_document(saved);
         assert_eq!(restored.header.linetype_scale, 6.25);
         assert_eq!(restored.header.view_twist, 1.5);

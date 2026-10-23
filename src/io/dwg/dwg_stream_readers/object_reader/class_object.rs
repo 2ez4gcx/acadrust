@@ -875,7 +875,8 @@ pub fn read_class_object_data(
             let row_count = reader.checked_count(i64::from(raw_row_count)) as i32;
             if reader.checked_count(i64::from(column_count) * i64::from(row_count))
                 != i64::from(column_count) * i64::from(row_count)
-                || column_count < 0 || row_count < 0
+                || column_count < 0
+                || row_count < 0
             {
                 return None;
             }

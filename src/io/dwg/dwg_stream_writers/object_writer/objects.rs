@@ -312,9 +312,7 @@ pub(crate) fn object_class_names(object: &ObjectType) -> Vec<std::borrow::Cow<'_
         ObjectType::FieldList(_) => "FIELDLIST",
         ObjectType::DynamicBlock(value) => &value.dxf_name,
         ObjectType::DgnLineStyle(value) => value.dxf_name(),
-        ObjectType::ClassObject(value)
-            if !matches!(value.data, ClassObjectData::VbaProject(_)) =>
-        {
+        ObjectType::ClassObject(value) if !matches!(value.data, ClassObjectData::VbaProject(_)) => {
             value.dxf_name()
         }
         ObjectType::DataObject(value)
@@ -363,7 +361,9 @@ impl<'a> DwgObjectWriter<'a> {
         let names = object_class_names(object);
         class_only
             && !names.is_empty()
-            && !names.iter().any(|name| self.document.classes.contains(name))
+            && !names
+                .iter()
+                .any(|name| self.document.classes.contains(name))
     }
 
     /// Write a single non-graphical object record.

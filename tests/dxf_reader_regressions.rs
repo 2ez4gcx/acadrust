@@ -1,4 +1,3 @@
-
 use std::io::Cursor;
 
 use acadrust::entities::attribute_definition::{
@@ -9,7 +8,9 @@ use acadrust::types::{DxfVersion, Vector3};
 use acadrust::{CadDocument, DxfReader, DxfWriter};
 
 fn dxf_roundtrip(doc: &CadDocument) -> CadDocument {
-    let bytes = DxfWriter::new(doc).write_to_vec().expect("DXF write failed");
+    let bytes = DxfWriter::new(doc)
+        .write_to_vec()
+        .expect("DXF write failed");
     DxfReader::from_reader(Cursor::new(bytes))
         .expect("DXF reader init failed")
         .read()
@@ -148,11 +149,17 @@ fn leader_annotation_link_vectors_and_color_survive_dxf_roundtrip() {
 fn view_border_and_section_symbol_keep_their_kind_in_dxf_entities_section() {
     use acadrust::entities::{SectionSymbol, ViewBorder};
     let mut doc = CadDocument::with_version(DxfVersion::AC1032);
-    doc.add_entity(EntityType::ViewBorder(ViewBorder::default())).unwrap();
-    doc.add_entity(EntityType::SectionSymbol(SectionSymbol::default())).unwrap();
+    doc.add_entity(EntityType::ViewBorder(ViewBorder::default()))
+        .unwrap();
+    doc.add_entity(EntityType::SectionSymbol(SectionSymbol::default()))
+        .unwrap();
     let rt = dxf_roundtrip(&doc);
-    assert!(rt.entities().any(|e| matches!(e, EntityType::ViewBorder(_))));
-    assert!(rt.entities().any(|e| matches!(e, EntityType::SectionSymbol(_))));
+    assert!(rt
+        .entities()
+        .any(|e| matches!(e, EntityType::ViewBorder(_))));
+    assert!(rt
+        .entities()
+        .any(|e| matches!(e, EntityType::SectionSymbol(_))));
 }
 
 #[test]

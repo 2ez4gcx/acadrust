@@ -1,5 +1,10 @@
 use std::io::Cursor;
 
+use acadrust::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+use acadrust::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+use acadrust::io::dwg::dwg_stream_readers::object_reader::associative::read_associative_data;
+use acadrust::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+use acadrust::io::dwg::dwg_version::DwgVersion;
 use acadrust::objects::{
     AssocDependency, AssocGeomDependency, AssocPersistentSubentId, AssociativeData,
     AssociativeObject, ObjectType,
@@ -96,4 +101,44 @@ fn r2013_compact_geom_dependency_layout_still_round_trips() {
     assert_eq!(actual.persistent_subent.class_code, 1);
     assert!(actual.persistent_subent.values.is_empty());
     assert!(actual.persistent_subent.dependent_on_compound_object);
+}
+
+#[test]
+fn truncated_r2010_persistent_subent_keeps_the_typed_dependency() {
+    let dxf_version = DxfVersion::AC1024;
+    let dwg_version = DwgVersion::AC24;
+
+    let mut main = DwgBitWriter::new(dwg_version, dxf_version);
+    main.write_bit_short(0); // dependency class version
+    main.write_bit_long(0); // status
+    for _ in 0..4 {
+        main.write_bit(false);
+    }
+    main.write_bit_long(0); // order
+    main.write_bit(false); // no dependency name
+    main.write_bit_long(0); // dependency body id
+    main.write_bit_short(0); // geometry dependency class version
+    main.write_bit(false); // disabled
+    main.write_bit(true); // compound-object flag; class name is omitted
+
+    let mut handles = DwgBitWriter::new(dwg_version, dxf_version);
+    for _ in 0..4 {
+        handles.write_handle_undefined(0);
+    }
+
+    let main = DwgBitReader::new(main.to_bytes(), dwg_version, dxf_version);
+    let text = DwgBitReader::new(Vec::new(), dwg_version, dxf_version);
+    let handles = DwgBitReader::new(handles.to_bytes(), dwg_version, dxf_version);
+    let mut reader = DwgMergedReader::from_readers(main, Some(text), Some(handles), dxf_version);
+
+    let value = read_associative_data(&mut reader, "ASSOCGEOMDEPENDENCY", dwg_version, dxf_version)
+        .expect("ASSOCGEOMDEPENDENCY should remain typed when its optional tail is absent");
+
+    let AssociativeData::GeomDependency(value) = value else {
+        panic!("expected a geometry dependency");
+    };
+    assert_eq!(value.dependency.status, 0);
+    assert!(value.persistent_subent.class_name.is_empty());
+    assert!(value.persistent_subent.dependent_on_compound_object);
+    assert!(reader.check_error().is_ok());
 }

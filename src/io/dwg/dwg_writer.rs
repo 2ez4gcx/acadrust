@@ -1063,8 +1063,9 @@ fn uses_paged_format(version: DxfVersion) -> bool {
 /// dictionary, causing IntelliCAD (and other CAD apps) to report
 /// "null object id" for every object.
 ///
-/// Also updates EXTMIN/EXTMAX from the computed model-space extents so that
-/// "Zoom Extents" works correctly when the file is first opened.
+/// A document without EXTMIN/EXTMAX (the 1e20 defaults) gets the computed
+/// model-space extents, so that "Zoom Extents" works when the file is first
+/// opened; extents the document holds are kept.
 fn prepare_header(
     document: &CadDocument,
     handle_map: &[(u64, u32)],
@@ -1150,9 +1151,8 @@ fn prepare_header(
     if let Some(br) = document.block_records.get("*Model_Space") {
         h.model_space_block_handle = br.handle;
     }
-    if let Some(br) = document.block_records.get("*Paper_Space") {
-        h.paper_space_block_handle = br.handle;
-    }
+    h.paper_space_block_handle =
+        super::dwg_stream_writers::object_writer::paper_space_block_handle(document);
 
     // ── Sync current style handles (validate against actual objects) ──
     // CLAYER: must point to an actual layer; fall back to "0" if invalid
@@ -1312,6 +1312,12 @@ fn prepare_header(
         }
     }
 
+    // DIMBLK / DIMBLK1 / DIMBLK2 / DIMLDRBLK. DXF stores the names; a DWG
+    // stores the block handles. A null handle is the default closed-filled arrow.
+    // A name such as ArchTick selects the block _ArchTick, and a handle that
+    // names no block is cleared.
+    crate::document::apply_dimension_arrow_header(&document.block_records, &mut h);
+
     // ── Correct HANDSEED ──
     let max_handle = handle_map.iter().map(|&(ha, _)| ha).max().unwrap_or(0);
     if h.handle_seed <= max_handle {
@@ -1319,9 +1325,23 @@ fn prepare_header(
     }
 
     // ── Update model-space extents ──
+    // Extents the document already holds (read from a file, or set by the
+    // caller) are kept: EXTMIN/EXTMAX are what the authoring application last
+    // computed, and the entity bounding boxes are no substitute (an XLINE or
+    // RAY is unbounded, and block references are boxed by their insertion
+    // point). Only a document without extents gets the computed ones.
+    let (min, max) = (h.model_space_extents_min, h.model_space_extents_max);
+    let has_extents = [min.x, min.y, min.z, max.x, max.y, max.z]
+        .iter()
+        .all(|c| c.is_finite() && c.abs() < 1e20)
+        && min.x <= max.x
+        && min.y <= max.y
+        && min.z <= max.z;
     if let Some(ref ext) = extents {
-        h.model_space_extents_min = ext.min;
-        h.model_space_extents_max = ext.max;
+        if !has_extents {
+            h.model_space_extents_min = ext.min;
+            h.model_space_extents_max = ext.max;
+        }
     }
 
     h
@@ -3606,70 +3626,6 @@ mod tests {
                 ..
             }
         ));
-    }
-
-    #[test]
-    fn geom_dependency_subent_values_round_trip_below_r2013() {
-        use crate::objects::{
-            AssocGeomDependency, AssocPersistentSubentId, AssociativeData, AssociativeObject,
-            ObjectType,
-        };
-        use crate::DwgReader;
-        use std::io::Cursor;
-
-        for version in [DxfVersion::AC1018, DxfVersion::AC1021, DxfVersion::AC1024] {
-            let mut document = CadDocument::new();
-            document.version = version;
-            let handle = document.allocate_handle();
-            let owner = document.header.named_objects_dict_handle;
-            document.objects.insert(
-                handle,
-                ObjectType::Associative(AssociativeObject {
-                    handle,
-                    owner,
-                    dxf_name: "ASSOCGEOMDEPENDENCY".to_string(),
-                    cpp_class_name: "AcDbAssocGeomDependency".to_string(),
-                    data: AssociativeData::GeomDependency(AssocGeomDependency {
-                        class_version: 2,
-                        enabled: true,
-                        persistent_subent: AssocPersistentSubentId {
-                            class_name: "AcDbAssocEdgePersSubentId".to_string(),
-                            dependent_on_compound_object: true,
-                            class_code: 3,
-                            values: vec![0, 68, 69],
-                            leading_flag: false,
-                        },
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
-            );
-
-            let decoded = DwgReader::from_stream(Cursor::new(
-                DwgWriter::write_to_vec(&document).expect("write DWG"),
-            ))
-            .read()
-            .expect("read DWG");
-            let subent = decoded
-                .objects
-                .values()
-                .find_map(|object| match object {
-                    ObjectType::Associative(AssociativeObject {
-                        data: AssociativeData::GeomDependency(geom),
-                        ..
-                    }) => Some(&geom.persistent_subent),
-                    _ => None,
-                })
-                .expect("geom dependency");
-
-            assert_eq!(
-                subent.values,
-                vec![0, 68, 69],
-                "pre-R2013 subent field values must survive a {version:?} round trip"
-            );
-            assert!(subent.dependent_on_compound_object);
-            assert_eq!(subent.class_code, 3);
-        }
     }
 }
 

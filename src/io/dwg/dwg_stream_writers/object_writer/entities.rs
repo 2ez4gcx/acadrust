@@ -45,7 +45,10 @@ impl<'a> DwgObjectWriter<'a> {
     pub(super) fn write_entity(&mut self, entity: &EntityType) {
         // Already emitted verbatim (ACADRUST_RAW_ALL bisection aid): skip, so a
         // compound entity does not re-allocate handles for its children.
-        if self.registered_handles.contains(&entity.common().handle.value()) {
+        if self
+            .registered_handles
+            .contains(&entity.common().handle.value())
+        {
             return;
         }
         // Verbatim passthrough: the entity still carries the exact bytes it was read
@@ -55,18 +58,37 @@ impl<'a> DwgObjectWriter<'a> {
         // the AcDs section, which is assembled from what gets written).
         if let Some(raw) = &entity.common().raw_record {
             let handle = entity.common().handle;
-            let acis = matches!(entity, EntityType::Solid3D(_) | EntityType::Region(_) | EntityType::Body(_) | EntityType::Surface(_));
+            let acis = matches!(
+                entity,
+                EntityType::Solid3D(_)
+                    | EntityType::Region(_)
+                    | EntityType::Body(_)
+                    | EntityType::Surface(_)
+            );
             // Compound entities own follow-up records (VERTEX…/ATTRIB…/SEQEND) that the
             // reader folded into them; the writer emits those alongside, so they must
             // go through the normal path. An INSERT without attributes owns none, and
             // copying it keeps subclasses such as AcIdBlockReference intact.
-            let compound = matches!(entity, EntityType::Polyline(_) | EntityType::Polyline2D(_) | EntityType::Polyline3D(_)
-                | EntityType::PolyfaceMesh(_) | EntityType::PolygonMesh(_))
-                || matches!(entity, EntityType::Insert(i) if !i.attributes.is_empty() || i.seqend_handle.is_some());
+            let compound = matches!(
+                entity,
+                EntityType::Polyline(_)
+                    | EntityType::Polyline2D(_)
+                    | EntityType::Polyline3D(_)
+                    | EntityType::PolyfaceMesh(_)
+                    | EntityType::PolygonMesh(_)
+            ) || matches!(entity, EntityType::Insert(i) if !i.attributes.is_empty() || i.seqend_handle.is_some());
+            // Native frame-only records may contain the optional fill payload.
+            // Normalize them to the R2018 layout when rewriting the drawing.
+            let frame_only_mtext = self.version.r2018_plus(self.dxf_version)
+                && matches!(entity, EntityType::MText(text) if text.background_fill_flags & 0x11 == 0x10);
+            let stale_paper_owner = entity.common().entity_mode == Some(1)
+                && entity.common().owner_handle != self.paper_space_block_handle;
             let ok = self.version.r2004_plus()
                 && raw.version == self.dxf_version
                 && !self.raw_excluded_handles.contains(&handle.value())
                 && !compound
+                && !frame_only_mtext
+                && !stale_paper_owner
                 && !(acis && self.version.r2013_plus(self.dxf_version))
                 && !self.owner_overrides.contains_key(&handle)
                 // EED naming an application this drawing has no APPID for
@@ -903,13 +925,9 @@ impl<'a> DwgObjectWriter<'a> {
             // Background flags BL 90 (0 = no background)
             self.writer.write_bit_long(e.background_fill_flags);
 
-            // The background-fill block is written when the UseBackgroundFillColor
-            // bit (0x01) is set, or — for R2018+ — when the TextFrame bit (0x10)
-            // is set. Mirrors read_mtext.
-            if (e.background_fill_flags & 0x01) != 0
-                || (self.version.r2018_plus(self.dxf_version)
-                    && (e.background_fill_flags & 0x10) != 0)
-            {
+            // A frame alone does not carry fill properties in the R2018 layout.
+            // Including them shifts the annotative/column fields in AutoCAD.
+            if (e.background_fill_flags & 0x01) != 0 {
                 // Background scale factor BD 45
                 self.writer.write_bit_double(e.background_scale);
                 // Background color CMC 63
@@ -3196,9 +3214,8 @@ impl<'a> DwgObjectWriter<'a> {
         // the closed and cap-suppression bits supplied by the model while
         // making group 71 agree with group 72 in every output format.
         let caps = e.flags & (MLineFlags::NO_START_CAPS | MLineFlags::NO_END_CAPS);
-        let open_closed: i16 = (e.serialized_flags()
-            & (MLineFlags::HAS_VERTICES | MLineFlags::CLOSED))
-            .bits();
+        let open_closed: i16 =
+            (e.serialized_flags() & (MLineFlags::HAS_VERTICES | MLineFlags::CLOSED)).bits();
         self.writer.write_bit_short(open_closed | caps.bits());
 
         // Linesinstyle RC 73 — number of segments from first vertex
@@ -4262,11 +4279,18 @@ impl<'a> DwgObjectWriter<'a> {
         // 91 Leader LineColor (CMC)
         self.writer.write_cm_color(&e.line_color);
 
-        // 341 LeaderLineTypeID (handle) - HardPointer
+        // 341 LeaderLineTypeID (handle) - HardPointer. Without one, ByBlock:
+        // AutoCAD's default for a multileader's leader lines.
         let lt = e
             .line_type_handle
             .filter(|handle| !handle.is_null())
-            .unwrap_or(self.document.header.bylayer_linetype_handle);
+            .unwrap_or_else(|| {
+                self.document
+                    .line_types
+                    .get("ByBlock")
+                    .map(|lt| lt.handle)
+                    .unwrap_or(self.document.header.byblock_linetype_handle)
+            });
         self.writer
             .write_handle(DwgReferenceType::HardPointer, lt.value());
 
@@ -5424,8 +5448,10 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit(acis.wireframe_isoline_present);
         if acis.wireframe_isoline_present {
             self.writer.write_bit_long(0); // wires
-            self.writer.write_bit_long(0); // silhouettes
         }
+        // The silhouette count is present in every wireframe block,
+        // independently of the isoline cache.
+        self.writer.write_bit_long(0);
         // COMMON_3DSOLID has an extra-modeler-data gate only when the
         // AcDs-backed entity contains a wireframe section.
         self.writer.write_bit(acis.extra_acis_data.is_none());
@@ -5742,8 +5768,7 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_3bit_double(anchor);
             }
             self.writer.write_bit_long(acis.wireframe_isolines);
-            let isoline_present =
-                acis.wireframe_isoline_present || !wires.is_empty() || !silhouettes.is_empty();
+            let isoline_present = acis.wireframe_isoline_present || !wires.is_empty();
             self.writer.write_bit(isoline_present);
 
             if isoline_present {
@@ -5751,27 +5776,28 @@ impl<'a> DwgObjectWriter<'a> {
                 for wire in wires {
                     self.write_wire(wire);
                 }
+            }
 
-                self.writer.write_bit_long(silhouettes.len() as i32);
-                for sil in silhouettes {
-                    if self.version.r2010_plus() {
-                        self.writer.write_bit_long_long(sil.viewport_id);
-                    } else {
-                        self.writer.write_bit_long(sil.viewport_id as i32);
-                    }
-                    self.writer.write_3bit_double(sil.target);
-                    self.writer.write_3bit_double(sil.view_direction);
-                    self.writer.write_3bit_double(sil.up_vector);
-                    self.writer.write_bit(sil.is_perspective);
-                    let has_wires = sil.has_wires || !sil.wires.is_empty();
-                    self.writer.write_bit(has_wires);
-                    if !has_wires {
-                        continue;
-                    }
-                    self.writer.write_bit_long(sil.wires.len() as i32);
-                    for wire in &sil.wires {
-                        self.write_wire(wire);
-                    }
+            // Silhouettes are independent of the isoline cache.
+            self.writer.write_bit_long(silhouettes.len() as i32);
+            for sil in silhouettes {
+                if self.version.r2010_plus() {
+                    self.writer.write_bit_long_long(sil.viewport_id);
+                } else {
+                    self.writer.write_bit_long(sil.viewport_id as i32);
+                }
+                self.writer.write_3bit_double(sil.target);
+                self.writer.write_3bit_double(sil.view_direction);
+                self.writer.write_3bit_double(sil.up_vector);
+                self.writer.write_bit(sil.is_perspective);
+                let has_wires = sil.has_wires || !sil.wires.is_empty();
+                self.writer.write_bit(has_wires);
+                if !has_wires {
+                    continue;
+                }
+                self.writer.write_bit_long(sil.wires.len() as i32);
+                for wire in &sil.wires {
+                    self.write_wire(wire);
                 }
             }
         }

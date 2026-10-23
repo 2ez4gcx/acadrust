@@ -219,6 +219,44 @@ fn read_history_node_base(reader: &mut DwgMergedReader) -> SolidHistoryNodeBase 
     }
 }
 
+fn read_inline_history_modeler(
+    reader: &mut DwgMergedReader,
+) -> Option<crate::entities::solid3d::AcisData> {
+    let start = reader.position_in_bits();
+    if reader.read_bit() {
+        reader.set_position_in_bits(start);
+        return None;
+    }
+    let _unknown = reader.read_bit();
+    if reader.read_bit_short() != 2 {
+        reader.set_position_in_bits(start);
+        return None;
+    }
+    let data_start = reader.position_in_bits();
+    let available = reader.remaining_bytes();
+    if available < 16 {
+        reader.set_position_in_bits(start);
+        return None;
+    }
+    let probe = reader.read_bytes(available);
+    if !probe.starts_with(b"ACIS BinaryFile") && !probe.starts_with(b"ASM BinaryFile") {
+        reader.set_position_in_bits(start);
+        return None;
+    }
+    let Ok((_, used)) = crate::entities::acis::SabReader::read_with_consumed(&probe) else {
+        reader.set_position_in_bits(start);
+        return None;
+    };
+    if used == 0 || used > probe.len() {
+        reader.set_position_in_bits(start);
+        return None;
+    }
+    reader.set_position_in_bits(data_start + used as i64 * 8);
+    Some(crate::entities::solid3d::AcisData::from_sab(
+        probe[..used].to_vec(),
+    ))
+}
+
 fn read_history_entity(
     reader: &mut DwgMergedReader,
     version: DwgVersion,
@@ -227,6 +265,25 @@ fn read_history_entity(
     let type_code = reader.read_bit_long();
     if type_code == 0 {
         return None;
+    }
+    // R2007 history profiles store a REGION/3DSOLID/BODY as a bare modeler
+    // body: empty bit, unknown bit, version, then a self-delimited SAB.
+    // There is no bit-length prefix and no wireframe tail. Later writers
+    // use the sized embedded-entity form, which does not start with the
+    // ACIS/ASM signature, so that form stays on the path below.
+    if matches!(type_code, 37 | 38 | 39) {
+        if let Some(acis_data) = read_inline_history_modeler(reader) {
+            return Some(if type_code == 37 {
+                let mut region = crate::entities::Region::new();
+                region.acis_data = acis_data;
+                crate::entities::EmbeddedEntity::Region(region)
+            } else {
+                crate::entities::EmbeddedEntity::Body {
+                    type_code,
+                    acis_data,
+                }
+            });
+        }
     }
     if crate::io::dwg::embedded_entity::is_body_profile(type_code) {
         let acis_data = if reader.read_bit() {
@@ -1129,4 +1186,38 @@ pub fn read_dynamic_block_data(
         _ => return None,
     };
     Some(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_history_entity;
+    use crate::entities::EmbeddedEntity;
+    use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
+    use crate::io::dwg::dwg_stream_writers::merged_writer::DwgMergedWriter;
+    use crate::io::dwg::dwg_version::DwgVersion;
+    use crate::types::DxfVersion;
+
+    #[test]
+    fn r2007_history_region_is_a_bare_sab_without_a_bit_length() {
+        let sab = crate::entities::acis::SabWriter::write(
+            &crate::entities::acis::primitives::build_box([0.0, 0.0, 0.0], 1.0, 1.0, 1.0),
+        );
+        let dwg = DwgVersion::AC21;
+        let dxf = DxfVersion::AC1021;
+        let mut writer = DwgMergedWriter::new(dwg, dxf);
+        writer.write_bit_long(37); // REGION
+        writer.write_bit(false); // body present
+        writer.write_bit(false);
+        writer.write_bit_short(2);
+        writer.write_bytes(&sab);
+        writer.write_bit_long(0); // no path entity
+        let mut reader = DwgMergedReader::new(writer.merge(), dxf, writer.handle_start_bits());
+        let profile = read_history_entity(&mut reader, dwg, dxf).expect("profile");
+        let EmbeddedEntity::Region(region) = profile else {
+            panic!("profile should be a region");
+        };
+        assert_eq!(region.acis_data.sab_data, sab);
+        assert!(read_history_entity(&mut reader, dwg, dxf).is_none());
+        reader.check_error().expect("history profile");
+    }
 }

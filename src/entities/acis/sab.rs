@@ -109,7 +109,11 @@ impl SabWriter {
         // (`End-of-ASM-data` for ShapeManager bodies, `End-of-ACIS-data`
         // before); the reference application rejects a 22300 body closed with
         // a single-string marker.
-        let kernel = if Self::is_asm(&doc.header) { "ASM" } else { "ACIS" };
+        let kernel = if Self::is_asm(&doc.header) {
+            "ASM"
+        } else {
+            "ACIS"
+        };
         for part in ["End", "of", kernel] {
             Self::write_subtype(&mut buf, part);
         }
@@ -547,8 +551,7 @@ impl SabWriter {
         let mut subtypes = Vec::new();
         // Per open subtype block: where an interpolated curve's pcurves end.
         let mut pcurve_ends: Vec<Option<usize>> = Vec::new();
-        let in_int_cur =
-            |subtypes: &[Option<&str>]| matches!(subtypes.last(), Some(Some(name)) if name.ends_with("cur"));
+        let in_int_cur = |subtypes: &[Option<&str>]| matches!(subtypes.last(), Some(Some(name)) if name.ends_with("cur"));
         for (index, token) in tokens.iter().enumerate() {
             match token.as_ident() {
                 Some("{") => {
@@ -665,8 +668,16 @@ impl SabWriter {
                     !matches!(
                         tokens[i].as_ident(),
                         Some(
-                            "plane" | "cone" | "sphere" | "torus" | "spline" | "nullbs" | "nubs"
-                                | "nurbs" | "{" | "}"
+                            "plane"
+                                | "cone"
+                                | "sphere"
+                                | "torus"
+                                | "spline"
+                                | "nullbs"
+                                | "nubs"
+                                | "nurbs"
+                                | "{"
+                                | "}"
                         )
                     )
                 }));
@@ -1381,14 +1392,17 @@ fn name_spline_keywords(entity_type: &str, tokens: &mut [SatToken]) {
         _ => None,
     };
     // (forward name, reversed name, logicals to skip before the sense)
-    let mut sense: Option<(&str, &str, usize)> = (entity_type != "intcurve-curve")
-        .then_some(("forward", "reversed", 0));
+    let mut sense: Option<(&str, &str, usize)> =
+        (entity_type != "intcurve-curve").then_some(("forward", "reversed", 0));
     // Per open block: (subtype, enumeration role).
     let mut blocks: Vec<(String, usize)> = Vec::new();
     for index in 0..tokens.len() {
         match tokens[index].as_ident() {
             Some("{") => {
-                let name = tokens.get(index + 1).and_then(SatToken::as_ident).unwrap_or("");
+                let name = tokens
+                    .get(index + 1)
+                    .and_then(SatToken::as_ident)
+                    .unwrap_or("");
                 blocks.push((name.to_string(), 0));
                 continue;
             }
@@ -1425,8 +1439,12 @@ fn name_spline_keywords(entity_type: &str, tokens: &mut [SatToken]) {
             }
             continue;
         }
-        let Some((block, role)) = blocks.last_mut() else { continue };
-        let SatToken::Sab { tag: 0x15, data } = &tokens[index] else { continue };
+        let Some((block, role)) = blocks.last_mut() else {
+            continue;
+        };
+        let SatToken::Sab { tag: 0x15, data } = &tokens[index] else {
+            continue;
+        };
         let value = data
             .get(..4)
             .map(|bytes| i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]));
@@ -1770,7 +1788,10 @@ mod tests {
                 doc.header.version = SatVersion::from_sat_number(version);
                 doc.header.has_history = history;
                 let bytes = SabWriter::write(&doc);
-                assert_eq!(u32::from_le_bytes(bytes[27..31].try_into().unwrap()), 12 | u32::from(history));
+                assert_eq!(
+                    u32::from_le_bytes(bytes[27..31].try_into().unwrap()),
+                    12 | u32::from(history)
+                );
                 let loaded = SabReader::read(&bytes).unwrap();
                 assert_eq!(loaded.header.has_history, history);
                 assert_eq!(SabWriter::write(&loaded), bytes);

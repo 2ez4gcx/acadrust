@@ -120,20 +120,37 @@ impl ExtendedData {
 
     // Update the modeled fields while retaining unrelated values owned by the app.
     pub(crate) fn merge_modeled_record(&mut self, replacement: &ExtendedDataRecord) {
-        let mut record = self.remove_record(&replacement.application_name)
+        let mut record = self
+            .remove_record(&replacement.application_name)
             .unwrap_or_else(|| ExtendedDataRecord::new(&replacement.application_name));
         let labeled_group = matches!(replacement.values.get(1), Some(XDataValue::ControlString(value)) if value == "{");
         if labeled_group {
-            let start = record.values.iter().position(|value| Some(value) == replacement.values.first());
+            let start = record
+                .values
+                .iter()
+                .position(|value| Some(value) == replacement.values.first());
             if let Some(start) = start {
                 let mut depth = 0;
-                let end = record.values.iter().enumerate().skip(start + 1).find_map(|(index, value)| {
-                    if let XDataValue::ControlString(value) = value {
-                        if value == "{" { depth += 1; }
-                        if value == "}" { depth -= 1; if depth == 0 { return Some(index + 1); } }
-                    }
-                    None
-                });
+                let end =
+                    record
+                        .values
+                        .iter()
+                        .enumerate()
+                        .skip(start + 1)
+                        .find_map(|(index, value)| {
+                            if let XDataValue::ControlString(value) = value {
+                                if value == "{" {
+                                    depth += 1;
+                                }
+                                if value == "}" {
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        return Some(index + 1);
+                                    }
+                                }
+                            }
+                            None
+                        });
                 if let Some(end) = end {
                     record.values.splice(start..end, replacement.values.clone());
                 } else {
@@ -145,7 +162,10 @@ impl ExtendedData {
         } else {
             let mut cursor = 0;
             for value in &replacement.values {
-                if let Some(offset) = record.values[cursor..].iter().position(|old| std::mem::discriminant(old) == std::mem::discriminant(value)) {
+                if let Some(offset) = record.values[cursor..]
+                    .iter()
+                    .position(|old| std::mem::discriminant(old) == std::mem::discriminant(value))
+                {
                     cursor += offset;
                     record.values[cursor] = value.clone();
                     cursor += 1;

@@ -15,7 +15,7 @@ use crate::types::DxfVersion;
 /// These are the values from `ACadVersion` in C#:
 /// AC1012=19, AC1014=21, AC1015=23, AC1018=25, AC1021=27,
 /// AC1024=29, AC1027=31, AC1032=33
-fn dwg_internal_version(version: DxfVersion) -> i16 {
+pub(crate) fn dwg_internal_version(version: DxfVersion) -> i16 {
     match version {
         DxfVersion::AC1012 => 19,
         DxfVersion::AC1014 => 21,

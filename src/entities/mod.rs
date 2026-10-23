@@ -22,7 +22,6 @@ pub mod circle;
 pub mod dimension;
 pub mod ellipse;
 pub mod embedded_entity;
-pub mod explode;
 pub mod extended_entity;
 pub mod face3d;
 pub mod hatch;
@@ -33,8 +32,8 @@ pub mod light;
 pub mod line;
 pub mod lwpolyline;
 pub mod mesh;
-pub mod mirror;
 pub mod mline;
+pub mod modification;
 pub mod mtext;
 pub mod mtext_format;
 pub mod multileader;
@@ -58,14 +57,18 @@ pub mod surface;
 pub mod table;
 pub mod text;
 pub mod tolerance;
-pub mod transform;
-pub mod translate;
 pub mod underlay;
 pub mod unknown_entity;
 pub mod view_border;
 pub mod viewport;
 pub mod wipeout;
 pub mod xline;
+
+// Preserve existing module paths for callers of the modification tools.
+pub use modification::mirror::MirrorOptions;
+pub use modification::mirror3d::MirrorPlane;
+pub use modification::rotate::RotationAxis;
+pub use modification::{explode, mirror, mirror3d, rotate, rotate3d, transform, translate};
 
 pub use arc::Arc;
 pub use attribute_definition::{
@@ -216,6 +219,102 @@ pub trait Entity {
         self.apply_transform(&Transform::from_rotation(axis, angle));
     }
 
+    /// Rotate around `center` in the world XY plane.
+    fn rotate(&mut self, center: Vector3, angle: f64) {
+        self.rotate_about_axis(center, Vector3::UNIT_Z, angle);
+    }
+
+    /// Rotate around the world-space line through `center` parallel to `axis`.
+    fn rotate_about_axis(&mut self, center: Vector3, axis: Vector3, angle: f64) {
+        if !center.x.is_finite()
+            || !center.y.is_finite()
+            || !center.z.is_finite()
+            || !axis.x.is_finite()
+            || !axis.y.is_finite()
+            || !axis.z.is_finite()
+            || !angle.is_finite()
+            || axis.length_squared() <= f64::EPSILON
+            || angle == 0.0
+        {
+            return;
+        }
+        self.apply_transform(&Transform::from_rotation_with_origin(axis, angle, center));
+    }
+
+    /// Rotate around the 3D line passing through `first` and `second`.
+    fn rotate_about_line(&mut self, first: Vector3, second: Vector3, angle: f64) {
+        let axis = second - first;
+        if first.x.is_finite()
+            && first.y.is_finite()
+            && first.z.is_finite()
+            && second.x.is_finite()
+            && second.y.is_finite()
+            && second.z.is_finite()
+            && angle.is_finite()
+            && axis.length_squared() > f64::EPSILON
+        {
+            self.rotate_about_axis(first, axis, angle);
+        }
+    }
+
+    /// Rotate using one of the CAD axis-selection modes.
+    fn rotate_with_axis(&mut self, axis: crate::entities::rotate::RotationAxis, angle: f64) {
+        match axis {
+            crate::entities::rotate::RotationAxis::TwoPoint { first, second } => {
+                self.rotate_about_line(first, second, angle)
+            }
+            crate::entities::rotate::RotationAxis::Entity { origin, direction }
+            | crate::entities::rotate::RotationAxis::Last { origin, direction }
+            | crate::entities::rotate::RotationAxis::View { origin, direction } => {
+                self.rotate_about_axis(origin, direction, angle)
+            }
+            crate::entities::rotate::RotationAxis::XAxis { origin } => {
+                self.rotate_about_axis(origin, Vector3::UNIT_X, angle)
+            }
+            crate::entities::rotate::RotationAxis::YAxis { origin } => {
+                self.rotate_about_axis(origin, Vector3::UNIT_Y, angle)
+            }
+            crate::entities::rotate::RotationAxis::ZAxis { origin } => {
+                self.rotate_about_axis(origin, Vector3::UNIT_Z, angle)
+            }
+        }
+    }
+
+    /// Apply the 3D CAD rotation axis selector.
+    fn rotate3d(&mut self, axis: crate::entities::rotate::RotationAxis, angle: f64) {
+        self.rotate_with_axis(axis, angle);
+    }
+
+    /// Apply a rotation around `axis` through `origin`.
+    fn apply_rotation_with_origin(&mut self, axis: Vector3, angle: f64, origin: Vector3) {
+        self.rotate_about_axis(origin, axis, angle);
+    }
+
+    /// Rotate from a reference point to a target point around `center` in the
+    /// world XY plane.
+    fn rotate_by_points(&mut self, center: Vector3, reference: Vector3, target: Vector3) {
+        if let Some(angle) =
+            crate::entities::rotate::angle_from_points(center, Vector3::UNIT_Z, reference, target)
+        {
+            self.rotate_about_axis(center, Vector3::UNIT_Z, angle);
+        }
+    }
+
+    /// Rotate from a reference point to a target point around an arbitrary axis.
+    fn rotate_about_axis_by_points(
+        &mut self,
+        center: Vector3,
+        axis: Vector3,
+        reference: Vector3,
+        target: Vector3,
+    ) {
+        if let Some(angle) =
+            crate::entities::rotate::angle_from_points(center, axis, reference, target)
+        {
+            self.rotate_about_axis(center, axis, angle);
+        }
+    }
+
     /// Apply uniform scaling
     fn apply_scaling(&mut self, scale: f64) {
         self.apply_transform(&Transform::from_scale(scale));
@@ -236,7 +335,14 @@ pub trait Entity {
     /// Override this for entities that need post-processing after mirroring
     /// (e.g., arc angle swaps, bulge negation, face winding reversal).
     fn apply_mirror(&mut self, transform: &Transform) {
-        self.apply_transform(transform);
+        if mirror::valid_transform(transform) {
+            self.apply_transform(transform);
+        }
+    }
+
+    /// Apply a reflection with explicit text and hatch policies.
+    fn apply_mirror_with_options(&mut self, transform: &Transform, _options: MirrorOptions) {
+        self.apply_mirror(transform);
     }
 
     /// Mirror the entity across the YZ plane (negate X coordinates)
@@ -256,12 +362,32 @@ pub trait Entity {
 
     /// Mirror the entity across a line defined by two points (in the XY plane)
     fn mirror_about_line(&mut self, p1: Vector3, p2: Vector3) {
-        self.apply_mirror(&Transform::from_mirror_line(p1, p2));
+        self.mirror(p1, p2);
+    }
+
+    /// Planar MIRROR through the points' XY projections, preserving height.
+    fn mirror(&mut self, first: Vector3, second: Vector3) {
+        self.mirror_with_options(first, second, MirrorOptions::default());
+    }
+
+    /// Planar MIRROR with explicit text and hatch policies.
+    fn mirror_with_options(&mut self, first: Vector3, second: Vector3, options: MirrorOptions) {
+        self.apply_mirror_with_options(&Transform::from_mirror_line(first, second), options);
+    }
+
+    /// MIRROR3D across the selected world-space plane.
+    fn mirror3d(&mut self, plane: MirrorPlane) {
+        self.mirror3d_with_options(plane, MirrorOptions::default());
+    }
+
+    /// MIRROR3D with explicit text and hatch policies.
+    fn mirror3d_with_options(&mut self, plane: MirrorPlane, options: MirrorOptions) {
+        self.apply_mirror_with_options(&plane.transform(), options);
     }
 
     /// Mirror the entity across an arbitrary plane
     fn mirror_about_plane(&mut self, point: Vector3, normal: Vector3) {
-        self.apply_mirror(&Transform::from_mirror_plane(point, normal));
+        self.mirror3d(MirrorPlane::PointNormal { point, normal });
     }
 }
 

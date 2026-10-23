@@ -13,11 +13,20 @@ use acadrust::{
 };
 use std::io::Cursor;
 
-// Encode the cache header independently: when isoline_present is false,
-// neither the wire count nor the silhouette count is stored.
+// Encode the cache header independently of the entity writer. An absent
+// isoline cache omits only the wire array, not the silhouette count.
 #[test]
 fn absent_isoline_cache_does_not_consume_the_modeler_tail() {
-    for dxf_version in [DxfVersion::AC1015, DxfVersion::AC1021, DxfVersion::AC1027] {
+    for dxf_version in [
+        DxfVersion::AC1012,
+        DxfVersion::AC1014,
+        DxfVersion::AC1015,
+        DxfVersion::AC1018,
+        DxfVersion::AC1021,
+        DxfVersion::AC1024,
+        DxfVersion::AC1027,
+        DxfVersion::AC1032,
+    ] {
         let version = DwgVersion::from_dxf_version(dxf_version).unwrap();
         for offset in 0..8 {
             let mut writer = DwgBitWriter::new(version, dxf_version);
@@ -30,7 +39,8 @@ fn absent_isoline_cache_does_not_consume_the_modeler_tail() {
             writer.write_bit(true); // wireframe header
             writer.write_bit(false); // no point
             writer.write_bit_long(0); // isolines
-            writer.write_bit(false); // no isoline cache: no counts follow
+            writer.write_bit(false); // no isoline cache: no wire count
+            writer.write_bit_long(0); // silhouette count is still present
             writer.write_bit(true); // no extra modeler body
             if version.r2007_plus() {
                 writer.write_bit_long(0);
@@ -88,8 +98,8 @@ fn absent_isoline_cache_does_not_consume_the_modeler_tail() {
 }
 
 #[test]
-fn a_silhouette_only_cache_enables_the_isoline_gate() {
-    for version in [DxfVersion::AC1015, DxfVersion::AC1021] {
+fn a_silhouette_only_cache_does_not_require_the_isoline_gate() {
+    for version in [DxfVersion::AC1015, DxfVersion::AC1021, DxfVersion::AC1024] {
         let mut document = CadDocument::with_version(version);
         let mut region = Region::new();
         region.acis_data = AcisData::from_sat("700 0 0 0\nbody $-1 -1 $-1 $-1 #\n");
@@ -108,7 +118,7 @@ fn a_silhouette_only_cache_enables_the_isoline_gate() {
         let EntityType::Region(region) = restored.get_entity(handle).unwrap() else {
             panic!("missing REGION")
         };
-        assert!(region.acis_data.wireframe_isoline_present);
+        assert!(!region.acis_data.wireframe_isoline_present);
         assert!(region.wires.is_empty());
         assert_eq!(region.silhouettes.len(), 1);
         assert_eq!(region.silhouettes[0].viewport_id, 123);
@@ -203,6 +213,70 @@ fn acds_material_bindings_precede_the_revision_in_split_streams() {
 }
 
 #[test]
+fn silhouettes_without_isolines_preserve_materials_and_revision() {
+    for dxf_version in [DxfVersion::AC1027, DxfVersion::AC1032] {
+        let version = DwgVersion::from_dxf_version(dxf_version).unwrap();
+        for offset in 0..8 {
+            let mut main = DwgBitWriter::new(version, dxf_version);
+            let mut handles = DwgBitWriter::new(version, dxf_version);
+            for _ in 0..offset {
+                main.write_bit(true);
+            }
+            main.write_bit(true); // wireframe
+            main.write_bit(false); // no anchor point
+            main.write_bit_long(0); // isolines
+            main.write_bit(false); // no wire array
+            main.write_bit_long(1); // independent silhouette array
+            main.write_bit_long_long(0x123456789);
+            main.write_3bit_double(Vector3::ZERO);
+            main.write_3bit_double(Vector3::UNIT_Z);
+            main.write_3bit_double(Vector3::UNIT_Y);
+            main.write_bit(false); // orthographic
+            main.write_bit(false); // no silhouette wires
+            main.write_bit(true); // no extra modeler body
+            main.write_bit_long(1); // material count
+            main.write_bit_long(7);
+            main.write_bit_long(9);
+            handles.write_handle(DwgReferenceType::HardPointer, 0x1234);
+            main.write_bit(true); // revision
+            main.write_bit_long(0x12345678);
+            main.write_bit_short(0x1234);
+            main.write_bit_short(0x5678);
+            main.write_bytes(&[1, 2, 3, 4, 5, 6, 7, 8]);
+            main.write_bit_long(0x23456789);
+            let end = main.position_in_bits();
+            let mut reader = DwgMergedReader::from_readers(
+                DwgBitReader::new(main.into_bytes(), version, dxf_version),
+                None,
+                Some(DwgBitReader::new(
+                    handles.into_bytes(),
+                    version,
+                    dxf_version,
+                )),
+                dxf_version,
+            );
+            reader.set_main_data_end(end);
+            reader.set_position_in_bits(offset);
+            let data = read_acis_entity(&mut reader, version, dxf_version, true);
+            reader.check_error().unwrap();
+            assert_eq!(reader.position_in_bits(), end);
+            assert!(!data.wireframe_isoline_present);
+            assert!(data.wires.is_empty());
+            assert_eq!(data.silhouettes.len(), 1);
+            assert_eq!(data.silhouettes[0].viewport_id, 0x123456789);
+            assert_eq!(data.silhouettes[0].view_direction, Vector3::UNIT_Z);
+            assert_eq!(data.silhouettes[0].up_vector, Vector3::UNIT_Y);
+            assert_eq!(data.materials.len(), 1);
+            assert_eq!(data.materials[0].array_index, 7);
+            assert_eq!(data.materials[0].absolute_reference, 9);
+            assert_eq!(data.materials[0].material_handle, Some(Handle::new(0x1234)));
+            assert_eq!(data.revision.major, 0x12345678);
+            assert_eq!(data.revision.end_marker, 0x23456789);
+        }
+    }
+}
+
+#[test]
 fn acds_material_bindings_survive_modeler_entity_roundtrips() {
     for version in [DxfVersion::AC1027, DxfVersion::AC1032] {
         let mut document = CadDocument::with_version(version);
@@ -248,6 +322,53 @@ fn acds_material_bindings_survive_modeler_entity_roundtrips() {
                 _ => unreachable!(),
             };
             assert_eq!(actual.materials, data.materials);
+            assert!(actual.has_data());
+        }
+    }
+}
+
+// Bodies upgraded from AC1012-AC1024 keep their wireframe header without an
+// isoline cache. The AcDs-backed writer must still emit the silhouette count
+// that the reader expects in every wireframe block.
+#[test]
+fn acds_wireframe_without_isolines_keeps_the_silhouette_count() {
+    for version in [DxfVersion::AC1027, DxfVersion::AC1032] {
+        let mut document = CadDocument::with_version(version);
+        let geometry = acadrust::entities::acis::primitives::build_box([0.0; 3], 2.0, 3.0, 4.0);
+        let mut data = AcisData::from_sab(SabWriter::write(&geometry));
+        data.wireframe_data_present = true;
+        data.wireframe_isoline_present = false;
+        data.wireframe_isolines = 4;
+        let mut solid = Solid3D::new();
+        solid.acis_data = data.clone();
+        let mut region = Region::new();
+        region.acis_data = data.clone();
+        let mut body = Body::new();
+        body.acis_data = data.clone();
+        let mut surface = Surface::new(SurfaceKind::Plane);
+        surface.acis_data = data.clone();
+        let handles: Vec<_> = [
+            EntityType::Solid3D(solid),
+            EntityType::Region(region),
+            EntityType::Body(body),
+            EntityType::Surface(Box::new(surface)),
+        ]
+        .into_iter()
+        .map(|entity| document.add_entity(entity).unwrap())
+        .collect();
+        let bytes = DwgWriter::write_to_vec(&document).unwrap();
+        let restored = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
+        for handle in handles {
+            let actual = match restored.get_entity(handle) {
+                Some(EntityType::Solid3D(entity)) => &entity.acis_data,
+                Some(EntityType::Region(entity)) => &entity.acis_data,
+                Some(EntityType::Body(entity)) => &entity.acis_data,
+                Some(EntityType::Surface(entity)) => &entity.acis_data,
+                other => panic!("{version:?}: modeler entity {handle:?} lost: {other:?}"),
+            };
+            assert!(actual.wireframe_data_present);
+            assert!(!actual.wireframe_isoline_present);
+            assert_eq!(actual.wireframe_isolines, 4);
             assert!(actual.has_data());
         }
     }

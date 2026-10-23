@@ -1,8 +1,11 @@
-# AC1009 / R12 DWG Support
+# AC1009 / R11-R12 DWG Support
 
-AC1009 has native reader and writer paths, but complete R12 fidelity is still
-in progress. Successfully reading a drawing is not evidence that every native
-field or record arrangement survives a save.
+AC1009 has native reader and writer paths for the shared Release 11/12 format,
+including fixed-layout headers, symbol tables, byte-aligned entity streams,
+legacy encodings, JUMP traversal, compound ownership, and native viewport and
+mesh metadata. The format has historical variants, so the validation limits
+below remain explicit; successfully reading a drawing is not evidence that
+every uncommon native record arrangement survives a save.
 
 ## Issue #110 Status
 
@@ -52,7 +55,7 @@ silently wrapping.
 | Area | Implemented Behavior | Evidence |
 | --- | --- | --- |
 | JUMP framing | CRC at bytes 8-9, before padding; unsigned addresses | Independent bytes, corruption and padding cases |
-| Stream traversal | Reassembles model-space POLYLINE and INSERT children across extras; removes control markers | Full DWG fixtures, three saves, AutoCAD geometry checks |
+| Stream traversal | Reassembles model-space and BLOCK-owned POLYLINE/INSERT children across extras; removes control markers | Full DWG fixtures, tagged-owner fixture, three saves, AutoCAD geometry checks |
 | Address validation | Absolute main-file return addresses and flagged section offsets; exact record boundaries | AutoCAD-verified return markers; cycle, orphan, owner and boundary failures |
 | Import handles | Allocates in original native import order after logical reassembly | Existing independent AutoCAD identity regressions |
 | SHAPE | Retains number and STYLE identity, including duplicate unnamed styles; correct native STYLE flag bits | Independent SHAPE bytes, typed edits, AutoCAD resolves BOX from ltypeshp.shx |
@@ -65,7 +68,7 @@ The positive full-drawing fixtures are exported by:
 
 ```powershell
 cargo run --example r12_native_fixtures
-pwsh -NoProfile -File tests/bricscad/run_r12_native.ps1 -SkipGenerate
+pwsh -NoProfile -File tests/bcad/run_r12_native.ps1 -SkipGenerate
 ```
 
 The generator reuses the exact entity-stream builders from the Rust tests.
@@ -94,6 +97,9 @@ parameters, named UCS/view definitions, drafting settings, and edited saves.
 Native source files exposed and now cover:
 
 - BLOCK names omitted from entity records and resolved through table locators.
+- Historical R11 BLOCK sections can tag SEQEND owner addresses with
+  `0x40000000`; the reader normalizes these section-relative owners before
+  validating compound sequences.
 - VX payloads between the BLOCK begin sentinel and its entity payload.
 - Polygon-mesh vertices sharing bit 64 with polyface vertices, requiring
   classification by the parent type and preservation of vertex layers/handles.
@@ -110,10 +116,14 @@ All seven source DWGs and all seven acadrust resaves opened cleanly in AutoCAD
 validation run. The scripts and per-case checks are reproducible:
 
 ```powershell
-pwsh -NoProfile -File tests/bricscad/create_r12_corpus.ps1
+pwsh -NoProfile -File tests/bcad/create_r12_corpus.ps1
 cargo run --example r12_cad_roundtrip
-pwsh -NoProfile -File tests/bricscad/run_r12_native.ps1 -SkipGenerate -OutputDirectory target/ac1009-cad-created
+pwsh -NoProfile -File tests/bcad/run_r12_native.ps1 -SkipGenerate -OutputDirectory target/ac1009-cad-created
+pwsh -NoProfile -File tests/bcad/run_r12_bricscad.ps1 -BricsCad D:\Bricsys\BricsCAD\bricscad.exe -OutputDirectory target/ac1009-cad-created
 ```
+
+The BricsCAD harness opens every source and acadrust resave, runs the same
+legacy geometry/state checks and AUDIT, and writes `bricscad-results.json`.
 
 ## Remaining Limits
 
@@ -123,6 +133,10 @@ pwsh -NoProfile -File tests/bricscad/run_r12_native.ps1 -SkipGenerate -OutputDir
   layout is not claimed. The exported block fixture uses contiguous records;
   additional native drawings are needed to establish actual relocated-block
   layouts before treating this case as interoperable support.
+  Tagged `0x40000000` BLOCK owner addresses are accepted while reading. A
+  native save reassembles the logical children into contiguous BLOCK records
+  and emits an empty extra stream, so the original JUMP topology is not
+  preserved byte-for-byte.
   Modern BricsCAD saves, including six native Save operations with
   ISAVEPERCENT=100, still contain zero extra bytes. Generating current drawings
   therefore does not establish that historical edit-stream layout.
@@ -147,10 +161,13 @@ useful reference, not an exhaustive conformance suite.
 
 ## Scope Of The Writer
 
-R12 cannot represent modern entity types, complex linetypes, or later object
-graphs. Native entity availability and native string/index limits are checked
-by the R12 codecs. Support for a version does not imply lossless conversion
-from a newer version.
+R11/R12 cannot represent modern entity types, complex linetypes, or later
+object graphs directly. When a document contains a convertible modern entity,
+the DWG writer uses the genuine DXF R12 down-save path first (for example,
+MTEXT becomes TEXT and ELLIPSE becomes a polyline), then encodes those native
+R11/R12 records. Native entity availability and native string/index limits are
+checked by the R12 codecs. Support for a version does not imply lossless
+conversion from a newer version.
 
-DXF export of an R12 document currently promotes the output to R13 or later;
+DXF export of an R11/R12 document currently promotes the output to R13 or later;
 it is not an AC1009 DXF writer. See `tests/issue68.rs`.

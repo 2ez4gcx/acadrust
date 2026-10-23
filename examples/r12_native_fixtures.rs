@@ -47,7 +47,10 @@ fn main() -> anyhow::Result<()> {
     style.is_shape_file = true;
     style.font_file = "ltypeshp.shx".into();
     let style_handle = style.handle;
-    document.text_styles.add(style).map_err(anyhow::Error::msg)?;
+    document
+        .text_styles
+        .add(style)
+        .map_err(anyhow::Error::msg)?;
     // BOX is shape 132 in the standard AutoCAD ltypeshp.shx installation.
     let mut shape = Shape::with_number(Vector3::ZERO, 132, 2.0);
     shape.style_handle = Some(style_handle);

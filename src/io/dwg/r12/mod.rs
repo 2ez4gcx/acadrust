@@ -1,4 +1,4 @@
-//! Native pre-R13 (AC1009/R12) DWG support.
+//! Native pre-R13 (AC1009/R11-R12) DWG support.
 
 pub mod entities;
 pub mod header;
@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::io::{BufReader, Cursor};
 
 use crate::document::CadDocument;
+use crate::entities::EntityType;
 use crate::error::{DxfError, Result};
 use crate::io::dxf::{DxfReader, DxfStreamReader, DxfTextReader, DxfWriter};
 use crate::tables::{TableEntry, VxTableRecord};
@@ -219,7 +220,26 @@ pub(crate) fn read_document(
     let header = header::read_header_with_code_page(data, code_page_override)?;
     let code_page = code_page_override.unwrap_or(header.variables.code_page.as_str());
     let mut table_records = tables::decode_tables(data, &header.tables, code_page)?;
-    let tables = ensure_table_defaults(tables::entity_tables(&table_records));
+    let mut tables = ensure_table_defaults(tables::entity_tables(&table_records));
+    // R11 dimension blocks share one table name (`*D`) while each BLOCK entity
+    // carries the distinct name (`*D0`, `*D1`, …). Dimensions address the table
+    // by index, so the shared name has to be replaced before those indexes are
+    // turned into DXF names.
+    if header.layout.blocks_size != 0 {
+        let preview = section_records(
+            data,
+            header.layout.blocks_start,
+            header.layout.blocks_size,
+            16,
+            &BLOCK_ENTITIES_BEGIN,
+            &BLOCK_ENTITIES_END,
+            &tables,
+            code_page,
+            Some(header.tables[9]),
+        )?;
+        adopt_distinct_block_names(&mut table_records[0], &preview, header.layout.blocks_start);
+        tables = ensure_table_defaults(tables::entity_tables(&table_records));
+    }
     let entities = section_records(
         data,
         header.layout.entities_start,
@@ -316,6 +336,20 @@ pub(crate) fn read_document(
         font_resolver,
         Some(&allocation_order),
     )?;
+    // The signed usage word is native to AC1009 table rows and is not emitted
+    // by the DXF bridge.  Capture it against the synthetic table-row handles
+    // assigned above so a later native save can restore it.
+    let table_usage: HashMap<Handle, i16> = table_records
+        .iter()
+        .flat_map(|rows| rows.iter())
+        .filter_map(|record| {
+            let code = if record.kind == "DIMSTYLE" { 105 } else { 5 };
+            let handle = u64::from_str_radix(record.string(code), 16).ok()?;
+            record
+                .native_table_usage
+                .map(|usage| (Handle::new(handle), usage))
+        })
+        .collect();
     assign_compound_owners(&mut entities);
     assign_compound_owners(&mut blocks);
     let dxf = records_to_dxf(&entities, &blocks, &table_records, &handles);
@@ -413,6 +447,14 @@ pub(crate) fn read_document(
     document.synchronize_handle_allocator();
     document.dwg_source_version = Some(DxfVersion::AC1009);
     document.r12_header_raw = Some(header.raw);
+    document.r12_table_usage = table_usage;
+    document.r12_block_tags = table_records[0]
+        .iter()
+        .filter_map(|record| {
+            let handle = u64::from_str_radix(record.string(5), 16).ok()?;
+            Some((Handle::new(handle), record.native_block_tag?))
+        })
+        .collect();
     Ok(document)
 }
 
@@ -490,7 +532,87 @@ fn parse_dxf_records(data: &[u8], code_page: &str) -> Result<DxfRecords> {
     Ok(records)
 }
 
+fn adopt_distinct_block_names(
+    rows: &mut [EntityRecord],
+    blocks: &SectionRecords,
+    blocks_start: u32,
+) {
+    // Only duplicated table names lose their index identity. A unique name
+    // stays as stored so a differing BLOCK string cannot rename another block.
+    let mut counts = std::collections::HashMap::<String, usize>::new();
+    for row in rows.iter() {
+        *counts
+            .entry(row.string(2).to_ascii_uppercase())
+            .or_default() += 1;
+    }
+    let mut claimed: std::collections::HashSet<String> = rows
+        .iter()
+        .map(|row| row.string(2).to_ascii_uppercase())
+        .collect();
+    for row in rows.iter_mut() {
+        let current = row.string(2).to_ascii_uppercase();
+        if counts.get(&current).copied().unwrap_or(0) < 2 {
+            continue;
+        }
+        let offset = row.integer(90, 0) as u32 & 0x3fff_ffff;
+        let Some(address) = blocks_start.checked_add(offset) else {
+            continue;
+        };
+        let Some(name) = blocks.records.iter().find_map(|positioned| {
+            let record = positioned.record.as_ref()?;
+            if positioned.address != address || record.kind != "BLOCK" {
+                return None;
+            }
+            let name = record.string(2);
+            if name.is_empty() {
+                None
+            } else {
+                Some(name.to_owned())
+            }
+        }) else {
+            continue;
+        };
+        let claimed_name = name.to_ascii_uppercase();
+        if claimed_name == current || claimed.contains(&claimed_name) {
+            continue;
+        }
+        claimed.insert(claimed_name);
+        row.pairs.retain(|(code, _)| *code != 2);
+        row.pairs.push((2, name));
+    }
+}
+
+fn records_reference_application(records: &DxfRecords, application: &str) -> bool {
+    records
+        .entities
+        .iter()
+        .chain(records.blocks.iter())
+        .chain(records.tables.iter().flatten())
+        .any(|record| {
+            record
+                .pairs
+                .iter()
+                .any(|(code, value)| *code == 1001 && value.eq_ignore_ascii_case(application))
+        })
+}
+
 fn complete_table_records(document: &CadDocument, records: &mut DxfRecords) {
+    // Restore native AC1009 usage words which have no DXF counterpart.
+    for rows in &mut records.tables {
+        for record in rows {
+            let code = if record.kind == "DIMSTYLE" { 105 } else { 5 };
+            if let Ok(handle) = u64::from_str_radix(record.string(code), 16) {
+                record.native_table_usage =
+                    document.r12_table_usage.get(&Handle::new(handle)).copied();
+            }
+        }
+    }
+    for record in &mut records.tables[0] {
+        let Ok(handle) = u64::from_str_radix(record.string(5), 16) else {
+            continue;
+        };
+        record.native_block_tag = document.r12_block_tags.get(&Handle::new(handle)).copied();
+    }
     let system_space = |name: &str| {
         name.eq_ignore_ascii_case("*MODEL_SPACE") || name.eq_ignore_ascii_case("*PAPER_SPACE")
     };
@@ -499,7 +621,13 @@ fn complete_table_records(document: &CadDocument, records: &mut DxfRecords) {
         !record.string(2).eq_ignore_ascii_case("BYLAYER")
             && !record.string(2).eq_ignore_ascii_case("BYBLOCK")
     });
-    records.tables[7].retain(|record| !record.string(2).eq_ignore_ascii_case("ACADANNOTATIVE"));
+    // `AcadAnnotative` is synthesized for newer documents. Keep it when the
+    // drawing's extended data actually names the application; otherwise the
+    // entity encoder cannot resolve that reference.
+    let keep_annotative = records_reference_application(records, "ACADANNOTATIVE");
+    records.tables[7].retain(|record| {
+        keep_annotative || !record.string(2).eq_ignore_ascii_case("ACADANNOTATIVE")
+    });
     let mut in_system_space = false;
     records.blocks.retain(|record| {
         if record.kind == "BLOCK" {
@@ -552,7 +680,22 @@ fn complete_table_records(document: &CadDocument, records: &mut DxfRecords) {
             (91, vx.legacy_viewport_index.to_string()),
             (92, vx.legacy_previous_entry_index.to_string()),
         ]);
+        record.native_table_usage = document.r12_table_usage.get(&vx.handle).copied();
         records.tables[9].push(record);
+    }
+}
+
+fn restore_table_usage(document: &CadDocument, records: &mut [Vec<EntityRecord>; 10]) {
+    for (index, rows) in records.iter_mut().enumerate() {
+        let handle_code = if index == 8 { 105 } else { 5 };
+        for row in rows {
+            let Ok(value) = u64::from_str_radix(row.string(handle_code), 16) else {
+                continue;
+            };
+            if let Some(usage) = document.r12_table_usage.get(&Handle::new(value)) {
+                row.native_table_usage = Some(*usage);
+            }
+        }
     }
 }
 
@@ -693,10 +836,62 @@ fn header_references(
     })
 }
 
+/// Whether the document contains an entity that needs the genuine DXF R12
+/// down-save before it can be represented in the byte-aligned DWG stream.
+/// Native AC1009 records are deliberately kept on the handle-preserving bridge
+/// so ordinary legacy edits retain their identities.
+fn needs_r12_downsave(document: &CadDocument) -> bool {
+    document.entities().any(|entity| {
+        !matches!(
+            entity,
+            EntityType::Point(_)
+                | EntityType::Line(_)
+                | EntityType::Circle(_)
+                | EntityType::Arc(_)
+                | EntityType::Text(_)
+                | EntityType::Solid(_)
+                | EntityType::Face3D(_)
+                | EntityType::Insert(_)
+                | EntityType::Block(_)
+                | EntityType::BlockEnd(_)
+                | EntityType::Viewport(_)
+                | EntityType::AttributeDefinition(_)
+                | EntityType::AttributeEntity(_)
+                | EntityType::Dimension(_)
+                | EntityType::Polyline(_)
+                | EntityType::Polyline2D(_)
+                | EntityType::Polyline3D(_)
+                | EntityType::PolyfaceMesh(_)
+                | EntityType::PolygonMesh(_)
+                | EntityType::Shape(_)
+                | EntityType::Seqend(_)
+        )
+    })
+}
+
 pub(crate) fn write_document(document: &CadDocument) -> Result<Vec<u8>> {
-    let dxf = DxfWriter::new(document).write_to_vec()?;
+    // The normal bridge keeps handles and native entity records intact.  Some
+    // modern entities have no AC1009 representation, but the genuine DXF R12
+    // writer can down-save many of them to supported primitives (for example
+    // MTEXT to TEXT and ELLIPSE to polylines).  Use that conversion only when
+    // the lossless bridge rejects the document; this keeps native R11/R12
+    // round-trips handle-stable while making explicit down-saves useful.
+    let dxf = if needs_r12_downsave(document) {
+        DxfWriter::new(document)
+            .with_version(DxfVersion::AC1009)
+            .write_to_vec()?
+    } else {
+        match DxfWriter::new(document).write_to_vec() {
+            Ok(bytes) => bytes,
+            Err(DxfError::UnsupportedVersion(_)) => DxfWriter::new(document)
+                .with_version(DxfVersion::AC1009)
+                .write_to_vec()?,
+            Err(error) => return Err(error),
+        }
+    };
     let mut records = parse_dxf_records(&dxf, &document.header.code_page)?;
     complete_table_records(document, &mut records);
+    restore_table_usage(document, &mut records.tables);
     metadata::prepare(document, &mut records.entities, &records.tables[2])?;
     metadata::prepare(document, &mut records.blocks, &records.tables[2])?;
     prepare_compound_handles(document, &mut records.entities);
@@ -713,13 +908,21 @@ pub(crate) fn write_document(document: &CadDocument) -> Result<Vec<u8>> {
         }
     }
     let tables = ensure_table_defaults(tables::entity_tables(&records.tables));
+    let entities_start = if document
+        .r12_header_raw
+        .as_deref()
+        .is_some_and(|raw| raw.len() == 0x6bb)
+    {
+        header::R11_ENTITIES_START
+    } else {
+        header::ENTITIES_START
+    };
     let encoded_entities = encode_entities(
         &records.entities,
         &tables,
-        header::ENTITIES_START,
+        entities_start,
         document.header.code_page.as_str(),
     )?;
-    let entities_start = header::ENTITIES_START;
     let encoded_len = u32::try_from(encoded_entities.len()).map_err(|_| {
         DxfError::InvalidFormat("AC1009 entity section exceeds 32-bit offsets".into())
     })?;

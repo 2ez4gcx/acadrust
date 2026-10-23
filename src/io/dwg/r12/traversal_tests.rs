@@ -173,6 +173,42 @@ fn block_owned_extra_vertices_stay_with_block() {
 }
 
 #[test]
+fn block_seqend_accepts_section_tagged_owner_address() {
+    let mut blocks = common(12, 0, &[0; 16]);
+    let owner = BLOCK_BASE + blocks.len() as u32;
+    blocks.extend(common(19, 128, &[]));
+    blocks.extend(jump(0x8000_0000, 0));
+    let resume = blocks.len() as u32;
+    blocks.extend(common(13, 0, &[]));
+    let mut extras = vertex(6.);
+    // Native BLOCK section addresses are tagged with 0x40000000 and remain
+    // section-relative when a sequence terminates in the extra stream.
+    extras.extend(seqend(0x4000_0000 | (owner - BLOCK_BASE)));
+    extras.extend(jump(0x4000_0000 | resume, 0));
+    let (entities, blocks) = assemble(point(1.), blocks, extras).unwrap();
+    assert_eq!(kinds(&entities), ["POINT"]);
+    assert_eq!(
+        kinds(&blocks),
+        ["BLOCK", "POLYLINE", "VERTEX", "SEQEND", "ENDBLK"]
+    );
+}
+
+#[test]
+fn deleted_bit_jump_is_still_followed() {
+    let target = jump(0, 0).len() as u32;
+    let mut marked = jump(target, 0);
+    marked[0] |= 128;
+    let checksum = crc16(0xc0c1, &marked[..8]);
+    marked[8..10].copy_from_slice(&checksum.to_le_bytes());
+    let mut main = marked;
+    main.extend(point(4.));
+    let (entities, blocks) = assemble(main, Vec::new(), Vec::new()).unwrap();
+    assert!(blocks.is_empty());
+    assert_eq!(kinds(&entities), ["POINT"]);
+    assert_eq!(entities[0].number(10, 0.), 4.);
+}
+
+#[test]
 fn backward_jump_is_valid_when_no_record_is_revisited() {
     let early_point = point(1.);
     let late_start = 10 + early_point.len() as u32 + 10;

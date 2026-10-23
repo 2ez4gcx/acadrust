@@ -30,9 +30,17 @@ fn tagged() -> (CadDocument, acadrust::Handle) {
 
 fn check(read: &CadDocument, what: &str) {
     let record = read.block_records.get("door").expect("block record");
-    let xdata = read.object_xdata(record.handle).unwrap_or_else(|| panic!("{what}: no xdata"));
-    let name = xdata.get_record("AcDbDynamicBlockTrueName").expect("true name");
-    assert_eq!(name.values, vec![XDataValue::String("door".into())], "{what}");
+    let xdata = read
+        .object_xdata(record.handle)
+        .unwrap_or_else(|| panic!("{what}: no xdata"));
+    let name = xdata
+        .get_record("AcDbDynamicBlockTrueName")
+        .expect("true name");
+    assert_eq!(
+        name.values,
+        vec![XDataValue::String("door".into())],
+        "{what}"
+    );
     let tag = xdata.get_record("AcDbBlockRepETag").expect("tag");
     assert_eq!(
         tag.values,
@@ -45,7 +53,10 @@ fn check(read: &CadDocument, what: &str) {
 fn block_record_xdata_round_trips_dxf_and_dwg() {
     let (doc, _) = tagged();
     let dxf = DxfWriter::new(&doc).write_to_vec().unwrap();
-    let read = DxfReader::from_reader(Cursor::new(dxf)).unwrap().read().unwrap();
+    let read = DxfReader::from_reader(Cursor::new(dxf))
+        .unwrap()
+        .read()
+        .unwrap();
     check(&read, "dxf");
     let dwg = DwgWriter::write_to_vec(&doc).unwrap();
     let read = DwgReader::from_stream(Cursor::new(dwg)).read().unwrap();
@@ -61,6 +72,10 @@ fn block_record_xdata_round_trips_dxf_and_dwg() {
     let dwg = DwgWriter::write_to_vec(&read).unwrap();
     let again = DwgReader::from_stream(Cursor::new(dwg)).read().unwrap();
     let handle = again.block_records.get("door").unwrap().handle;
-    let tag = again.object_xdata(handle).unwrap().get_record("AcDbBlockRepETag").unwrap();
+    let tag = again
+        .object_xdata(handle)
+        .unwrap()
+        .get_record("AcDbBlockRepETag")
+        .unwrap();
     assert_eq!(tag.values[1], XDataValue::Integer32(9));
 }

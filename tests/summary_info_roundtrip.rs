@@ -1,4 +1,3 @@
-
 use std::io::Cursor;
 
 use acadrust::types::DxfVersion;

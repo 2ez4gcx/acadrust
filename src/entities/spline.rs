@@ -272,6 +272,10 @@ impl Entity for Spline {
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_spline(self, transform);
     }
+
+    fn apply_mirror(&mut self, transform: &crate::types::Transform) {
+        super::mirror::mirror_spline(self, transform);
+    }
 }
 
 #[cfg(test)]

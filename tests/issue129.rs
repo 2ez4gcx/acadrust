@@ -226,18 +226,17 @@ fn legacy_database_body_preserves_extra_modeler_data_before_materials() {
 
 #[test]
 fn silhouette_viewport_width_matches_the_dwg_generation() {
-    for dxf_version in [DxfVersion::AC1018, DxfVersion::AC1021, DxfVersion::AC1024, DxfVersion::AC1027, DxfVersion::AC1032] {
+    for dxf_version in [
+        DxfVersion::AC1018,
+        DxfVersion::AC1021,
+        DxfVersion::AC1024,
+        DxfVersion::AC1027,
+        DxfVersion::AC1032,
+    ] {
         let version = DwgVersion::from_dxf_version(dxf_version).unwrap();
         let viewport_id = 0x1234_i64;
-        let (mut reader, _, end) = modeler_record_with_silhouette(
-            dxf_version,
-            3,
-            256,
-            true,
-            2,
-            false,
-            Some(viewport_id),
-        );
+        let (mut reader, _, end) =
+            modeler_record_with_silhouette(dxf_version, 3, 256, true, 2, false, Some(viewport_id));
         let body = read_acis_entity(
             &mut reader,
             version,
@@ -363,24 +362,30 @@ fn modeler_entities_survive_strict_and_failsafe_file_reading() {
 }
 
 #[test]
+#[ignore = "needs the six issue #129 drawings in issuesamples/"]
 fn supplied_issue129_samples_keep_modeler_entities() {
     let root = std::path::Path::new("issuesamples");
-    if !root.is_dir() {
-        return;
-    }
     let mut files: Vec<_> = std::fs::read_dir(root)
-        .unwrap()
+        .unwrap_or_else(|e| panic!("{}: {e}", root.display()))
         .map(|entry| entry.unwrap().path())
-        .filter(|path| path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("dwg")))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("dwg"))
+        })
         .collect();
     files.sort();
     assert_eq!(files.len(), 6);
     for path in files {
         let mut strict = DwgReader::from_file(&path).unwrap();
-        let document = strict.read().unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        let document = strict
+            .read()
+            .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
         let name = path.file_name().unwrap().to_string_lossy();
         if name == "NECG76A.dwg" {
-            let surfaces = document.entities().filter(|entity| matches!(entity, EntityType::Surface(_))).count();
+            let surfaces = document
+                .entities()
+                .filter(|entity| matches!(entity, EntityType::Surface(_)))
+                .count();
             assert_eq!(surfaces, 28, "{}", path.display());
         } else {
             let expected = match name.as_ref() {
@@ -391,7 +396,10 @@ fn supplied_issue129_samples_keep_modeler_entities() {
                 "NEFE74215.dwg" => 15,
                 _ => unreachable!(),
             };
-            let solids = document.entities().filter(|entity| matches!(entity, EntityType::Solid3D(_))).count();
+            let solids = document
+                .entities()
+                .filter(|entity| matches!(entity, EntityType::Solid3D(_)))
+                .count();
             assert_eq!(solids, expected, "{}", path.display());
         }
     }

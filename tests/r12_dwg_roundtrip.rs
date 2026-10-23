@@ -4,10 +4,56 @@ use acadrust::entities::{Face3D, Solid};
 use acadrust::io::dwg::DwgVersion;
 use acadrust::tables::BlockRecord;
 use acadrust::tables::Layer;
+use acadrust::xdata::{ExtendedDataRecord, XDataValue};
 use acadrust::{
-    Arc, CadDocument, Circle, DwgReader, DwgWriter, DxfVersion, EntityType, Line, Point, Text,
-    Vector3,
+    Arc, CadDocument, Circle, DwgReader, DwgWriter, DxfVersion, Ellipse, EntityType, Line, MText,
+    Point, Text, Vector3,
 };
+
+fn bytes_contain(bytes: &[u8], needle: &[u8]) -> bool {
+    bytes.windows(needle.len()).any(|window| window == needle)
+}
+
+#[test]
+fn ac1009_write_keeps_annotative_application_when_extended_data_names_it() {
+    let mut document = CadDocument::with_version(DxfVersion::AC1009);
+    let mut line = Line::from_coords(0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    let mut record = ExtendedDataRecord::new("ACADANNOTATIVE");
+    record.add_value(XDataValue::String("AnnotativeData".into()));
+    line.common.extended_data.add_record(record);
+    document.add_entity(EntityType::Line(line)).unwrap();
+
+    let bytes = DwgWriter::write_to_vec(&document).unwrap();
+    assert!(
+        bytes_contain(&bytes, b"ACADANNOTATIVE") || bytes_contain(&bytes, b"AcadAnnotative"),
+        "referenced annotative application was dropped from the R12 table"
+    );
+    let restored = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
+    let entity = restored.entities().next().expect("line");
+    let record = entity
+        .common()
+        .extended_data
+        .records()
+        .iter()
+        .find(|record| {
+            record
+                .application_name
+                .eq_ignore_ascii_case("ACADANNOTATIVE")
+        })
+        .expect("annotative extended data");
+    assert!(record
+        .values
+        .iter()
+        .any(|value| matches!(value, XDataValue::String(text) if text == "AnnotativeData")));
+}
+
+#[test]
+fn ac1009_write_omits_unreferenced_annotative_application() {
+    let document = CadDocument::with_version(DxfVersion::AC1009);
+    let bytes = DwgWriter::write_to_vec(&document).unwrap();
+    assert!(!bytes_contain(&bytes, b"AcadAnnotative"));
+    assert!(!bytes_contain(&bytes, b"ACADANNOTATIVE"));
+}
 
 #[test]
 fn ac1009_keeps_imported_layout_references_when_applying_legacy_header() {
@@ -196,4 +242,58 @@ fn ac1009_preserves_custom_layer_names() {
         unreachable!()
     };
     assert_eq!(line.common.layer, "CUT");
+}
+
+#[test]
+fn ac1009_decodes_legacy_entity_string_escapes() {
+    let mut document = CadDocument::with_version(DxfVersion::AC1009);
+    document.header.code_page = "ANSI_1252".into();
+    document
+        .add_entity(EntityType::Text(Text::with_value(
+            r"\U+4E2D\U+6587 \M+5BCFE\M+5BAC5",
+            Vector3::ZERO,
+        )))
+        .unwrap();
+
+    let bytes = DwgWriter::write_to_vec(&document).expect("write escaped R12 text");
+    let restored = DwgReader::from_stream(Cursor::new(bytes))
+        .read()
+        .expect("read escaped R12 text");
+    let EntityType::Text(text) = restored
+        .entities()
+        .find(|entity| matches!(entity, EntityType::Text(_)))
+        .expect("missing text")
+    else {
+        unreachable!();
+    };
+    assert_eq!(text.value, "中文 件号");
+}
+
+#[test]
+fn ac1009_downsaves_convertible_modern_entities() {
+    let mut document = CadDocument::with_version(DxfVersion::AC1009);
+    document
+        .add_entity(EntityType::MText(Box::new(MText::with_value(
+            "legacy text",
+            Vector3::ZERO,
+        ))))
+        .unwrap();
+    document
+        .add_entity(EntityType::Ellipse(Ellipse::from_center_axes(
+            Vector3::ZERO,
+            Vector3::new(5.0, 0.0, 0.0),
+            0.5,
+        )))
+        .unwrap();
+
+    let bytes = DwgWriter::write_to_vec(&document).expect("down-save modern entities");
+    let restored = DwgReader::from_stream(Cursor::new(bytes))
+        .read()
+        .expect("read converted AC1009 drawing");
+    assert!(restored
+        .entities()
+        .any(|entity| matches!(entity, EntityType::Text(_))));
+    assert!(restored
+        .entities()
+        .any(|entity| matches!(entity, EntityType::Polyline2D(_))));
 }

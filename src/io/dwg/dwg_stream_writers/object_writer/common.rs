@@ -1030,7 +1030,12 @@ impl<'a> DwgObjectWriter<'a> {
         // from another drawing names a handle that is no APPID here, and the
         // reference program rejects the whole file (eInvalidInput); it is
         // dropped instead.
-        let registered = |app: u64| self.document.app_ids.iter().any(|a| a.handle.value() == app);
+        let registered = |app: u64| {
+            self.document
+                .app_ids
+                .iter()
+                .any(|a| a.handle.value() == app)
+        };
         let raw_blocks: Vec<(u64, Vec<u8>)> = if eed_compatible {
             xdata
                 .raw_dwg_eed
@@ -1104,25 +1109,39 @@ impl<'a> DwgObjectWriter<'a> {
 
     // ── entity-mode helper ──────────────────────────────────────────
     /// Returns the 2-bit entity-mode value (per ODA spec §19.4.4):
-    /// - 0 = owned (owner handle present) — VERTEX, ATTRIB, SEQEND, an
-    ///       entity inside a named block or an inactive layout's
-    ///       `*Paper_SpaceN`
-    /// - 1 = entity of the active layout's `*Paper_Space`
-    /// - 2 = model-space entity (`*Model_Space`)
+    /// - 0 = owned (owner handle present) — VERTEX, ATTRIB, SEQEND,
+    ///       or entity inside a named block
+    /// - 1 = paper-space entity (BB 01 -> the active paper-space block)
+    /// - 2 = model-space entity (BB 10 → *Model_Space)
+    ///
+    /// Other paper-space layouts retain an explicit owner handle.
     fn get_entity_mode(&self, owner_handle: &Handle) -> u8 {
-        let owned_by = |name: &str| {
-            self.document
-                .block_records
-                .get(name)
-                .is_some_and(|br| br.handle == *owner_handle)
-        };
-        if owned_by("*Model_Space") {
-            2
-        } else if owned_by("*Paper_Space") {
-            1
-        } else {
-            0
+        self.entity_modes.get(owner_handle).copied().unwrap_or(0)
+    }
+
+    /// The entity mode of each block record's entities, by the record's
+    /// handle, built once per writer: searching the block records for every
+    /// entity made writing a drawing with many blocks quadratic. The first
+    /// record with a handle decides, as a search of the table in order would.
+    pub(super) fn build_entity_modes(
+        document: &crate::document::CadDocument,
+        paper_space_block_handle: Handle,
+    ) -> std::collections::HashMap<Handle, u8> {
+        let mut modes = std::collections::HashMap::with_capacity(document.block_records.len());
+        for br in document.block_records.iter() {
+            let mode = if br.name.eq_ignore_ascii_case("*MODEL_SPACE") {
+                2 // model space (BB 10)
+            } else if br.handle == paper_space_block_handle {
+                // Paper-space mode names the active layout's *Paper_Space;
+                // the other layouts' *Paper_SpaceN records, like named
+                // blocks, store their owner.
+                1 // paper space (BB 01)
+            } else {
+                0 // owner handle follows
+            };
+            modes.entry(br.handle).or_insert(mode);
         }
+        modes
     }
 }
 

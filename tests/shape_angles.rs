@@ -15,10 +15,13 @@ fn document() -> CadDocument {
 }
 
 fn assert_angles(document: &CadDocument) {
-    let shape = document.entities().find_map(|entity| match entity {
-        EntityType::Shape(shape) => Some(shape),
-        _ => None,
-    }).expect("SHAPE entity");
+    let shape = document
+        .entities()
+        .find_map(|entity| match entity {
+            EntityType::Shape(shape) => Some(shape),
+            _ => None,
+        })
+        .expect("SHAPE entity");
     assert!((shape.rotation - 30.0_f64.to_radians()).abs() < 1.0e-12);
     assert!((shape.oblique_angle - (-12.5_f64).to_radians()).abs() < 1.0e-12);
 }

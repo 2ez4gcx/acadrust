@@ -9,7 +9,7 @@ use acadrust::io::dwg::dwg_stream_writers::DwgMergedWriter;
 use acadrust::io::dwg::{DwgReadOptions, DwgVersion};
 use acadrust::objects::{Dictionary, ObjectContextData, ObjectContextKind, ObjectType, Scale};
 use acadrust::types::{DxfVersion, Handle};
-use acadrust::{CadDocument, DwgReader, DwgWriter};
+use acadrust::{CadDocument, DwgReader, DwgWriter, DxfWriter};
 
 const CONTEXT: &str = "ACDB_MLEADEROBJECTCONTEXTDATA_CLASS";
 
@@ -135,6 +135,8 @@ fn named_auxiliary_failures_are_preserved_in_strict_and_failsafe_reads() {
             (CONTEXT, 540),
             ("ACDBASSOCGEOMDEPENDENCY", 501),
             ("ASSOCGEOMDEPENDENCY", 541),
+            ("ACDBASSOC2DCONSTRAINTGROUP", 861),
+            ("ASSOC2DCONSTRAINTGROUP", 536),
             ("ACDBASSOCEDGEACTIONPARAM", 562),
             ("ASSOCEDGEACTIONPARAM", 542),
             ("LSDEFINITION", 543),
@@ -220,6 +222,8 @@ fn broken_common_metadata_and_wrong_handles_still_fail_strict_reads() {
     for name in [
         CONTEXT,
         "ACDBASSOCGEOMDEPENDENCY",
+        "ACDBASSOC2DCONSTRAINTGROUP",
+        "ASSOC2DCONSTRAINTGROUP",
         "ACDBASSOCEDGEACTIONPARAM",
         "LSDEFINITION",
         "LSSTROKEPATTERNCOMPONENT",
@@ -249,6 +253,44 @@ fn broken_common_metadata_and_wrong_handles_still_fail_strict_reads() {
 }
 
 #[test]
+fn failsafe_keeps_a_framed_object_and_returns_the_decode_error() {
+    let (source, healthy, auxiliary, ..) = auxiliary_fixture(
+        DxfVersion::AC1032,
+        "CONTEXTDATAMANAGER",
+        540,
+        false,
+        false,
+    );
+    let bytes = DwgWriter::write_to_vec(&source).unwrap();
+    let strict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        DwgReader::from_stream(Cursor::new(bytes.clone())).read()
+    }))
+    .expect("strict read must not panic");
+    let error = strict.expect_err("strict read reports the bad record").to_string();
+    assert!(error.starts_with("Parse error:"), "{error}");
+    assert!(!error.contains("panicked"), "{error}");
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        DwgReader::from_stream_with_options(Cursor::new(bytes), DwgReadOptions::failsafe())
+            .read_with_stats()
+    }))
+    .expect("failsafe read must not panic")
+    .expect("failsafe returns the drawing");
+    assert!(outcome.document.get_entity(healthy).is_some());
+    assert!(matches!(
+        outcome.document.objects.get(&auxiliary),
+        Some(ObjectType::Unknown { type_name, raw_dwg_data: Some(_), .. })
+            if type_name == "CONTEXTDATAMANAGER"
+    ));
+    assert!(outcome.stats.diagnostics.iter().any(|diagnostic| {
+        diagnostic.record_handle == Some(auxiliary.value())
+            && diagnostic.message.contains("CONTEXTDATAMANAGER")
+            && !diagnostic.message.contains("panicked")
+    }));
+    assert_eq!(outcome.stats.skipped_source_records, 0);
+}
+
+#[test]
 fn other_known_object_decode_failures_still_fail_strict_reads() {
     for (name, type_code) in [
         ("CONTEXTDATAMANAGER", 540),
@@ -263,6 +305,69 @@ fn other_known_object_decode_failures_still_fail_strict_reads() {
             DwgReader::from_stream(Cursor::new(bytes)).read().is_err(),
             "{name}"
         );
+    }
+}
+
+#[test]
+fn invalid_constraint_counts_keep_source_records_without_silent_dxf_loss() {
+    for version in [DxfVersion::AC1024, DxfVersion::AC1027, DxfVersion::AC1032] {
+        for (class_number, count) in [(861, -49), (536, 1_652_754_708), (824, 1_619_069_204)] {
+            let (source, healthy, group, raw, _) = auxiliary_fixture_with_payload(
+                version,
+                "ACDBASSOC2DCONSTRAINTGROUP",
+                class_number,
+                false,
+                false,
+                |writer, _| {
+                    writer.write_bit_short(1); // action class version
+                    for _ in 0..4 {
+                        writer.write_bit_long(0); // status, indexes, dependencies
+                    }
+                    writer.write_handle(DwgReferenceType::SoftPointer, 0);
+                    writer.write_handle(DwgReferenceType::HardOwnership, 0);
+                    writer.write_bit_long(2); // group version
+                    writer.write_bit(false);
+                    for point in [
+                        acadrust::types::Vector3::ZERO,
+                        acadrust::types::Vector3::UNIT_X,
+                        acadrust::types::Vector3::UNIT_Y,
+                    ] {
+                        writer.write_3bit_double(point);
+                    }
+                    writer.write_handle(DwgReferenceType::HardOwnership, 0);
+                    writer.write_bit_long(count); // impossible owned-action count
+                },
+            );
+            let bytes = DwgWriter::write_to_vec(&source).unwrap();
+            for options in [DwgReadOptions::default(), DwgReadOptions::failsafe()] {
+                let outcome = DwgReader::from_stream_with_options(Cursor::new(&bytes), options)
+                    .read_with_stats()
+                    .unwrap();
+                assert_eq!(outcome.stats.skipped_source_records, 0);
+                assert!(outcome.document.get_entity(healthy).is_some());
+                assert!(outcome.stats.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code == "auxiliary-object-preserved"
+                        && diagnostic.record_handle == Some(group.value())
+                        && diagnostic
+                            .message
+                            .contains(&format!("Invalid DWG array count {count}"))
+                }));
+                let saved = DwgWriter::write_to_vec(&outcome.document).unwrap();
+                let saved = DwgReader::from_stream(Cursor::new(saved)).read().unwrap();
+                assert!(matches!(saved.objects.get(&group),
+                    Some(ObjectType::Unknown { raw_dwg_data: Some(data), .. }) if data == &raw));
+                for writer in [
+                    DxfWriter::new(&outcome.document),
+                    DxfWriter::new_binary(&outcome.document),
+                ] {
+                    let mut output = Vec::new();
+                    let error = writer.write_to_writer(&mut output).unwrap_err().to_string();
+                    assert!(error.contains("undecoded constraint group"), "{error}");
+                    assert!(error.contains(&group.to_string()), "{error}");
+                    assert!(output.is_empty());
+                }
+            }
+        }
     }
 }
 

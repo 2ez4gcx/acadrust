@@ -619,7 +619,9 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_bit_double(*radius);
                 self.writer.write_bit_double(*start_parameter);
                 self.writer.write_bit_double(*end_parameter);
-                self.writer.write_bit_double(*reserved);
+                if self.version.r2013_plus(self.dxf_version) {
+                    self.writer.write_bit_double(*reserved);
+                }
             }
             AssocConstraintNodeData::Arc {
                 geometry_dependency,
@@ -642,7 +644,9 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_bit_double(*radius);
                 self.writer.write_bit_double(*start_parameter);
                 self.writer.write_bit_double(*end_parameter);
-                self.writer.write_bit_double(*reserved);
+                if self.version.r2013_plus(self.dxf_version) {
+                    self.writer.write_bit_double(*reserved);
+                }
                 self.writer.write_3bit_double(*start_point);
                 self.writer.write_3bit_double(*end_point);
             }
@@ -777,23 +781,8 @@ impl<'a> DwgObjectWriter<'a> {
                         self.writer.write_bit_long(*item);
                     }
                 } else {
-                    self.writer.write_variable_text(subent.resolved_class_name());
-                    match AssocPersistentSubentId::field_count_for_class_name(
-                        subent.resolved_class_name(),
-                    ) {
-                        Some(count) => {
-                            for index in 0..count {
-                                self.writer.write_bit_long(
-                                    subent.values.get(index).copied().unwrap_or(0),
-                                );
-                            }
-                        }
-                        None => {
-                            for item in &subent.values {
-                                self.writer.write_bit_long(*item);
-                            }
-                        }
-                    }
+                    self.writer
+                        .write_variable_text(subent.resolved_class_name());
                 }
                 self.writer.write_bit(subent.dependent_on_compound_object);
             }
@@ -845,7 +834,8 @@ impl<'a> DwgObjectWriter<'a> {
             }
             AssociativeData::ConstraintGroup(value) => {
                 self.write_assoc_action(&value.action);
-                self.writer.write_bit_long(value.version);
+                self.writer
+                    .write_bit_long(if value.version == 0 { 2 } else { value.version });
                 self.writer.write_bit(value.flag);
                 for point in value.work_plane {
                     self.writer.write_3bit_double(point);
@@ -853,25 +843,26 @@ impl<'a> DwgObjectWriter<'a> {
                 self.write_assoc_handle(DwgReferenceType::HardOwnership, value.dependency);
                 self.writer.write_bit_long(value.actions.len() as i32);
                 self.write_assoc_handles(DwgReferenceType::HardOwnership, &value.actions);
-                let class_nodes: Vec<&AssocConstraintNode> = value
-                    .nodes
-                    .iter()
-                    .skip(1)
-                    .filter(|node| !node.class_name.is_empty())
-                    .collect();
-                // Below R2013 the group stores its nodes inline: a count
-                // followed by class name, body and data per node, with no
-                // root entry or class registry. R2013 and later store a
-                // root, a class table and registry triples instead.
-                if !self.version.r2013_plus(self.dxf_version) && !class_nodes.is_empty() {
+                if !self.version.r2013_plus(self.dxf_version) {
+                    let registered: Vec<_> = value
+                        .nodes
+                        .iter()
+                        .filter(|node| !node.class_name.is_empty())
+                        .collect();
                     self.writer.write_bit_long(value.effective_next_node_id());
-                    self.writer.write_bit_long(class_nodes.len() as i32);
-                    for node in class_nodes {
+                    self.writer.write_bit_long(registered.len() as i32);
+                    for node in registered {
                         self.writer.write_variable_text(&node.class_name);
                         self.write_constraint_node_common(node);
                         self.write_constraint_node_data(&node.data);
                     }
                 } else if let Some(first) = value.nodes.first() {
+                    let registered: Vec<&AssocConstraintNode> = value
+                        .nodes
+                        .iter()
+                        .skip(1)
+                        .filter(|node| !node.class_name.is_empty())
+                        .collect();
                     self.writer.write_bit_long(value.effective_next_node_id());
                     self.writer.write_bit_long(first.node_id);
                     self.writer.write_bit_long(first.connections.len() as i32);
@@ -880,7 +871,7 @@ impl<'a> DwgObjectWriter<'a> {
                     }
                     self.writer.write_bit(first.status != 0);
                     let mut class_types: Vec<&str> = Vec::new();
-                    for node in &class_nodes {
+                    for node in &registered {
                         if !class_types
                             .iter()
                             .any(|name| name.eq_ignore_ascii_case(&node.class_name))
@@ -892,8 +883,8 @@ impl<'a> DwgObjectWriter<'a> {
                     for class_name in &class_types {
                         self.writer.write_variable_text(class_name);
                     }
-                    self.writer.write_bit_long(class_nodes.len() as i32);
-                    for node in &class_nodes {
+                    self.writer.write_bit_long(registered.len() as i32);
+                    for node in &registered {
                         self.writer.write_bit(node.registry_flag);
                         let class_index = class_types
                             .iter()
@@ -903,11 +894,18 @@ impl<'a> DwgObjectWriter<'a> {
                         self.writer.write_bit_long(class_index);
                         self.writer.write_bit_long(node.node_id);
                     }
-                    for node in class_nodes {
+                    for node in registered {
                         self.write_constraint_node_common(node);
                         self.write_constraint_node_data(&node.data);
                     }
                 } else {
+                    // R2013+ keeps the registry fields even when the group has
+                    // no nodes. BricsCAD rejects the shorter BL-only form.
+                    self.writer.write_bit_long(value.effective_next_node_id());
+                    self.writer.write_bit_long(0);
+                    self.writer.write_bit_long(0);
+                    self.writer.write_bit(false);
+                    self.writer.write_bit_long(0);
                     self.writer.write_bit_long(0);
                 }
             }

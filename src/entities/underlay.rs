@@ -4,7 +4,9 @@
 //! as reference images in a drawing.
 
 use crate::entities::{Entity, EntityCommon};
-use crate::types::{BoundingBox3D, Color, Handle, LineWeight, Transparency, Vector2, Vector3};
+use crate::types::{
+    BoundingBox3D, Color, Handle, LineWeight, Matrix3, Transparency, Vector2, Vector3,
+};
 
 use bitflags::bitflags;
 
@@ -444,6 +446,7 @@ impl Underlay {
     pub fn world_clip_boundary(&self) -> Vec<Vector3> {
         let cos_r = self.rotation.cos();
         let sin_r = self.rotation.sin();
+        let ocs = Matrix3::arbitrary_axis(self.normal);
 
         self.clip_boundary_vertices
             .iter()
@@ -452,7 +455,7 @@ impl Underlay {
                 let y = v.y * self.y_scale;
                 let rx = x * cos_r - y * sin_r;
                 let ry = x * sin_r + y * cos_r;
-                self.insertion_point + Vector3::new(rx, ry, 0.0)
+                self.insertion_point + ocs * Vector3::new(rx, ry, 0.0)
             })
             .collect()
     }
@@ -552,6 +555,10 @@ impl Entity for Underlay {
 
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_underlay(self, transform);
+    }
+
+    fn apply_mirror(&mut self, transform: &crate::types::Transform) {
+        super::mirror::mirror_underlay(self, transform);
     }
 }
 

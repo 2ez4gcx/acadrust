@@ -360,7 +360,9 @@ impl AttributeDefinition {
 
     /// Estimate the width of the text
     pub fn estimated_width(&self) -> f64 {
-        super::text::estimated_width_in_heights(&self.default_value) * self.height * self.width_factor
+        super::text::estimated_width_in_heights(&self.default_value)
+            * self.height
+            * self.width_factor
     }
 
     /// Builder: Set position
@@ -499,6 +501,18 @@ impl Entity for AttributeDefinition {
 
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_attribute_definition(self, transform);
+    }
+
+    fn apply_mirror(&mut self, transform: &crate::types::Transform) {
+        super::mirror::mirror_attribute_definition(self, transform);
+    }
+
+    fn apply_mirror_with_options(
+        &mut self,
+        transform: &crate::types::Transform,
+        options: super::MirrorOptions,
+    ) {
+        super::mirror::mirror_attribute_definition_with_options(self, transform, options);
     }
 }
 

@@ -36,7 +36,13 @@ use crate::xdata::XDataValue;
 /// `0` when the layer is unknown).
 #[cfg(test)]
 fn encode_values(wide: bool, values: &[XDataValue], layer_handle: impl Fn(&str) -> u64) -> Vec<u8> {
-    encode_values_with_encoding(wide, values, encoding_rs::WINDOWS_1252.into(), 30, layer_handle)
+    encode_values_with_encoding(
+        wide,
+        values,
+        encoding_rs::WINDOWS_1252.into(),
+        30,
+        layer_handle,
+    )
 }
 
 pub(crate) fn encode_values_with_encoding(
@@ -123,7 +129,7 @@ pub(crate) fn encode_values_with_encoding(
 /// resolves a layer table handle back to its name. Returns `None` if the bytes
 /// contain an unknown item code or are truncated mid-item, so the caller can
 /// keep the verbatim `raw_dwg_eed` blob instead of a partial record.
-pub(crate) fn decode_values(
+pub fn decode_values(
     bytes: &[u8],
     wide: bool,
     layer_name: impl Fn(u64) -> Option<String>,

@@ -201,6 +201,8 @@ impl<'a> SemanticInventoryV1<'a> {
             acis_sab_handles: _,
             raw_acds_data: _,
             r12_header_raw: _,
+            r12_table_usage: _,
+            r12_block_tags: _,
             raw_acds_fingerprint: _,
             raw_records: _,
             original_objects: _,

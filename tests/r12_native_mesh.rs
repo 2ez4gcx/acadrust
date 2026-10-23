@@ -21,9 +21,13 @@ fn native_path(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn native_dwg(name: &str) -> Option<CadDocument> {
-    let bytes = fs::read(native_path(name)).ok()?;
-    Some(DwgReader::from_stream(Cursor::new(bytes)).read().unwrap())
+/// Reads a native BricsCAD DWG. These binaries are not in the repository (see
+/// `tests/fixtures/r12/cad-created/README.md`), so the tests that read them
+/// are ignored.
+fn native_dwg(name: &str) -> CadDocument {
+    let path = native_path(name);
+    let bytes = fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    DwgReader::from_stream(Cursor::new(bytes)).read().unwrap()
 }
 
 fn native_dxf(name: &str) -> CadDocument {
@@ -138,37 +142,49 @@ fn expected_geometry() -> NativeGeometry {
     }
 }
 
+fn assert_repeated_saves_are_deterministic(mut restored: CadDocument) {
+    for cycle in 0..3 {
+        let bytes = DwgWriter::write_to_vec(&restored).unwrap();
+        assert_eq!(bytes, DwgWriter::write_to_vec(&restored).unwrap());
+        restored = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
+        assert_eq!(
+            geometry(&restored),
+            expected_geometry(),
+            "save cycle {cycle}"
+        );
+    }
+}
+
 #[test]
-fn ac1009_native_dwg_and_dxf_keep_distinct_mesh_topologies() {
+fn ac1009_native_dxf_keeps_distinct_mesh_topologies() {
     for suffix in ["", "-edited"] {
-        if let Some(dwg) = native_dwg(&format!("native-geometry{suffix}.dwg")) {
-            assert_eq!(geometry(&dwg), expected_geometry(), "native DWG{suffix}");
-        }
         let dxf = native_dxf(&format!("native-geometry{suffix}.dxf"));
         assert_eq!(geometry(&dxf), expected_geometry(), "native DXF{suffix}");
     }
 }
 
 #[test]
-fn ac1009_native_mesh_topologies_survive_repeated_deterministic_saves() {
+#[ignore = "needs native-geometry.dwg and native-geometry-edited.dwg in tests/fixtures/r12/cad-created"]
+fn ac1009_native_dwg_keeps_distinct_mesh_topologies() {
     for suffix in ["", "-edited"] {
-        let mut documents = Vec::new();
-        if let Some(dwg) = native_dwg(&format!("native-geometry{suffix}.dwg")) {
-            documents.push(dwg);
-        }
-        documents.push(native_dxf(&format!("native-geometry{suffix}.dxf")));
-        for document in documents {
-            let mut restored = document;
-            for cycle in 0..3 {
-                let bytes = DwgWriter::write_to_vec(&restored).unwrap();
-                assert_eq!(bytes, DwgWriter::write_to_vec(&restored).unwrap());
-                restored = DwgReader::from_stream(Cursor::new(bytes)).read().unwrap();
-                assert_eq!(
-                    geometry(&restored),
-                    expected_geometry(),
-                    "save cycle {cycle}"
-                );
-            }
-        }
+        let dwg = native_dwg(&format!("native-geometry{suffix}.dwg"));
+        assert_eq!(geometry(&dwg), expected_geometry(), "native DWG{suffix}");
+    }
+}
+
+#[test]
+fn ac1009_native_dxf_mesh_topologies_survive_repeated_deterministic_saves() {
+    for suffix in ["", "-edited"] {
+        let dxf = native_dxf(&format!("native-geometry{suffix}.dxf"));
+        assert_repeated_saves_are_deterministic(dxf);
+    }
+}
+
+#[test]
+#[ignore = "needs native-geometry.dwg and native-geometry-edited.dwg in tests/fixtures/r12/cad-created"]
+fn ac1009_native_dwg_mesh_topologies_survive_repeated_deterministic_saves() {
+    for suffix in ["", "-edited"] {
+        let dwg = native_dwg(&format!("native-geometry{suffix}.dwg"));
+        assert_repeated_saves_are_deterministic(dwg);
     }
 }

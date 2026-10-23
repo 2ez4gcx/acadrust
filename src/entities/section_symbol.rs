@@ -208,6 +208,7 @@ impl Entity for SectionSymbol {
         "SECTIONLINE"
     }
     fn apply_transform(&mut self, transform: &Transform) {
+        self.common.raw_record = None;
         for point in &mut self.points {
             let original = point.point;
             let transformed = transform.apply(original);
@@ -219,6 +220,7 @@ impl Entity for SectionSymbol {
         let end_b = transform.apply(Vector3::new(self.end_b[0], self.end_b[1], 0.0));
         self.end_a = [end_a.x, end_a.y];
         self.end_b = [end_b.x, end_b.y];
+        self.sync_display_fields();
     }
 }
 

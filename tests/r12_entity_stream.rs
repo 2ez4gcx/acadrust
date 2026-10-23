@@ -275,9 +275,43 @@ pub fn block_polyline_fixture() -> Vec<u8> {
     fixture(&point(0x30), &blocks, &[], true)
 }
 
+pub fn block_polyline_extra_fixture() -> Vec<u8> {
+    let begin = block_begin();
+    let polyline = polyline(0x20);
+    let to_extra = jump(0x8000_0000, 0);
+    let resume = begin.len() + polyline.len() + to_extra.len();
+    let blocks = [
+        begin.clone(),
+        polyline,
+        to_extra,
+        frame(13, 0, 0, 0x11, &[]),
+    ]
+    .concat();
+    let owner = 0x4000_0000 | begin.len() as u32;
+    let extras = [
+        vertex(0x21, 1.0, 2.0),
+        vertex(0x22, 8.0, 9.0),
+        seqend(0x23, owner),
+        jump(0x4000_0000 | resume as u32, 0),
+    ]
+    .concat();
+    fixture(&point(0x30), &blocks, &extras, true)
+}
+
 #[test]
 fn block_polyline_preserves_native_block_ownership_across_saves() {
     let document = read(block_polyline_fixture());
+    assert_stable_saves(document, |document| {
+        let block = document.block_records.get("PART").unwrap();
+        assert_polyline(document, 0x20, block.handle);
+        assert_eq!(block.entity_handles, [Handle::new(0x20)]);
+        assert_eq!(document.entities().count(), 2);
+    });
+}
+
+#[test]
+fn block_polyline_extra_stream_preserves_ownership_across_saves() {
+    let document = read(block_polyline_extra_fixture());
     assert_stable_saves(document, |document| {
         let block = document.block_records.get("PART").unwrap();
         assert_polyline(document, 0x20, block.handle);

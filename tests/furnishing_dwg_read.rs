@@ -2,10 +2,10 @@ use acadrust::{DwgReader, EntityType, Handle};
 use std::path::PathBuf;
 
 #[test]
+#[ignore = "needs the furnishing drawings; set ACADRUST_FURNISHING_DIR to their folder"]
 fn furnishing_modeler_records_read_without_recovery() {
-    let Some(root) = std::env::var_os("ACADRUST_FURNISHING_DIR") else {
-        return;
-    };
+    let root = std::env::var_os("ACADRUST_FURNISHING_DIR")
+        .expect("set ACADRUST_FURNISHING_DIR to the folder holding the furnishing drawings");
     let mut failures = Vec::new();
     for (folder, handle) in [
         ("9925129", 0xADFE),
@@ -14,7 +14,9 @@ fn furnishing_modeler_records_read_without_recovery() {
         ("DACKA", 0x5CF4B),
     ] {
         let path = PathBuf::from(&root).join(folder).join(".dwg");
-        let result = DwgReader::from_file(&path).unwrap().read_with_stats();
+        let result = DwgReader::from_file(&path)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+            .read_with_stats();
         let outcome = match result {
             Ok(outcome) => outcome,
             Err(error) => {

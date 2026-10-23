@@ -41,6 +41,9 @@ use crate::io::dwg::dwg21_metadata::Dwg21CompressedMetadata;
 use crate::io::dwg::dwg_version::DwgVersion;
 use crate::io::dwg::parallel::{map_ordered, worker_count};
 use crate::io::dwg::reed_solomon::reed_solomon_decode;
+use crate::io::dwg::size_limits::{
+    size_from_file, MAX_DATA_PAGE_SIZE, MAX_SECTION_SIZE, MAX_SYSTEM_PAGE_SIZE,
+};
 use crate::io::read::{push_read_diagnostic, ReadDiagnostic, ReadStage, SourceFormat};
 use crate::notification::{NotificationCollection, NotificationType};
 
@@ -272,23 +275,66 @@ pub struct DwgPageCrcInfo {
 /// action parameters with unsupported payload layouts are preserved as raw DWG
 /// objects with diagnostics even in strict mode, if their framing and common
 /// object metadata are valid. Same-version DWG saves retain those records.
+///
+/// MESH entities are stored up to [`crate::MeshFaceBudget::from_system`] unless
+/// [`Self::max_mesh_faces`] or [`Self::max_mesh_face_indices`] is set.
+/// `Some(usize::MAX)` removes that cap. The object record still bounds the
+/// face list, and a mesh that exceeds the budget is truncated with a
+/// `mesh-face-budget` diagnostic.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DwgReadOptions {
     /// When `true`, recover as much data as possible from corrupt files.
     pub failsafe: bool,
+    /// Faces retained from one MESH entity.
+    ///
+    /// `None` uses the system budget. `Some(usize::MAX)` stores every face
+    /// that fits in the object record.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub max_mesh_faces: Option<usize>,
+    /// Face-corner indices retained from one MESH entity.
+    ///
+    /// `None` uses the system budget. `Some(usize::MAX)` stores every index
+    /// that fits in the object record.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub max_mesh_face_indices: Option<usize>,
 }
 
 impl Default for DwgReadOptions {
     fn default() -> Self {
-        Self { failsafe: false }
+        Self {
+            failsafe: false,
+            max_mesh_faces: None,
+            max_mesh_face_indices: None,
+        }
     }
 }
 
 impl DwgReadOptions {
     /// Create options with failsafe mode enabled.
     pub fn failsafe() -> Self {
-        Self { failsafe: true }
+        Self {
+            failsafe: true,
+            ..Self::default()
+        }
+    }
+
+    /// Replace both MESH caps. `usize::MAX` removes a cap.
+    pub fn with_mesh_limits(mut self, max_faces: usize, max_face_indices: usize) -> Self {
+        self.max_mesh_faces = Some(max_faces);
+        self.max_mesh_face_indices = Some(max_face_indices);
+        self
+    }
+
+    /// Store every MESH face that fits in its object record.
+    pub fn with_unlimited_mesh(self) -> Self {
+        self.with_mesh_limits(usize::MAX, usize::MAX)
+    }
+
+    /// Budget applied while reading MESH entities.
+    pub fn mesh_budget(&self) -> crate::io::dwg::mesh_budget::MeshFaceBudget {
+        crate::io::dwg::mesh_budget::MeshFaceBudget::from_system()
+            .with_overrides(self.max_mesh_faces, self.max_mesh_face_indices)
     }
 }
 
@@ -692,7 +738,11 @@ fn section_name_from_field(name_buf: &[u8; 64]) -> String {
 /// integrity checksums including the AC1021 Header CRC-64.
 /// Read one `T16` string (2-byte character-count prefix). R2007+ stores the
 /// characters as UTF-16LE; earlier versions as one byte per character.
-fn read_t16(cur: &mut &[u8], utf16: bool, encoding: crate::io::dxf::code_page::LegacyEncoding) -> String {
+fn read_t16(
+    cur: &mut &[u8],
+    utf16: bool,
+    encoding: crate::io::dxf::code_page::LegacyEncoding,
+) -> String {
     if cur.len() < 2 {
         *cur = &[];
         return String::new();
@@ -724,15 +774,29 @@ fn decode_field_xdata(document: &mut crate::document::CadDocument) {
         .eed_by_handle
         .keys()
         .copied()
-        .filter(|h| matches!(document.objects.get(h), Some(crate::objects::ObjectType::Field(_))))
+        .filter(|h| {
+            matches!(
+                document.objects.get(h),
+                Some(crate::objects::ObjectType::Field(_))
+            )
+        })
         .collect();
     for h in fields {
-        let Some(blocks) = document.eed_by_handle.remove(&h) else { continue };
+        let Some(blocks) = document.eed_by_handle.remove(&h) else {
+            continue;
+        };
         let mut kept = Vec::new();
         let mut xdata = crate::xdata::ExtendedData::new();
         for (app, bytes) in blocks {
-            let name = document.app_ids.iter().find(|a| a.handle.value() == app).map(|a| a.name.clone());
-            match (name, crate::io::dwg::eed_codec::decode_values(&bytes, wide, |_| None)) {
+            let name = document
+                .app_ids
+                .iter()
+                .find(|a| a.handle.value() == app)
+                .map(|a| a.name.clone());
+            match (
+                name,
+                crate::io::dwg::eed_codec::decode_values(&bytes, wide, |_| None),
+            ) {
                 (Some(name), Some(values)) => {
                     let mut rec = crate::xdata::ExtendedDataRecord::new(name);
                     rec.values = values;
@@ -758,7 +822,9 @@ fn decode_block_units_xdata(document: &mut crate::document::CadDocument) {
         return;
     };
     for record in document.block_records.iter_mut() {
-        let Some(blocks) = document.eed_by_handle.get_mut(&record.handle) else { continue };
+        let Some(blocks) = document.eed_by_handle.get_mut(&record.handle) else {
+            continue;
+        };
         blocks.retain(|(app, bytes)| {
             let units = (*app == acad)
                 .then(|| crate::io::dwg::eed_codec::decode_values(bytes, false, |_| None))
@@ -1003,9 +1069,7 @@ impl<R: Read + Seek> DwgReader<R> {
 
     /// Recover as much usable drawing data as possible and apply conservative
     /// document repairs. Recovery always enables failsafe parsing.
-    pub fn recover(
-        &mut self,
-    ) -> std::result::Result<crate::io::recover::RecoverOutcome, DxfError> {
+    pub fn recover(&mut self) -> std::result::Result<crate::io::recover::RecoverOutcome, DxfError> {
         self.options.failsafe = true;
         crate::io::recover::RecoverOutcome::from_read_outcome(self.read_with_stats()?)
     }
@@ -1032,11 +1096,36 @@ impl<R: Read + Seek> DwgReader<R> {
         &mut self,
     ) -> std::result::Result<crate::io::read::ReadOutcome, DxfError> {
         self.read_with_optional_visitor(
-            None::<&mut dyn FnMut(&crate::document::CadDocument, crate::entities::EntityType) -> Option<crate::entities::EntityType>>,
+            None::<
+                &mut dyn FnMut(
+                    &crate::document::CadDocument,
+                    crate::entities::EntityType,
+                ) -> Option<crate::entities::EntityType>,
+            >,
         )
     }
 
     fn read_with_optional_visitor(
+        &mut self,
+        visit: Option<
+            &mut dyn FnMut(
+                &crate::document::CadDocument,
+                crate::entities::EntityType,
+            ) -> Option<crate::entities::EntityType>,
+        >,
+    ) -> std::result::Result<crate::io::read::ReadOutcome, DxfError> {
+        // A decoder bug must reach the caller as `DxfError`, including when
+        // failsafe is on. Record-level failures are handled inside the builder.
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.read_drawing(visit))) {
+            Ok(result) => result,
+            Err(payload) => Err(DxfError::Parse(format!(
+                "DWG reader failed: {}",
+                crate::io::dwg::unwind_message(payload.as_ref())
+            ))),
+        }
+    }
+
+    fn read_drawing(
         &mut self,
         visit: Option<
             &mut dyn FnMut(
@@ -1113,6 +1202,7 @@ impl<R: Read + Seek> DwgReader<R> {
                 }
             }
             self.report_progress(1000);
+            crate::document::sync_dimension_arrow_header(&mut document);
             let stats = crate::io::read::ReadStats::from_document(
                 &document,
                 SourceFormat::Dwg,
@@ -1322,8 +1412,9 @@ impl<R: Read + Seek> DwgReader<R> {
                     handle_map,
                     crate::io::dxf::code_page::encoding_from_dwg_code_page(info.code_page),
                 ) {
-                    Ok(obj_reader) => {
+                    Ok(mut obj_reader) => {
                         record_stream_read = true;
+                        obj_reader.set_mesh_budget(self.options.mesh_budget());
                         let mut builder = crate::io::dwg::dwg_document_builder::DwgDocumentBuilder::new(obj_reader);
                         builder.set_failsafe(failsafe);
                         if let Some(progress) = &self.progress {
@@ -1570,6 +1661,7 @@ impl<R: Read + Seek> DwgReader<R> {
             );
         }
         self.report_progress(1000);
+        crate::document::sync_dimension_arrow_header(&mut document);
         diagnostics.extend(std::mem::take(&mut self.pending_diagnostics));
         let source_sections =
             usize::from(handles_section_read).saturating_add(usize::from(objects_section_read));
@@ -1653,7 +1745,10 @@ impl<R: Read + Seek> DwgReader<R> {
                     .map(|(index, table)| {
                         (
                             crate::io::dwg::r12::header::TABLE_NAMES[index].to_owned(),
-                            (table.address as i64, (table.record_size as u32 * table.count as u32) as i64),
+                            (
+                                table.address as i64,
+                                (table.record_size as u32 * table.count as u32) as i64,
+                            ),
                         )
                     })
                     .collect();
@@ -1963,12 +2058,19 @@ impl<R: Read + Seek> DwgReader<R> {
                 comp_size
             )));
         }
+        // The declared decompressed size sizes the output buffer: reject negative, zero and
+        // oversized values before allocating anything.
+        let decomp_size = size_from_file(
+            "AC18 page map decompressed size",
+            decomp_size,
+            1..=MAX_SYSTEM_PAGE_SIZE,
+        )?;
         let mut compressed = vec![0u8; comp_size as usize];
         self.stream.read_exact(&mut compressed)?;
 
         // Decompress
         let decompressed = if compression == 2 {
-            decompress_ac18(&compressed, decomp_size as usize)
+            decompress_ac18(&compressed, decomp_size)
         } else {
             compressed
         };
@@ -2043,12 +2145,19 @@ impl<R: Read + Seek> DwgReader<R> {
                 comp_size
             )));
         }
+        // The declared decompressed size sizes the output buffer: reject negative, zero and
+        // oversized values before allocating anything.
+        let decomp_size = size_from_file(
+            "AC18 section map decompressed size",
+            decomp_size,
+            1..=MAX_SYSTEM_PAGE_SIZE,
+        )?;
         let mut compressed = vec![0u8; comp_size as usize];
         self.stream.read_exact(&mut compressed)?;
 
         // Decompress
         let decompressed = if compression == 2 {
-            decompress_ac18(&compressed, decomp_size as usize)
+            decompress_ac18(&compressed, decomp_size)
         } else {
             compressed
         };
@@ -2251,6 +2360,18 @@ impl<R: Read + Seek> DwgReader<R> {
         info: &mut DwgFileHeaderInfo,
         metadata: &Dwg21CompressedMetadata,
     ) -> Result<(), DxfError> {
+        // The page map sizes come from the file header; check them before get_page_buffer
+        // allocates buffers of these sizes.
+        size_from_file(
+            "AC21 page map compressed size",
+            metadata.pages_map_size_compressed,
+            1..=MAX_SYSTEM_PAGE_SIZE,
+        )?;
+        size_from_file(
+            "AC21 page map decompressed size",
+            metadata.pages_map_size_uncompressed,
+            1..=MAX_SYSTEM_PAGE_SIZE,
+        )?;
         let page_buffer = self.get_page_buffer(
             metadata.pages_map_offset,
             metadata.pages_map_size_compressed,
@@ -2310,6 +2431,18 @@ impl<R: Read + Seek> DwgReader<R> {
                 ))
             })?;
 
+        // The section map sizes come from the file header; check them before
+        // get_page_buffer_at allocates buffers of these sizes.
+        size_from_file(
+            "AC21 section map compressed size",
+            metadata.sections_map_size_compressed,
+            1..=MAX_SYSTEM_PAGE_SIZE,
+        )?;
+        size_from_file(
+            "AC21 section map decompressed size",
+            metadata.sections_map_size_uncompressed,
+            1..=MAX_SYSTEM_PAGE_SIZE,
+        )?;
         let section_buffer = self.get_page_buffer_at(
             seeker as u64,
             metadata.sections_map_size_compressed,
@@ -2534,14 +2667,15 @@ impl<R: Read + Seek> DwgReader<R> {
                         }
                     }
                     if filled != requested_size || read_error.is_some() {
-                        let detail = read_error
-                            .map(|error| error.to_string())
-                            .unwrap_or_else(|| {
-                                format!(
-                                    "unexpected end of file after {} of {} bytes",
-                                    filled, requested_size
-                                )
-                            });
+                        let detail =
+                            read_error
+                                .map(|error| error.to_string())
+                                .unwrap_or_else(|| {
+                                    format!(
+                                        "unexpected end of file after {} of {} bytes",
+                                        filled, requested_size
+                                    )
+                                });
                         buf.truncate(filled);
                         self.notifications.notify(
                             NotificationType::Warning,
@@ -2609,8 +2743,39 @@ impl<R: Read + Seek> DwgReader<R> {
         // Field 0x00 ("Data size") holds the total section data size.
         // Field 0x08 ("Max size") is the page partition size per spec §5.4.
         // We truncate to the total data size, not the page size.
-        let total_size = section.compressed_size as usize;
-        let mut result = Vec::with_capacity(total_size);
+        // Check the section size and every page size before any page is read, so that
+        // neither strict nor failsafe mode allocates an unchecked size.
+        let total_size = size_from_file(
+            format_args!("AC21 section '{}' size", section_name),
+            section.compressed_size,
+            0..=MAX_SECTION_SIZE,
+        )?;
+        let mut page_total = 0u64;
+        for page in &section.pages {
+            size_from_file(
+                format_args!(
+                    "AC21 section '{}' page {} decompressed size",
+                    section_name, page.page_number
+                ),
+                page.decompressed_size,
+                0..=MAX_DATA_PAGE_SIZE,
+            )?;
+            size_from_file(
+                format_args!(
+                    "AC21 section '{}' page {} compressed size",
+                    section_name, page.page_number
+                ),
+                page.compressed_size,
+                0..=MAX_DATA_PAGE_SIZE,
+            )?;
+            page_total = page_total.saturating_add(page.decompressed_size);
+        }
+        let page_total = size_from_file(
+            format_args!("AC21 section '{}' page total", section_name),
+            page_total,
+            0..=MAX_SECTION_SIZE,
+        )?;
+        let mut result = Vec::with_capacity(total_size.min(page_total));
 
         // encoding=1 (stored): contiguous data followed by non-interleaved RS
         // parity. Reading only the payload deliberately skips that parity.
@@ -2797,33 +2962,42 @@ impl<R: Read + Seek> DwgReader<R> {
             })?;
 
         // compressed_size field actually holds the total uncompressed section data size
-        let total_size = usize::try_from(section.compressed_size).map_err(|_| {
-            DxfError::Parse(format!(
-                "AC18 section '{}' size {} does not fit in memory",
-                section_name, section.compressed_size
-            ))
-        })?;
+        let total_size = size_from_file(
+            format_args!("AC18 section '{}' size", section_name),
+            section.compressed_size,
+            0..=MAX_SECTION_SIZE,
+        )?;
         let is_compressed = section.encoding == 2;
-        let max_page_size = usize::try_from(section.decompressed_size).map_err(|_| {
-            DxfError::Parse(format!(
-                "AC18 page size {} does not fit in memory",
-                section.decompressed_size
-            ))
-        })?;
-        if max_page_size > 100_000_000 {
-            return Err(DxfError::Parse(format!(
-                "AC18 page size {} exceeds the safety limit",
-                max_page_size
-            )));
-        }
+        let max_page_size = size_from_file(
+            format_args!("AC18 section '{}' page size", section_name),
+            section.decompressed_size,
+            0..=MAX_DATA_PAGE_SIZE,
+        )?;
         // The section is its pages: a declared size they cannot hold is a
         // corrupt header, while a large drawing legitimately spans many pages.
-        let page_count = section.pages.len().max(section.page_count.max(0) as usize);
-        if total_size > page_count.saturating_mul(max_page_size) {
-            return Err(DxfError::Parse(format!(
-                "AC18 section '{}' size {} exceeds its {} page(s) of {} bytes",
-                section_name, total_size, page_count, max_page_size
-            )));
+        // Count the page descriptors actually parsed: the declared count is file
+        // data, and -1 reads as u64::MAX, which would lift this bound entirely.
+        let page_count = section.pages.len();
+        let page_capacity = page_count.saturating_mul(max_page_size);
+        if total_size > page_capacity {
+            // Some AC1032 writers include a small amount of section padding in the
+            // declared size, beyond the sum of the parsed page capacities. Keep the
+            // bounded allocation and zero-filled tail, while rejecting a declaration
+            // that is clearly unrelated to the pages it names.
+            let hard_limit = page_capacity.saturating_mul(2);
+            if page_capacity == 0 || total_size > hard_limit {
+                return Err(DxfError::Parse(format!(
+                    "AC18 section '{}' size {} exceeds its {} page(s) of {} bytes",
+                    section_name, total_size, page_count, max_page_size
+                )));
+            }
+            self.notifications.notify(
+                NotificationType::Warning,
+                format!(
+                    "AC18 section '{}' declared size {} is slightly larger than its {} page(s) of {} bytes; retaining the bounded section",
+                    section_name, total_size, page_count, max_page_size
+                ),
+            );
         }
 
         let mut result = vec![0u8; total_size];

@@ -38,37 +38,49 @@ use crate::types::{BoundingBox3D, DxfVersion, Handle};
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/// Convert a deduplicated block name back to the DWG binary name.
-///
-/// In DWG format, all paper-space blocks are stored as `*Paper_Space`
-/// and anonymous blocks share names like `*U`, `*D`, etc. (no numeric
-/// suffixes).  Our reader adds suffixes (`*Paper_Space0`, `*U1`, …)
-/// for deduplication.  This function strips them back for writing.
-fn dwg_block_name(name: &str) -> &str {
-    // Known multi-word prefixes first
-    for prefix in &["*Model_Space", "*Paper_Space"] {
-        if name
-            .get(..prefix.len())
-            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
-        {
-            let rest = &name[prefix.len()..];
-            if rest.is_empty() || rest.chars().all(|c| c.is_ascii_digit()) {
-                return &name[..prefix.len()];
+pub(crate) fn paper_space_block_handle(document: &CadDocument) -> Handle {
+    document
+        .block_records
+        .iter()
+        .find(|record| {
+            record.handle == document.header.paper_space_block_handle && record.is_paper_space()
+        })
+        .or_else(|| document.block_records.get("*Paper_Space"))
+        .or_else(|| {
+            document
+                .block_records
+                .iter()
+                .find(|record| record.is_paper_space())
+        })
+        .map_or(Handle::NULL, |record| record.handle)
+}
+
+/// Reserve the bare paper-space name for the active record without colliding
+/// with other layouts. Anonymous names retain their native ordinal encoding.
+fn dwg_block_name<'a>(
+    document: &'a CadDocument,
+    record: &'a BlockRecord,
+    active: Handle,
+) -> &'a str {
+    if record.is_paper_space() {
+        if record.handle == active {
+            return "*Paper_Space";
+        }
+        if record.name.eq_ignore_ascii_case("*Paper_Space") {
+            if let Some(active_record) = document.block_records.iter().find(|r| r.handle == active) {
+                return &active_record.name;
             }
         }
     }
-    // Generic anonymous: *<alpha><digits> → *<alpha>
-    if name.starts_with('*') && name.len() >= 2 {
-        let alpha_end = name[1..]
+    if record.flags.anonymous && record.name.starts_with('*') {
+        let prefix_end = record.name[1..]
             .find(|c: char| !c.is_ascii_alphabetic())
-            .map(|p| 1 + p)
-            .unwrap_or(name.len());
-        let rest = &name[alpha_end..];
-        if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()) {
-            return &name[..alpha_end];
+            .map_or(record.name.len(), |pos| pos + 1);
+        if record.name[prefix_end..].chars().all(|c| c.is_ascii_digit()) {
+            return &record.name[..prefix_end];
         }
     }
-    name
+    &record.name
 }
 
 // ── Public struct ───────────────────────────────────────────────────
@@ -81,6 +93,8 @@ pub struct DwgObjectWriter<'a> {
     pub(super) version: DwgVersion,
     /// DXF version (for R2013/R2018 flag checks)
     pub(super) dxf_version: DxfVersion,
+    /// Active paper-space record shared by names, controls and implicit owners.
+    pub(super) paper_space_block_handle: Handle,
     /// Reference to the CAD document being written
     pub(super) document: &'a CadDocument,
     /// Per-object scratch writer (main + text + handle streams)
@@ -135,6 +149,10 @@ pub struct DwgObjectWriter<'a> {
     /// Cached fallback for owners without a direct extension-dictionary handle.
     pub(super) xdic_owner_index: std::sync::Arc<std::collections::HashMap<Handle, Handle>>,
     pub(super) block_users: std::sync::Arc<std::collections::HashMap<Handle, Vec<Handle>>>,
+    /// Entity mode by owner block record handle (see `get_entity_mode`), built once: looking
+    /// the owner up among the block records for every entity made writing a drawing with many
+    /// blocks quadratic.
+    pub(super) entity_modes: std::sync::Arc<std::collections::HashMap<Handle, u8>>,
 }
 
 struct ParallelEntityBatch {
@@ -254,6 +272,7 @@ impl<'a> DwgObjectWriter<'a> {
         Ok(Self {
             version,
             dxf_version,
+            paper_space_block_handle: paper_space_block_handle(document),
             document,
             writer,
             output: Vec::with_capacity(64 * 1024),
@@ -275,21 +294,35 @@ impl<'a> DwgObjectWriter<'a> {
             linetype_handles: std::collections::HashMap::new(),
             xdic_owner_index: std::sync::Arc::new(Self::build_xdic_owner_index(document)),
             block_users: std::sync::Arc::new(Self::build_block_users(document)),
+            entity_modes: std::sync::Arc::new(Self::build_entity_modes(
+                document,
+                paper_space_block_handle(document),
+            )),
         })
     }
 
     fn build_block_users(document: &CadDocument) -> std::collections::HashMap<Handle, Vec<Handle>> {
-        let mut users: std::collections::HashMap<Handle, Vec<Handle>> = std::collections::HashMap::new();
+        let mut users: std::collections::HashMap<Handle, Vec<Handle>> =
+            std::collections::HashMap::new();
         for entity in document.entities() {
             let record = match entity {
-                EntityType::Insert(insert) => document.block_records.get(&insert.block_name).map(|r| r.handle),
-                EntityType::Table(table) => table
-                    .block_record_handle
-                    .or_else(|| document.block_records.get(&table.block_name).map(|r| r.handle)),
+                EntityType::Insert(insert) => document
+                    .block_records
+                    .get(&insert.block_name)
+                    .map(|r| r.handle),
+                EntityType::Table(table) => table.block_record_handle.or_else(|| {
+                    document
+                        .block_records
+                        .get(&table.block_name)
+                        .map(|r| r.handle)
+                }),
                 _ => None,
             };
             if let Some(record) = record.filter(|h| !h.is_null()) {
-                users.entry(record).or_default().push(entity.common().handle);
+                users
+                    .entry(record)
+                    .or_default()
+                    .push(entity.common().handle);
             }
         }
         for list in users.values_mut() {
@@ -409,7 +442,6 @@ impl<'a> DwgObjectWriter<'a> {
     ) {
         // Compute model space extents for VPort view adjustment
         self.model_space_extents = self.compute_model_space_extents();
-
 
         // R2004+: 0x0DCA marker at the start
         if self.version.r2004_plus() {
@@ -617,14 +649,12 @@ impl<'a> DwgObjectWriter<'a> {
         // Gather handles
         let mut regular: Vec<Handle> = Vec::new();
         let mut ms_handle = Handle::NULL;
-        let mut ps_handle = Handle::NULL;
+        let ps_handle = self.paper_space_block_handle;
 
         for br in self.document.block_records.iter() {
             if br.name.eq_ignore_ascii_case("*Model_Space") {
                 ms_handle = br.handle;
-            } else if br.name.eq_ignore_ascii_case("*Paper_Space") {
-                ps_handle = br.handle;
-            } else {
+            } else if br.handle != ps_handle {
                 regular.push(br.handle);
             }
         }
@@ -799,9 +829,9 @@ impl<'a> DwgObjectWriter<'a> {
         let had_transparency_eed = self
             .existing_xdata_values(layer.handle, "AcCmTransparency")
             .is_some_and(|values| {
-                values.iter().any(|value| {
-                    matches!(value, crate::xdata::XDataValue::Integer32(_))
-                })
+                values
+                    .iter()
+                    .any(|value| matches!(value, crate::xdata::XDataValue::Integer32(_)))
             });
         let transparency_eed = transparency_app.and_then(|app| {
             (!layer.transparency.is_opaque() || had_transparency_eed).then(|| {
@@ -820,11 +850,16 @@ impl<'a> DwgObjectWriter<'a> {
             .get(crate::tables::layer::LAYER_DESCRIPTION_APP)
             .and_then(|app| {
                 let had_description = self
-                    .existing_xdata_values(layer.handle, crate::tables::layer::LAYER_DESCRIPTION_APP)
+                    .existing_xdata_values(
+                        layer.handle,
+                        crate::tables::layer::LAYER_DESCRIPTION_APP,
+                    )
                     .is_some_and(|values| {
-                        values.iter().filter(|value| {
-                            matches!(value, crate::xdata::XDataValue::String(_))
-                        }).count() >= 2
+                        values
+                            .iter()
+                            .filter(|value| matches!(value, crate::xdata::XDataValue::String(_)))
+                            .count()
+                            >= 2
                     });
                 (!layer.description.is_empty() || had_description).then(|| {
                     let code_page = crate::io::dxf::code_page::dwg_code_page_index(
@@ -956,8 +991,10 @@ impl<'a> DwgObjectWriter<'a> {
     }
 
     fn write_text_style(&mut self, style: &crate::tables::TextStyle) {
-        let mut eed: Vec<(u64, Vec<u8>)> =
-            self.annotative_eed_block_for_handle(style.handle, style.annotative).into_iter().collect();
+        let mut eed: Vec<(u64, Vec<u8>)> = self
+            .annotative_eed_block_for_handle(style.handle, style.annotative)
+            .into_iter()
+            .collect();
         // The TrueType typeface goes in `ACAD` EED; the record has no field.
         if !style.true_type_font.trim().is_empty() {
             if let Some(app) = self.document.app_ids.get("ACAD") {
@@ -998,7 +1035,8 @@ impl<'a> DwgObjectWriter<'a> {
         // Oblique angle
         self.writer.write_bit_double(style.oblique_angle);
         // Generation (mirror flags: 2 = backward, 4 = upside down)
-        let generation = (if style.flags.backward { 2u8 } else { 0 }) | (if style.flags.upside_down { 4u8 } else { 0 });
+        let generation = (if style.flags.backward { 2u8 } else { 0 })
+            | (if style.flags.upside_down { 4u8 } else { 0 });
         self.writer.write_byte(generation);
         // Last height (must be > 0; use effective_last_height)
         self.writer.write_bit_double(style.effective_last_height());
@@ -2060,6 +2098,7 @@ impl<'a> DwgObjectWriter<'a> {
         let mut worker = Self {
             version: self.version,
             dxf_version: self.dxf_version,
+            paper_space_block_handle: self.paper_space_block_handle,
             document: self.document,
             writer: DwgMergedWriter::with_encoding(self.version, self.dxf_version, encoding),
             output: Vec::with_capacity(handles.len().saturating_mul(64)),
@@ -2079,6 +2118,7 @@ impl<'a> DwgObjectWriter<'a> {
             raw_excluded_handles: self.raw_excluded_handles.clone(),
             xdic_owner_index: self.xdic_owner_index.clone(),
             block_users: self.block_users.clone(),
+            entity_modes: self.entity_modes.clone(),
             owner_overrides: std::collections::HashMap::new(),
             linetype_handles: std::collections::HashMap::new(),
         };
@@ -2148,8 +2188,8 @@ impl<'a> DwgObjectWriter<'a> {
             extra,
         );
 
-        // Entry name (DWG uses bare names without numeric suffixes)
-        let dwg_name = dwg_block_name(&record.name);
+        // Paper-space names stay unique; anonymous names use their native base.
+        let dwg_name = dwg_block_name(self.document, record, self.paper_space_block_handle);
         self.writer.write_variable_text(dwg_name);
         // Xref dependant
         self.write_xref_dependant_bit();
@@ -2163,7 +2203,8 @@ impl<'a> DwgObjectWriter<'a> {
                 Some(EntityType::AttributeDefinition(_))
             )
         });
-        self.writer.write_bit(record.flags.has_attributes || has_attributes);
+        self.writer
+            .write_bit(record.flags.has_attributes || has_attributes);
         // Is xref
         self.writer.write_bit(record.flags.is_xref);
         // Is xref overlay
@@ -2206,7 +2247,12 @@ impl<'a> DwgObjectWriter<'a> {
             // Insert count bytes: one non-zero byte per insert handle written
             // below, then a zero terminator.
             for (i, _) in self.block_insert_handles(record).iter().enumerate() {
-                let b = record.insert_count_bytes.get(i).copied().filter(|b| *b != 0).unwrap_or(1);
+                let b = record
+                    .insert_count_bytes
+                    .get(i)
+                    .copied()
+                    .filter(|b| *b != 0)
+                    .unwrap_or(1);
                 self.writer.write_byte(b);
             }
             self.writer.write_byte(0);
@@ -2304,10 +2350,10 @@ impl<'a> DwgObjectWriter<'a> {
             None
         };
 
-        let (handle, name, use_raw_name) = if let Some(ref b) = block {
-            (b.common.handle, b.name.as_str(), true)
+        let handle = if let Some(ref b) = block {
+            b.common.handle
         } else {
-            (record.block_entity_handle, record.name.as_str(), false)
+            record.block_entity_handle
         };
 
         let mut common = block
@@ -2351,13 +2397,11 @@ impl<'a> DwgObjectWriter<'a> {
             &common.edge_visual_style_handle,
         );
 
-        // Use the original name as-is when we have the Block entity from binary;
-        // only apply dwg_block_name() for programmatically-created blocks.
-        if use_raw_name {
-            self.writer.write_variable_text(name);
-        } else {
-            self.writer.write_variable_text(dwg_block_name(name));
-        }
+        self.writer.write_variable_text(dwg_block_name(
+            self.document,
+            record,
+            self.paper_space_block_handle,
+        ));
 
         self.register_object(common.handle);
     }
@@ -2462,8 +2506,9 @@ impl<'a> DwgObjectWriter<'a> {
             let code_str = type_code.to_string();
             // Category tokens: TABLES (symbol tables + controls + block headers),
             // ENTITIES, OBJECTS (everything else).
-            let is_table =
-                crate::io::dwg::dwg_stream_readers::object_reader::common::is_table_type(*type_code);
+            let is_table = crate::io::dwg::dwg_stream_readers::object_reader::common::is_table_type(
+                *type_code,
+            );
             let is_entity = if *type_code >= 500 {
                 self.document
                     .classes
@@ -2472,7 +2517,9 @@ impl<'a> DwgObjectWriter<'a> {
                     .map(|c| c.is_an_entity)
                     .unwrap_or(false)
             } else {
-                crate::io::dwg::dwg_stream_readers::object_reader::common::is_entity_type(*type_code)
+                crate::io::dwg::dwg_stream_readers::object_reader::common::is_entity_type(
+                    *type_code,
+                )
             };
             let category = if is_table {
                 "TABLES"

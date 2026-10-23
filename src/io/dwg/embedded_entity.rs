@@ -261,7 +261,11 @@ pub(crate) fn decode_embedded_entity(
         }),
     };
     if reader.check_error().is_err() {
-        Some(EmbeddedEntity::Unknown { type_code, bit_count: bit_length, bytes: preserved_bytes })
+        Some(EmbeddedEntity::Unknown {
+            type_code,
+            bit_count: bit_length,
+            bytes: preserved_bytes,
+        })
     } else {
         entity
     }
@@ -274,7 +278,13 @@ mod malformed_tests {
     #[test]
     fn truncated_embedded_curves_remain_opaque() {
         for type_code in [common::OBJ_LINE, common::OBJ_SPLINE, common::OBJ_LWPOLYLINE] {
-            let decoded = decode_embedded_entity(type_code as i32, 1, vec![0], DwgVersion::AC24, DxfVersion::AC1024);
+            let decoded = decode_embedded_entity(
+                type_code as i32,
+                1,
+                vec![0],
+                DwgVersion::AC24,
+                DxfVersion::AC1024,
+            );
             assert!(matches!(decoded, Some(EmbeddedEntity::Unknown { .. })));
         }
     }

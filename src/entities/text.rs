@@ -212,4 +212,12 @@ impl Entity for Text {
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_text(self, transform);
     }
+
+    fn apply_mirror_with_options(
+        &mut self,
+        transform: &crate::types::Transform,
+        options: super::MirrorOptions,
+    ) {
+        super::mirror::mirror_text_with_options(self, transform, options);
+    }
 }

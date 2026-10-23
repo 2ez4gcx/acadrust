@@ -246,10 +246,14 @@ fn mline_and_wipeout_use_valid_dxf_references_and_subclasses() {
 #[test]
 fn light_binary_field_widths_and_viewport_id_match_group_codes() {
     let mut doc = CadDocument::with_version(DxfVersion::AC1021);
-    let light = doc.add_entity(EntityType::Light(Box::new(Light::new()))).unwrap();
+    let light = doc
+        .add_entity(EntityType::Light(Box::new(Light::new())))
+        .unwrap();
     let mut viewport = Viewport::new();
     viewport.id = 7;
-    let viewport = doc.add_entity(EntityType::Viewport(Box::new(viewport))).unwrap();
+    let viewport = doc
+        .add_entity(EntityType::Viewport(Box::new(viewport)))
+        .unwrap();
     let data = DxfWriter::new_binary(&doc).write_to_vec().unwrap();
     let loaded = DxfReader::from_reader(Cursor::new(data))
         .unwrap()

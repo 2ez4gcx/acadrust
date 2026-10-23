@@ -26,12 +26,10 @@ pub mod tables;
 use crate::error::{DxfError, Result};
 use crate::io::dwg::dwg_stream_readers::merged_reader::DwgMergedReader;
 use crate::io::dwg::dwg_version::DwgVersion;
+use crate::io::dwg::mesh_budget::MeshFaceBudget;
 use crate::types::{Color, DxfVersion, Transparency};
 use std::collections::HashMap;
 use std::sync::Arc;
-
-const MAX_MESH_FACES: usize = 250_000;
-const MAX_MESH_FACE_INDICES: usize = 1_000_000;
 
 /// Reject counts that cannot be represented by the remaining record bits.
 #[inline]
@@ -144,6 +142,8 @@ pub struct DwgObjectReader {
     handle_map: HashMap<u64, i64>,
     /// Document code page used by pre-R2007 object strings.
     encoding: crate::io::dxf::code_page::LegacyEncoding,
+    /// Faces and face-corner indices retained from one MESH record.
+    mesh_budget: MeshFaceBudget,
 }
 
 impl DwgObjectReader {
@@ -174,7 +174,21 @@ impl DwgObjectReader {
             dxf_version,
             handle_map,
             encoding: encoding.into(),
+            mesh_budget: MeshFaceBudget::from_system(),
         })
+    }
+
+    /// Replace the MESH face budget.
+    ///
+    /// [`DwgReader`](crate::DwgReader) sets this from [`DwgReadOptions`](crate::DwgReadOptions).
+    /// [`Self::new`] otherwise keeps [`MeshFaceBudget::from_system`].
+    pub fn set_mesh_budget(&mut self, budget: MeshFaceBudget) {
+        self.mesh_budget = budget;
+    }
+
+    /// Faces and face-corner indices retained from one MESH record.
+    pub fn mesh_budget(&self) -> MeshFaceBudget {
+        self.mesh_budget
     }
 
     /// Read only the type prefix of an object record.
@@ -247,7 +261,17 @@ impl DwgObjectReader {
                 self.data.len()
             )));
         }
-        let merged_data: Arc<[u8]> = Arc::from(&self.data[pos..pos + size]);
+        self.read_raw_record(&self.data[pos..pos + size], handle_bits)
+    }
+
+    /// Decode an already captured merged record without adding file framing.
+    pub(crate) fn read_raw_record(
+        &self,
+        data: &[u8],
+        handle_bits: i64,
+    ) -> Result<(i16, DwgMergedReader)> {
+        let size = data.len();
+        let merged_data: Arc<[u8]> = Arc::from(data);
 
         // 4. For R2007+ (ThreeStream): read type_code from a temp reader,
         //    then manually construct the three sub-readers with correct
@@ -297,7 +321,9 @@ impl DwgObjectReader {
 
             // Main reader: starts at data_start_bits (after type_code [+ RL])
             if handle_start <= data_start_bits || handle_start > size as i64 * 8 {
-                return Err(DxfError::Parse("Invalid DWG object handle-stream boundary".into()));
+                return Err(DxfError::Parse(
+                    "Invalid DWG object handle-stream boundary".into(),
+                ));
             }
             let mut main_reader = crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::from_shared_with_encoding(
                 Arc::clone(&merged_data),
@@ -317,7 +343,9 @@ impl DwgObjectReader {
             let main_data_end = text_reader.set_position_by_flag(flag_position);
             text_reader.check_error()?;
             if main_data_end < data_start_bits {
-                return Err(DxfError::Parse("DWG text stream overlaps object prefix".into()));
+                return Err(DxfError::Parse(
+                    "DWG text stream overlaps object prefix".into(),
+                ));
             }
 
             // Handle reader: starts at bit position handle_start (NOT byte-aligned).
@@ -374,7 +402,9 @@ impl DwgObjectReader {
 
         // Create main reader (reads from bit 0)
         if handle_start_bits < 0 || handle_start_bits > size as i64 * 8 {
-            return Err(DxfError::Parse("Invalid DWG object handle-stream boundary".into()));
+            return Err(DxfError::Parse(
+                "Invalid DWG object handle-stream boundary".into(),
+            ));
         }
         let main_reader =
             crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader::from_shared_with_encoding(
@@ -867,7 +897,8 @@ fn read_modular_unsigned(data: &[u8], width: usize, payload_bits: u32) -> Result
     let mut shift = 0;
     let mut offset = 0;
     loop {
-        let chunk = data.get(offset..offset + width)
+        let chunk = data
+            .get(offset..offset + width)
             .ok_or_else(|| DxfError::Parse("Truncated DWG record framing".into()))?;
         let word = if width == 2 {
             u16::from_le_bytes([chunk[0], chunk[1]]) as usize
@@ -876,7 +907,9 @@ fn read_modular_unsigned(data: &[u8], width: usize, payload_bits: u32) -> Result
         };
         let payload = word & ((1 << payload_bits) - 1);
         if shift >= usize::BITS || payload > (usize::MAX >> shift) {
-            return Err(DxfError::Parse("DWG record framing integer overflow".into()));
+            return Err(DxfError::Parse(
+                "DWG record framing integer overflow".into(),
+            ));
         }
         value |= payload << shift;
         offset += width;

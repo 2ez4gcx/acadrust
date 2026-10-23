@@ -294,7 +294,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_double(40, *radius)?;
                 self.writer.write_double(40, *start_parameter)?;
                 self.writer.write_double(40, *end_parameter)?;
-                self.writer.write_double(40, *reserved)?;
+                if self.dxf_version >= crate::types::DxfVersion::AC1027 {
+                    self.writer.write_double(40, *reserved)?;
+                }
             }
             AssocConstraintNodeData::Arc {
                 geometry_dependency,
@@ -317,7 +319,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_double(40, *radius)?;
                 self.writer.write_double(40, *start_parameter)?;
                 self.writer.write_double(40, *end_parameter)?;
-                self.writer.write_double(40, *reserved)?;
+                if self.dxf_version >= crate::types::DxfVersion::AC1027 {
+                    self.writer.write_double(40, *reserved)?;
+                }
                 self.writer.write_point3d(10, *start_point)?;
                 self.writer.write_point3d(11, *end_point)?;
             }
@@ -847,8 +851,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             AssociativeData::ConstraintGroup(value) => {
                 self.write_assoc_action(&value.action)?;
-                self.writer.write_subclass("AcDbAssoc2dConstraintGroup")?;
-                self.writer.write_i32(90, value.version)?;
+                self.writer
+                    .write_i32(90, if value.version == 0 { 2 } else { value.version })?;
                 self.writer.write_bool(70, value.flag)?;
                 for point in value.work_plane {
                     self.writer.write_point3d(10, point)?;
@@ -865,6 +869,18 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     .filter(|node| !node.class_name.is_empty())
                     .collect();
                 self.writer.write_i32(90, value.effective_next_node_id())?;
+                if self.dxf_version < crate::types::DxfVersion::AC1027 {
+                    // R2010 keeps nodes inline in AcDbAssocAction, with the
+                    // group handle before each common node header.
+                    self.writer.write_i32(90, registered.len() as i32)?;
+                    for node in registered {
+                        self.writer.write_string(1, &node.class_name)?;
+                        self.writer.write_handle(330, object.handle)?;
+                        self.write_constraint_common(node)?;
+                        self.write_constraint_data(&node.data)?;
+                    }
+                    return Ok(());
+                }
                 if let Some(root) = root {
                     self.writer.write_i32(90, root.node_id)?;
                     self.writer.write_i32(90, root.connections.len() as i32)?;

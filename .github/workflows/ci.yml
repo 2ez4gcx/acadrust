@@ -37,6 +37,10 @@ jobs:
         run: cargo check --all-targets --all-features
       - name: Test default features
         run: cargo test
+      - name: Test sequential mode
+        run: cargo test --no-default-features
+      - name: Check sequential mode with optional features
+        run: cargo check --all-targets --no-default-features --features serde,import
       - name: Test all features
         run: cargo test --all-features
 
@@ -54,5 +58,7 @@ jobs:
           key: wasm
       - name: Check default features
         run: cargo check --lib --target wasm32-unknown-unknown
+      - name: Check sequential mode
+        run: cargo check --lib --no-default-features --target wasm32-unknown-unknown
       - name: Check all features
         run: cargo check --lib --all-features --target wasm32-unknown-unknown

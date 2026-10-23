@@ -63,7 +63,9 @@ fn plotting_evaluates_against_the_open_sheet_set() {
         sheet_set.sheet_set().id()
     );
     let ctx = Context { sheet_set };
-    let host = doc.add_entity(EntityType::MText(Box::new(MText::new()))).unwrap();
+    let host = doc
+        .add_entity(EntityType::MText(Box::new(MText::new())))
+        .unwrap();
     doc.set_text_field(
         host,
         "%<\\_FldIdx 0>%",
@@ -116,7 +118,10 @@ fn table_block_refreshes_cell_color_and_text_style() {
     let handle = doc.add_entity(EntityType::Table(Box::new(table))).unwrap();
 
     assert!(doc.refresh_table_block(handle));
-    assert_eq!(table_text_formats(&doc, handle), [(Color::from_index(1), "Standard".into())]);
+    assert_eq!(
+        table_text_formats(&doc, handle),
+        [(Color::from_index(1), "Standard".into())]
+    );
     assert!(!doc.refresh_table_block(handle));
 
     let EntityType::Table(table) = doc.get_entity_mut(handle).unwrap() else {
@@ -124,7 +129,10 @@ fn table_block_refreshes_cell_color_and_text_style() {
     };
     table.rows[0].cells[0].contents[0].color = Color::from_index(2);
     assert!(doc.refresh_table_block(handle));
-    assert_eq!(table_text_formats(&doc, handle), [(Color::from_index(2), "Standard".into())]);
+    assert_eq!(
+        table_text_formats(&doc, handle),
+        [(Color::from_index(2), "Standard".into())]
+    );
     assert!(!doc.refresh_table_block(handle));
 
     let EntityType::Table(table) = doc.get_entity_mut(handle).unwrap() else {
@@ -132,7 +140,10 @@ fn table_block_refreshes_cell_color_and_text_style() {
     };
     table.rows[0].cells[0].contents[0].text_style_name = "Alternate".into();
     assert!(doc.refresh_table_block(handle));
-    assert_eq!(table_text_formats(&doc, handle), [(Color::from_index(2), "Alternate".into())]);
+    assert_eq!(
+        table_text_formats(&doc, handle),
+        [(Color::from_index(2), "Alternate".into())]
+    );
     assert!(!doc.refresh_table_block(handle));
 }
 
@@ -225,12 +236,24 @@ fn field_in_an_empty_table_cell_survives_refresh_and_serialization() {
     use std::io::Cursor;
 
     let mut doc = CadDocument::new();
-    let table = doc.add_entity(EntityType::Table(Box::new(Table::new(Vector3::ZERO, 1, 1)))).unwrap();
-    let fields = doc.build_table_block(table, vec![(
-        0, 0, "%<\\_FldIdx 0>%".into(), vec![NewField::new("\\AcExpr (2+3)", "5")],
-    )]).unwrap();
+    let table = doc
+        .add_entity(EntityType::Table(Box::new(Table::new(Vector3::ZERO, 1, 1))))
+        .unwrap();
+    let fields = doc
+        .build_table_block(
+            table,
+            vec![(
+                0,
+                0,
+                "%<\\_FldIdx 0>%".into(),
+                vec![NewField::new("\\AcExpr (2+3)", "5")],
+            )],
+        )
+        .unwrap();
     let field = fields[0].unwrap();
-    let EntityType::Table(value) = doc.get_entity(table).unwrap() else { panic!("expected table") };
+    let EntityType::Table(value) = doc.get_entity(table).unwrap() else {
+        panic!("expected table")
+    };
     let content = &value.rows[0].cells[0].contents[0];
     assert_eq!(content.content_type, TableCellContentType::Field);
     assert_eq!(content.field_handle, Some(field));
@@ -241,10 +264,15 @@ fn field_in_an_empty_table_cell_survives_refresh_and_serialization() {
     let dxf = DxfWriter::new(&doc).write_to_vec().unwrap();
     let dwg = DwgWriter::write_to_vec(&doc).unwrap();
     for loaded in [
-        DxfReader::from_reader(Cursor::new(dxf)).unwrap().read().unwrap(),
+        DxfReader::from_reader(Cursor::new(dxf))
+            .unwrap()
+            .read()
+            .unwrap(),
         DwgReader::from_stream(Cursor::new(dwg)).read().unwrap(),
     ] {
-        let EntityType::Table(value) = loaded.get_entity(table).unwrap() else { panic!("expected table") };
+        let EntityType::Table(value) = loaded.get_entity(table).unwrap() else {
+            panic!("expected table")
+        };
         let content = &value.rows[0].cells[0].contents[0];
         assert_eq!(content.content_type, TableCellContentType::Field);
         assert_eq!(content.field_handle, Some(field));

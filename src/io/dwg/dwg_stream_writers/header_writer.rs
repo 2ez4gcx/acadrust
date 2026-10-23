@@ -49,7 +49,10 @@ struct SectionWriter {
 }
 
 impl SectionWriter {
-    fn with_encoding(version: DxfVersion, encoding: crate::io::dxf::code_page::LegacyEncoding) -> Self {
+    fn with_encoding(
+        version: DxfVersion,
+        encoding: crate::io::dxf::code_page::LegacyEncoding,
+    ) -> Self {
         let dwg = DwgVersion::from_dxf_version(version).unwrap_or(DwgVersion::AC15);
 
         let inner = if version >= DxfVersion::AC1021 {
@@ -650,7 +653,10 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
     if r2007_plus(v) {
         w.write_bit_double(h.dim_fixed_ext_line_length);
         // DIMJOGANG valid range is 5°..90°
-        w.write_bit_double(h.dim_jog_angle.clamp(0.0872665, std::f64::consts::FRAC_PI_2));
+        w.write_bit_double(
+            h.dim_jog_angle
+                .clamp(0.0872665, std::f64::consts::FRAC_PI_2),
+        );
         w.write_bit_short(h.dim_text_fill);
         w.write_cm_color(&h.dim_text_fill_color);
     }
@@ -669,7 +675,7 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
     }
 
     if r2007_plus(v) {
-        w.write_bit_short(0); // DIMARCSYM
+        w.write_bit_short(h.dim_arc_symbol); // DIMARCSYM
     }
 
     // ── Dimension sizes (Common) ──
@@ -732,7 +738,7 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
 
     // R2007+: DIMFXLON
     if r2007_plus(v) {
-        w.write_bit(false); // DimensionIsExtensionLineLengthFixed
+        w.write_bit(h.dim_fixed_ext_line_on); // DimensionIsExtensionLineLengthFixed
     }
 
     // R2010+: extra dimension fields
@@ -747,10 +753,14 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
     // R2000+ dimension handles
     if r2000_plus(v) {
         w.write_handle_ref(DwgReferenceType::HardPointer, h.dim_text_style_handle);
-        w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL); // DIMLDRBLK
-        w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL); // DIMBLK
-        w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL); // DIMBLK1
-        w.write_handle_ref(DwgReferenceType::HardPointer, Handle::NULL); // DIMBLK2
+        // DIMLDRBLK, DIMBLK, DIMBLK1, DIMBLK2
+        w.write_handle_ref(
+            DwgReferenceType::HardPointer,
+            h.dim_leader_arrow_block_handle,
+        );
+        w.write_handle_ref(DwgReferenceType::HardPointer, h.dim_arrow_block_handle);
+        w.write_handle_ref(DwgReferenceType::HardPointer, h.dim_arrow_block1_handle);
+        w.write_handle_ref(DwgReferenceType::HardPointer, h.dim_arrow_block2_handle);
     }
 
     // R2007+ dimension linetype handles
@@ -895,8 +905,16 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
         w.write_byte(u8::from(h.record_solid_history));
         w.write_byte(h.show_solid_history.clamp(0, 2) as u8);
         // PSOLWIDTH / PSOLHEIGHT must be positive
-        w.write_bit_double(if h.polysolid_width > 0.0 { h.polysolid_width } else { 0.25 });
-        w.write_bit_double(if h.polysolid_height > 0.0 { h.polysolid_height } else { 4.0 });
+        w.write_bit_double(if h.polysolid_width > 0.0 {
+            h.polysolid_width
+        } else {
+            0.25
+        });
+        w.write_bit_double(if h.polysolid_height > 0.0 {
+            h.polysolid_height
+        } else {
+            4.0
+        });
         w.write_bit_double(h.loft_angle1);
         w.write_bit_double(h.loft_angle2);
         w.write_bit_double(h.loft_magnitude1);

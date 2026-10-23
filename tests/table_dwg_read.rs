@@ -4,6 +4,10 @@
 //! block that renders its cells, and the inline table body carries the columns,
 //! rows and cell contents. This reads both — the placement and the actual cell
 //! text — from a real R2007 drawing (two schedules).
+//!
+//! The drawing is not in the repository, so these tests are ignored. Put it at
+//! `tests/roundtrip/blocks_and_tables_metric.dwg` and run
+//! `cargo test --test table_dwg_read -- --ignored`.
 
 use std::io::Cursor;
 
@@ -11,17 +15,13 @@ use acadrust::entities::EntityType;
 use acadrust::types::Handle;
 use acadrust::{CadDocument, DwgReader, DwgWriter};
 
-fn load_doc() -> Option<CadDocument> {
+fn load_doc() -> CadDocument {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/roundtrip/blocks_and_tables_metric.dwg"
     );
-    if !std::path::Path::new(path).exists() {
-        eprintln!("fixture blocks_and_tables_metric.dwg missing — skipping");
-        return None;
-    }
-    let mut reader = DwgReader::from_file(path).expect("open fixture");
-    Some(reader.read().expect("read fixture"))
+    let mut reader = DwgReader::from_file(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    reader.read().expect("read fixture")
 }
 
 fn tables_of(doc: &CadDocument) -> Vec<acadrust::entities::Table> {
@@ -33,13 +33,14 @@ fn tables_of(doc: &CadDocument) -> Vec<acadrust::entities::Table> {
         .collect()
 }
 
-fn load_tables() -> Option<Vec<acadrust::entities::Table>> {
-    load_doc().map(|d| tables_of(&d))
+fn load_tables() -> Vec<acadrust::entities::Table> {
+    tables_of(&load_doc())
 }
 
 #[test]
+#[ignore = "needs tests/roundtrip/blocks_and_tables_metric.dwg"]
 fn table_base_is_positioned_and_block_linked() {
-    let Some(tables) = load_tables() else { return };
+    let tables = load_tables();
     assert_eq!(tables.len(), 2, "expected two ACAD_TABLE entities");
     for t in &tables {
         let block = t.block_record_handle.expect("missing block_record_handle");
@@ -49,8 +50,9 @@ fn table_base_is_positioned_and_block_linked() {
 }
 
 #[test]
+#[ignore = "needs tests/roundtrip/blocks_and_tables_metric.dwg"]
 fn table_cell_content_is_parsed() {
-    let Some(tables) = load_tables() else { return };
+    let tables = load_tables();
 
     // Collect each table's first-row title so order doesn't matter.
     let title = |t: &acadrust::entities::Table| -> String {
@@ -103,10 +105,11 @@ fn table_cell_content_is_parsed() {
 }
 
 #[test]
+#[ignore = "needs tests/roundtrip/blocks_and_tables_metric.dwg"]
 fn real_tables_survive_a_dwg_write() {
     // Read the real R2007 drawing, write it back to DWG and re-read: the tables
     // and their cell text must survive the writer.
-    let Some(doc) = load_doc() else { return };
+    let doc = load_doc();
 
     let bytes = DwgWriter::write_to_vec(&doc).expect("DWG write");
     let rt = DwgReader::from_stream(Cursor::new(bytes))

@@ -867,6 +867,10 @@ impl Entity for Solid3D {
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_solid3d(self, transform);
     }
+
+    fn apply_mirror(&mut self, transform: &crate::types::Transform) {
+        super::mirror::mirror_solid3d(self, transform);
+    }
 }
 
 // ============================================================================
@@ -1032,6 +1036,10 @@ impl Entity for Region {
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_region(self, transform);
     }
+
+    fn apply_mirror(&mut self, transform: &crate::types::Transform) {
+        super::mirror::mirror_region(self, transform);
+    }
 }
 
 // ============================================================================
@@ -1196,6 +1204,10 @@ impl Entity for Body {
 
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_body(self, transform);
+    }
+
+    fn apply_mirror(&mut self, transform: &crate::types::Transform) {
+        super::mirror::mirror_body(self, transform);
     }
 }
 

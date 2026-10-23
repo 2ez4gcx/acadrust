@@ -189,7 +189,9 @@ impl VisualStyle {
                     // The legacy face opacity and specular are negative while
                     // the face modifier leaves them off; the R2010+ values
                     // are magnitudes and the modifier alone says so.
-                    (VisualStylePropertyValue::Double(_), Some(n)) if modern == 4 || modern == 5 => {
+                    (VisualStylePropertyValue::Double(_), Some(n))
+                        if modern == 4 || modern == 5 =>
+                    {
                         VisualStylePropertyValue::Double(n.abs())
                     }
                     (VisualStylePropertyValue::Double(_), Some(n)) => {

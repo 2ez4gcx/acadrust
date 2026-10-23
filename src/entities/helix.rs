@@ -169,4 +169,8 @@ impl Entity for Helix {
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_helix(self, transform);
     }
+
+    fn apply_mirror(&mut self, transform: &crate::types::Transform) {
+        super::mirror::mirror_helix(self, transform);
+    }
 }

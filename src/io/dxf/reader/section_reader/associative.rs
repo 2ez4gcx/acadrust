@@ -30,7 +30,13 @@ impl AssocDxfRecord {
             .into_iter()
             .flatten()
             .filter(|(item_code, _)| *item_code == code)
-            .map(|(_, value)| if preserve_whitespace { value.as_str() } else { value.trim() })
+            .map(|(_, value)| {
+                if preserve_whitespace {
+                    value.as_str()
+                } else {
+                    value.trim()
+                }
+            })
             .collect()
     }
 
@@ -374,7 +380,11 @@ fn is_dxf_plain_geometrical_constraint(class_name: &str) -> bool {
     )
 }
 
-fn read_constraint_data(cursor: &mut AssocCursor<'_>, class_name: &str) -> AssocConstraintNodeData {
+fn read_constraint_data(
+    cursor: &mut AssocCursor<'_>,
+    class_name: &str,
+    circle_reserved: bool,
+) -> AssocConstraintNodeData {
     match class_name.to_ascii_uppercase().as_str() {
         "ACG2SMOOTHCONSTRAINT" => {
             let (owner_id, is_implied, is_active) = read_constraint_geometry(cursor);
@@ -403,7 +413,7 @@ fn read_constraint_data(cursor: &mut AssocCursor<'_>, class_name: &str) -> Assoc
             radius: cursor.f64(40),
             start_parameter: cursor.f64(40),
             end_parameter: cursor.f64(40),
-            reserved: cursor.f64(40),
+            reserved: if circle_reserved { cursor.f64(40) } else { 0.0 },
         },
         "ACCONSTRAINEDARC" => AssocConstraintNodeData::Arc {
             geometry_dependency: cursor.handle(330),
@@ -414,7 +424,7 @@ fn read_constraint_data(cursor: &mut AssocCursor<'_>, class_name: &str) -> Assoc
             radius: cursor.f64(40),
             start_parameter: cursor.f64(40),
             end_parameter: cursor.f64(40),
-            reserved: cursor.f64(40),
+            reserved: if circle_reserved { cursor.f64(40) } else { 0.0 },
             start_point: cursor.point3(10),
             end_point: cursor.point3(11),
         },
@@ -1150,9 +1160,15 @@ impl<'a> SectionReader<'a> {
                 } else {
                     "AcDbAssocGeomDependency"
                 };
-                let entries = record.sections.get(section).map(Vec::as_slice).unwrap_or_default();
+                let entries = record
+                    .sections
+                    .get(section)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
                 let start = entries.iter().position(|(code, _)| *code == 1);
-                let class_name = start.map(|index| entries[index].1.clone()).unwrap_or_default();
+                let class_name = start
+                    .map(|index| entries[index].1.clone())
+                    .unwrap_or_default();
                 let tail = start.map(|index| &entries[index + 1..]).unwrap_or_default();
                 let values = tail
                     .iter()
@@ -1374,14 +1390,53 @@ impl<'a> SectionReader<'a> {
                     actions.push(cursor.handle(360));
                 }
                 let next_node_id = cursor.i32(90);
-                let node_count = next_node_id.max(0).min(100_000);
-                let mut nodes = Vec::with_capacity(node_count as usize);
-                if node_count > 0 {
+                let mut nodes = Vec::new();
+                // Native R2010 stores a count followed by class/owner/node
+                // records. Earlier codec output used the later registry
+                // layout even for R2010, so distinguish their actual fields.
+                let inline_nodes = dxf_version < crate::types::DxfVersion::AC1027
+                    && cursor.peek_code() == Some(90)
+                    && cursor
+                        .entries
+                        .get(cursor.position + 1)
+                        .map_or(true, |entry| entry.0 == 1);
+                if inline_nodes {
+                    let count = cursor.i32(90).max(0).min(100_000);
+                    if count > 0 {
+                        nodes.push(AssocConstraintNode::default());
+                    }
+                    for _ in 0..count {
+                        let class_name = cursor.text(1);
+                        if cursor.peek_code() == Some(330) {
+                            let _group_owner = cursor.handle(330);
+                        }
+                        // Bound each inline node by its next class marker so
+                        // an absent optional field cannot consume later nodes.
+                        let end = cursor.entries[cursor.position..]
+                            .iter()
+                            .position(|entry| entry.0 == 1)
+                            .map(|offset| cursor.position + offset)
+                            .unwrap_or(cursor.entries.len());
+                        let mut node_cursor = AssocCursor {
+                            entries: &cursor.entries[cursor.position..end],
+                            position: 0,
+                        };
+                        let mut node = read_constraint_common(&mut node_cursor, dxf_version);
+                        node.data = read_constraint_data(&mut node_cursor, &class_name, false);
+                        if matches!(node.data, AssocConstraintNodeData::None) {
+                            return Err(crate::error::DxfError::NotImplemented(format!(
+                                "Unsupported DXF constraint node class {class_name}"
+                            )));
+                        }
+                        node.class_name = class_name;
+                        nodes.push(node);
+                        cursor.position = end;
+                    }
+                } else if next_node_id > 0 {
                     nodes.push(read_constraint_root(&mut cursor));
                     let after_root = cursor.position;
                     let registered_count = cursor.i32(90).max(0).min(100_000);
-                    let has_registry = registered_count <= node_count
-                        && (registered_count == 0 || cursor.peek_code() == Some(1));
+                    let has_registry = registered_count == 0 || cursor.peek_code() == Some(1);
                     if has_registry {
                         let mut registry = Vec::with_capacity(registered_count as usize);
                         for _ in 0..registered_count {
@@ -1393,12 +1448,18 @@ impl<'a> SectionReader<'a> {
                                 node.node_id = registry_node_id;
                             }
                             node.class_name = class_name;
-                            node.data = read_constraint_data(&mut cursor, &node.class_name);
+                            node.data = read_constraint_data(&mut cursor, &node.class_name, true);
+                            if matches!(node.data, AssocConstraintNodeData::None) {
+                                return Err(crate::error::DxfError::NotImplemented(format!(
+                                    "Unsupported DXF constraint node class {}",
+                                    node.class_name
+                                )));
+                            }
                             nodes.push(node);
                         }
                     } else {
                         cursor.position = after_root;
-                        for _ in 1..node_count {
+                        for _ in 1..next_node_id.max(0).min(100_000) {
                             nodes.push(read_constraint_common(&mut cursor, dxf_version));
                         }
                     }
@@ -1554,11 +1615,25 @@ impl<'a> SectionReader<'a> {
                 let parameter_block = cursor.text(1);
                 let has_items = cursor.peek_code() == Some(90);
                 let item_list_version = if has_items { cursor.i32(90) } else { 0 };
-                let count = if has_items { cursor.i32(90).max(0).min(100_000) } else { 0 };
-                let item_class = if has_items { cursor.text(1) } else { String::new() };
+                let count = if has_items {
+                    cursor.i32(90).max(0).min(100_000)
+                } else {
+                    0
+                };
+                let item_class = if has_items {
+                    cursor.text(1)
+                } else {
+                    String::new()
+                };
                 let mut item_cursor = AssocCursor::new(&record, "AcDbAssocArrayItem");
-                let items: Vec<_> = (0..count).map(|_| read_array_item(&mut item_cursor)).collect();
-                let matrix_cursor = if count > 0 { &mut item_cursor } else { &mut cursor };
+                let items: Vec<_> = (0..count)
+                    .map(|_| read_array_item(&mut item_cursor))
+                    .collect();
+                let matrix_cursor = if count > 0 {
+                    &mut item_cursor
+                } else {
+                    &mut cursor
+                };
                 let mut matrix = [0.0; 16];
                 for target in &mut matrix {
                     *target = matrix_cursor.f64(40);

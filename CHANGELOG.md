@@ -1,6 +1,74 @@
 ## Changelog
 
-### Unreleased
+### 0.6.6
+
+- **Optional DWG parallelism (issue #156)** - Adds a default-enabled `parallel`
+  Cargo feature for native DWG reading and writing. Disabling default features
+  omits acadrust's Rayon dependency and runs its work on the calling thread.
+  Applications already using `default-features = false` must explicitly enable
+  `parallel` to retain native parallelism; WebAssembly remains sequential.
+  Documents how to reuse an application-owned Rayon pool to limit concurrency.
+- **Constraint-group interoperability (issue #135)** - Corrects R2010 circle
+  and arc layouts and native inline DWG/DXF output. Sparse node IDs no longer
+  act as array counts. Unsupported groups retain bounded DWG records with
+  diagnostics, and DXF export rejects undecoded groups instead of dropping them.
+  Adds source-only Rust regressions and an AutoCAD validation harness.
+- **DWG mesh face budget (issue #141)** - MESH faces are no longer capped at a
+  fixed 250,000 faces and 1,000,000 indices. The cap scales with installed and
+  available memory (never below those historical limits) and can be replaced
+  with `DwgReadOptions::with_mesh_limits` or the `max_mesh_faces` and
+  `max_mesh_face_indices` fields, or removed with
+  `DwgReadOptions::with_unlimited_mesh`. A mesh that still exceeds the
+  budget is kept up to the cap and reported.
+- **DWG allocation safety (issues #149 and #151)** - Validates AC18 and AC21
+  page-map, section-map, page, and section sizes before allocating or
+  decompressing. Small AC18 section padding is kept and reported. Declarations
+  above twice the parsed page capacity are rejected.
+- **Decode failures stay errors** - An unrecognized modeler payload or a panic
+  inside a record becomes a diagnostic or a parse error. Failsafe keeps a
+  non-entity whose framing and common data are intact.
+- **R2004 surfaces and R2007 solid history (issue #159)** - R2004 surfaces keep
+  the second modeler body while the extra-body flag is set. R2007 history
+  regions accept a bare SAB with no bit length. Plane-surface actions from
+  that era end after the parameter body.
+- **Legacy polyline vertex order (issue #160)** - R13 through R2000 polyline
+  vertices follow the next-entity chain.
+- **BLOCK marker XDATA (issue #154)** - Structural BLOCK markers keep their
+  common entity data and XDATA through DXF and DXF–DWG–DXF conversions.
+- **Unknown DWG entities (issue #145)** - DWG-only unknown entities are written
+  as `ACAD_PROXY_ENTITY` records, including proxy graphics, opaque class
+  payloads, and references. A payload that cannot be represented returns an
+  error.
+- **Empty constraint groups (issue #146)** - An R2013+ `ASSOC2DCONSTRAINTGROUP`
+  with no nodes still writes the root, class table, and registry. Pre-R2013
+  output keeps the short form.
+- **R2007 color names (issue #152)** - Optional color and book names are read
+  from the text stream, so later main-stream fields stay aligned.
+- **Frame-only MTEXT (issue #142)** - R2018 frame-only MTEXT writes its
+  annotative and column fields without a fill payload.
+- **Paper-space block names (issue #143)** - Layout block names stay unique,
+  and the active paper block follows its header handle.
+- **Alignment grips (issue #144)** - Alignment grip orientations are three
+  doubles at group codes 140/141/142. Older acadrust output still reads.
+- **Table merged ranges** - Canonicalizing, applying, and writing merged ranges
+  is bounded by the table size.
+- **Silhouette wireframes** - Silhouette counts are read and written whether or
+  not isolines are present.
+- **Truncated DWG records** - Truncated AC1014 header trailers are accepted,
+  and truncated associative dependencies are preserved.
+- **Explode, mirror, and rotate** - Explode follows more AutoCAD results for
+  leaders, dimensions, tables, wipeouts, MLINE caps, MLEADER breaks, hatches,
+  and modeler boundaries. Mirror is split into focused operations. Entity
+  tools include `ROTATE` and `ROTATE3D`.
+- **AC1009 R11/R12** - Documents Release 11 and Release 12 as the shared AC1009
+  DWG format and expands native fixture coverage. See
+  [R11/R12 support status](src/docs/ac1009_support.md).
+- **Provenance (issue #153)** - Records ACadSharp attribution and the DWG
+  specification sources in [third-party notices](THIRD_PARTY_NOTICES.md).
+- **Benchmarks (issue #148)** - Adds a fixture-free mixed-content AC1032 DWG
+  benchmark.
+
+### 0.6.5
 
 - **DWG 2010 REGION tails** - Read an empty silhouette count retained after
   an absent isoline cache when the complete bounded material tail validates.
@@ -36,12 +104,40 @@
 - **Explode fidelity** - SPLINE now explodes along the evaluated NURBS curve
   (rational and non-uniform knots) instead of the control polygon; MTEXT
   explodes to one TEXT per line with formatting codes removed, aligned by its
-  attachment point.
+  attachment point. INSERT restores block definitions and rotated array
+  positions, and resolves inherited ByBlock transparency and linetype.
 - **Upright complex linetype elements (issue #108)** - `LineTypeComplexData`
   gains `upright` (`U=`, element flag 0x08) beside `absolute_rotation`. It is
   read from DXF and DWG, written to DWG and DXF R2013+, and becomes relative
   rotation in older DXF. Struct literals need `upright: false` or
   `..Default::default()`; Serde input without the field reads as `false`.
+- **Audit and recovery** - Adds document audit and repair APIs and DXF/DWG
+  recovery results. Preserves bounded auxiliary DWG records after decode
+  failures and keeps orphaned geometry out of model space.
+- **Plot styles and dynamic blocks** - Adds CTB/STB plot-style table codecs,
+  dynamic-block defaults and saved instance properties, editable classes, and
+  corrected dynamic-block references and visibility serialization.
+- **AC1009 fidelity** - Preserves legacy header settings, table and entity
+  identities, font resolution, encodings, and native mesh data, with regression
+  coverage from CAD-created R12 drawings.
+- **ACIS modeler data** - Preserves binary face and edge colors, adds
+  `SatDocument::split_bodies`, and fixes wireframe data, spline pcurves,
+  optional BODY history handles, and boolean solid-history trees.
+- **Metadata and geometry** - Preserves drawing summary properties,
+  block-record XDATA, spline parameterization and creation flags, dimension,
+  polyline, and MTEXT data, decimal tab alignment, hatch gradients, and color
+  book names. Corrects TEXT/SHAPE angle units and binary numeric/string output.
+- **Viewports and document references** - Preserves viewport on/off, grid, and
+  shading settings, layout owners and back-references, copied block object
+  graphs, table handles, and APPID identities.
+- **DWG decoding and interoperability** - Supports R2010 inline constraint
+  groups, associative geometry dependencies, large sections, and large DGN
+  stroke patterns. Reports malformed header errors and corrects dimension
+  flag mapping, class declarations, and complex linetype mode bits.
+- **Colors, performance, and testing** - Corrects reference ACI palette
+  intensities, exposes the DWG EED decoder, and reduces DXF string allocations.
+  Adds portable regression fixtures and explicitly ignores tests that require
+  unavailable external DWG/SAT files.
 
 ### 0.6.4
 

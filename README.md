@@ -5,6 +5,8 @@
 [![Documentation](https://docs.rs/acadrust/badge.svg)](https://docs.rs/acadrust)
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL%202.0-brightgreen.svg)](https://opensource.org/licenses/MPL-2.0)
 
+See [third-party notices](THIRD_PARTY_NOTICES.md) for DWG code provenance and attribution.
+
 **A pure Rust crate for reading, writing, and inspecting CAD files.**
 
 acadrust handles ASCII and binary DXF plus native binary DWG without requiring
@@ -14,7 +16,7 @@ an installed CAD application. File support spans DXF and DWG R12 through R2018+.
 
 ```toml
 [dependencies]
-acadrust = "0.6.4"
+acadrust = "0.6.6"
 ```
 
 ```rust
@@ -36,6 +38,7 @@ DXF, use `DxfWriter::new_binary(&doc)`.
 
 | Feature | Default | Adds |
 |---------|---------|------|
+| `parallel` | Yes | Rayon parallelism for native DWG reading and writing |
 | `serde` | No | `Serialize` and `Deserialize` implementations for document types |
 | `import` | No | STL, COLLADA, OBJ, glTF/GLB, and FBX importers |
 
@@ -43,8 +46,60 @@ Enable optional features as needed:
 
 ```toml
 [dependencies]
-acadrust = { version = "0.6.4", features = ["serde", "import"] }
+acadrust = { version = "0.6.6", features = ["serde", "import"] }
 ```
+
+To run DWG work sequentially on the calling thread and omit acadrust's Rayon
+dependency, disable default features:
+
+```toml
+[dependencies]
+acadrust = { version = "0.6.6", default-features = false }
+```
+
+Cargo features are additive: another dependency enabling `acadrust/parallel`
+can enable it for your application too. Existing applications using
+`default-features = false` must add `features = ["parallel"]` to retain native
+parallelism. WebAssembly remains sequential regardless of this feature.
+
+### Limit DWG concurrency
+
+Native DWG reads and writes use the current Rayon pool, or Rayon's shared
+global pool when called outside a pool. To bound concurrency, create an
+application-owned pool once and reuse it for all DWG jobs:
+
+```toml
+[dependencies]
+acadrust = "0.6.6"
+rayon = "1"
+```
+
+```rust
+use acadrust::DwgReader;
+use rayon::prelude::*;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build()?;
+    let paths = ["first.dwg", "second.dwg"];
+
+    let counts: Vec<usize> = pool.install(|| {
+        paths.par_iter().map(|path| {
+            let mut reader = DwgReader::from_file(path)?;
+            let doc = reader.read()?;
+            Ok(doc.entities().count())
+        }).collect::<acadrust::Result<_>>()
+    })?;
+
+    println!("Entity counts: {counts:?}");
+    Ok(())
+}
+```
+
+The batch and acadrust's internal parallel work share these four workers;
+reuse the same `pool` for later batches and wrap writes in `pool.install` too.
+Separate pools or DWG calls outside this pool are not covered by its limit.
+A one-thread pool still executes work on a Rayon worker; disabling `parallel`
+keeps acadrust's work on its calling thread.
 
 ## Features
 
@@ -69,7 +124,7 @@ acadrust = { version = "0.6.4", features = ["serde", "import"] }
 
 | File code | Release era | DXF | DWG |
 |-----------|-----------------|-----|-----|
-| AC1009 | R12 | R/W | R/W |
+| AC1009 | R11/R12 | R/W | R/W |
 | AC1012 | R13 | R/W | R/W |
 | AC1014 | R14 | R/W | R/W |
 | AC1015 | 2000 | R/W | R/W |
@@ -80,9 +135,10 @@ acadrust = { version = "0.6.4", features = ["serde", "import"] }
 | AC1032 | 2018+ | R/W | R/W |
 
 `R/W` means read and write support. Entity availability varies by file version.
-AC1009 DWG fidelity is incomplete; see the
-[R12 support status and remaining work](src/docs/ac1009_support.md).
-DXF export of R12 documents is promoted to R13 or later.
+AC1009 is the shared native DWG format used by AutoCAD Release 11 and Release
+12. See the [R11/R12 support status](src/docs/ac1009_support.md) for native
+fixture coverage and known format limits. DXF export of R11/R12 documents is
+promoted to R13 or later.
 
 ## Examples
 
@@ -224,6 +280,12 @@ cargo check --all-targets --all-features
 GitHub Actions runs these checks with stable Rust on Linux, Windows, and macOS
 for pull requests and pushes to `main`. It also checks default and all-feature
 library builds for `wasm32-unknown-unknown`.
+
+Tests that need drawings which are not in the repository are `#[ignore]`d,
+with the missing file as the reason, so `cargo test` reports them as ignored.
+If you have a file, run its tests with `--ignored`, for example
+`cargo test --test table_dwg_read -- --ignored`; a test whose file is missing
+then fails and names it.
 
 ---
 

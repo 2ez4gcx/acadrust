@@ -75,6 +75,21 @@ impl<'a> DxfWriter<'a> {
         if self.version == Some(crate::types::DxfVersion::AC1009) {
             return self.write_r12(writer);
         }
+        for (handle, object) in &self.document.objects {
+            if let crate::objects::ObjectType::Unknown {
+                type_name,
+                raw_dxf_codes: None,
+                ..
+            } = object
+            {
+                if crate::objects::associative_canonical_name(type_name) == "ASSOC2DCONSTRAINTGROUP"
+                {
+                    return Err(crate::error::DxfError::NotImplemented(format!(
+                        "Cannot export undecoded constraint group {type_name} at handle {handle} to DXF; save as the source DWG version to preserve its payload"
+                    )));
+                }
+            }
+        }
         // BricsCAD's binary DXF importer rejects the R2000/R2004 headers even
         // when their records are otherwise valid.  The same records are
         // accepted as R2010 binary DXF, whose strings are UTF-8.  Keep this
@@ -193,7 +208,9 @@ impl<'a> DxfWriter<'a> {
             ));
         }
         let mut stream_writer = DxfTextWriter::new(writer);
-        if let Some(encoding) = crate::io::dxf::code_page::encoding_from_code_page(&self.document.header.code_page) {
+        if let Some(encoding) =
+            crate::io::dxf::code_page::encoding_from_code_page(&self.document.header.code_page)
+        {
             stream_writer.set_encoding(encoding);
         }
         r12::write_r12(&mut stream_writer, self.document)?;

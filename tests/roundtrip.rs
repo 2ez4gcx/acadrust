@@ -1715,7 +1715,10 @@ dwg_entity_roundtrip!(
         "{\\Fgdt;p}%%v0.5"
     ))
 );
-dwg_entity_roundtrip!(dwg_rt_viewport, EntityType::Viewport(Box::new(Viewport::new())));
+dwg_entity_roundtrip!(
+    dwg_rt_viewport,
+    EntityType::Viewport(Box::new(Viewport::new()))
+);
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  CROSS-FORMAT ROUNDTRIP TESTS
@@ -2026,21 +2029,24 @@ fn binary_dxf_roundtrip_deep() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  REAL-FILE ROUNDTRIP (using .dwg files in workspace root)
+//  REAL-FILE ROUNDTRIP (DWG files that are not in the repository)
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Test roundtrip of actual DWG files included in the repository.
+/// Round-trips the DWG at `$file`, relative to the crate root.
+///
+/// None of these drawings are in the repository (`.gitignore` excludes
+/// `*.dwg`), so every case is ignored with its file as the reason. Put the
+/// files in place and run `cargo test --test roundtrip -- --ignored real_dwg`.
+///
+/// The reason is the bare `$file` literal: `#[test]` reads it before macros
+/// inside attributes expand, so a `concat!(...)` reason would not be shown.
 macro_rules! real_dwg_roundtrip {
-    ($test_name:ident, $file:expr) => {
+    ($test_name:ident, $file:literal) => {
         #[test]
+        #[ignore = $file]
         fn $test_name() {
             let path = concat!(env!("CARGO_MANIFEST_DIR"), "/", $file);
-            if !std::path::Path::new(path).exists() {
-                eprintln!("Skipping {}: file not found", $file);
-                return;
-            }
-
-            let mut reader = DwgReader::from_file(path).expect("Failed to open DWG file");
+            let mut reader = DwgReader::from_file(path).unwrap_or_else(|e| panic!("{path}: {e}"));
             let doc = reader.read().expect("Failed to read DWG file");
             let orig_entity_count = doc.entity_count();
             let orig_layer_count = doc.layers.len();
@@ -2183,7 +2189,10 @@ fn dwg_version_matrix_mtext() {
     for &(version, label) in DWG_VERSIONS {
         let doc = build_minimal_document(
             version,
-            EntityType::MText(Box::new(MText::with_value("Multi", Vector3::new(0.0, 0.0, 0.0)))),
+            EntityType::MText(Box::new(MText::with_value(
+                "Multi",
+                Vector3::new(0.0, 0.0, 0.0),
+            ))),
         );
         let rt = dwg_roundtrip(&doc);
         assert_eq!(
@@ -2281,7 +2290,7 @@ fn dwg_mtext_background_fill_byblock_r2018() {
 
 #[test]
 fn dwg_mtext_text_frame_r2018() {
-    // The text-frame bit (0x10) alone triggers the fill block only for R2018+.
+    // A frame alone has no background-fill payload in the R2018 layout.
     let mut mtext = MText::with_value("Framed", Vector3::new(0.0, 0.0, 0.0));
     mtext.background_fill_flags = 0x10; // TextFrame, no fill color bit
     mtext.background_scale = 2.0;
@@ -2289,11 +2298,11 @@ fn dwg_mtext_text_frame_r2018() {
 
     let rt = dwg_roundtrip_mtext(DxfVersion::AC1032, mtext.clone());
     assert_eq!(rt.background_fill_flags, 0x10, "R2018 text-frame flag");
-    assert_eq!(rt.background_scale, 2.0, "R2018 text-frame scale");
+    assert_eq!(rt.background_scale, 1.5, "R2018 text-frame default scale");
     assert_eq!(
         rt.background_color,
-        Color::from_index(5),
-        "R2018 text-frame color"
+        Color::ByLayer,
+        "R2018 text-frame default color"
     );
     assert_eq!(rt.value, "Framed", "R2018 text-frame value desynced");
 }
@@ -3087,8 +3096,7 @@ fn dwg_roundtrip_edge_action_param_line() {
     };
     let mut doc = CadDocument::new();
     let handle = doc.allocate_handle();
-    let mut object =
-        AssociativeObject::new("ACDBASSOCEDGEACTIONPARAM", "AcDbAssocEdgeActionParam");
+    let mut object = AssociativeObject::new("ACDBASSOCEDGEACTIONPARAM", "AcDbAssocEdgeActionParam");
     object.handle = handle;
     object.owner = doc.header.named_objects_dict_handle;
     let curve = vec![

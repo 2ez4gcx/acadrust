@@ -412,6 +412,24 @@ impl Transform {
         }
     }
 
+    /// Create a rotation around an axis through `origin`.
+    pub fn from_rotation_with_origin(axis: Vector3, angle: f64, origin: Vector3) -> Self {
+        if !axis.x.is_finite()
+            || !axis.y.is_finite()
+            || !axis.z.is_finite()
+            || !angle.is_finite()
+            || !origin.x.is_finite()
+            || !origin.y.is_finite()
+            || !origin.z.is_finite()
+            || axis.length_squared() <= f64::EPSILON
+        {
+            return Self::identity();
+        }
+        Self::from_translation(-origin)
+            .then(&Self::from_rotation(axis, angle))
+            .then(&Self::from_translation(origin))
+    }
+
     /// Create translation transform
     pub fn from_translation(translation: Vector3) -> Self {
         Self {
@@ -488,10 +506,47 @@ impl Transform {
     /// Create a mirror transform across an arbitrary plane defined by a point and normal
     ///
     /// The plane passes through `point` with the given `normal` direction.
-    /// Uses the Householder reflection: P' = P - 2(n·P + d)n
+    /// Uses the Householder reflection: P' = P - 2(n·P + d)n.
+    /// A zero normal, non-finite input, or unrepresentable translation
+    /// produces the identity transform.
     pub fn from_mirror_plane(point: Vector3, normal: Vector3) -> Self {
-        let n = normal.normalize();
-        let d = -(n.x * point.x + n.y * point.y + n.z * point.z);
+        if ![point.x, point.y, point.z, normal.x, normal.y, normal.z]
+            .iter()
+            .all(|value| value.is_finite())
+        {
+            return Self::identity();
+        }
+        // Scale before normalizing to avoid overflow and underflow in the
+        // squared length, including subnormal but nonzero normals.
+        let magnitude = normal.x.abs().max(normal.y.abs()).max(normal.z.abs());
+        if magnitude == 0.0 {
+            return Self::identity();
+        }
+        let scaled = Vector3::new(
+            normal.x / magnitude,
+            normal.y / magnitude,
+            normal.z / magnitude,
+        );
+        let n = scaled * (1.0 / scaled.length());
+        let point_scale = point.x.abs().max(point.y.abs()).max(point.z.abs());
+        let projection = if point_scale > 0.0 {
+            n.x * (point.x / point_scale)
+                + n.y * (point.y / point_scale)
+                + n.z * (point.z / point_scale)
+        } else {
+            0.0
+        };
+        let translation = Vector3::new(
+            (2.0 * n.x * projection) * point_scale,
+            (2.0 * n.y * projection) * point_scale,
+            (2.0 * n.z * projection) * point_scale,
+        );
+        if ![translation.x, translation.y, translation.z]
+            .iter()
+            .all(|value| value.is_finite())
+        {
+            return Self::identity();
+        }
 
         Self {
             matrix: Matrix4 {
@@ -500,19 +555,19 @@ impl Transform {
                         1.0 - 2.0 * n.x * n.x,
                         -2.0 * n.x * n.y,
                         -2.0 * n.x * n.z,
-                        -2.0 * n.x * d,
+                        translation.x,
                     ],
                     [
                         -2.0 * n.y * n.x,
                         1.0 - 2.0 * n.y * n.y,
                         -2.0 * n.y * n.z,
-                        -2.0 * n.y * d,
+                        translation.y,
                     ],
                     [
                         -2.0 * n.z * n.x,
                         -2.0 * n.z * n.y,
                         1.0 - 2.0 * n.z * n.z,
-                        -2.0 * n.z * d,
+                        translation.z,
                     ],
                     [0.0, 0.0, 0.0, 1.0],
                 ],
@@ -522,12 +577,24 @@ impl Transform {
 
     /// Create a mirror transform across a line defined by two points (in the XY plane)
     ///
-    /// The mirror line passes through `p1` and `p2`.
+    /// The mirror line passes through the XY projections of `p1` and `p2`;
+    /// reflected points retain their Z coordinate. A zero XY direction or
+    /// non-finite input produces the identity transform.
     pub fn from_mirror_line(p1: Vector3, p2: Vector3) -> Self {
-        let dir = (p2 - p1).normalize();
-        // Normal to the line in the XY plane
-        let normal = Vector3::new(-dir.y, dir.x, 0.0);
-        Self::from_mirror_plane(p1, normal)
+        if ![p1.x, p1.y, p1.z, p2.x, p2.y, p2.z]
+            .iter()
+            .all(|value| value.is_finite())
+        {
+            return Self::identity();
+        }
+        let mut dx = p2.x - p1.x;
+        let mut dy = p2.y - p1.y;
+        if !dx.is_finite() || !dy.is_finite() {
+            let magnitude = p1.x.abs().max(p1.y.abs()).max(p2.x.abs()).max(p2.y.abs());
+            dx = p2.x / magnitude - p1.x / magnitude;
+            dy = p2.y / magnitude - p1.y / magnitude;
+        }
+        Self::from_mirror_plane(Vector3::new(p1.x, p1.y, 0.0), Vector3::new(-dy, dx, 0.0))
     }
 
     /// Check if transform is identity
@@ -618,6 +685,18 @@ mod tests {
         let result = m.transform_point(v);
         assert!(result.x.abs() < 1e-10);
         assert!((result.y - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_matrix4_rotation_with_origin() {
+        let transform = Transform::from_rotation_with_origin(
+            Vector3::UNIT_Z,
+            PI / 2.0,
+            Vector3::new(10.0, 10.0, 0.0),
+        );
+        let result = transform.apply(Vector3::new(10.0, 0.0, 0.0));
+        assert!((result.x - 20.0).abs() < 1e-10);
+        assert!((result.y - 10.0).abs() < 1e-10);
     }
 
     #[test]
@@ -725,6 +804,77 @@ mod tests {
         assert!((r.x - p.x).abs() < 1e-10);
         assert!((r.y - p.y).abs() < 1e-10);
         assert!((r.z - p.z).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_mirror_plane_normal_magnitude_does_not_change_reflection() {
+        let point = Vector3::new(2.0, -3.0, 5.0);
+        let sample = Vector3::new(-4.0, 8.0, 1.0);
+        let normal = Vector3::new(1.0, 2.0, -1.0);
+        let expected = Transform::from_mirror_plane(point, normal).apply(sample);
+        for magnitude in [1e-307, 1e307, f64::from_bits(1)] {
+            let mirror = Transform::from_mirror_plane(point, normal * magnitude);
+            let reflected = mirror.apply(sample);
+            assert!((reflected - expected).length() < 1e-12);
+            assert!((mirror.apply(reflected) - sample).length() < 1e-12);
+            assert!((mirror.apply(point) - point).length() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn test_mirror_plane_invalid_inputs_are_identity() {
+        assert!(Transform::from_mirror_plane(Vector3::ZERO, Vector3::ZERO).is_identity());
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(
+                Transform::from_mirror_plane(Vector3::new(invalid, 1.0, 2.0), Vector3::UNIT_X,)
+                    .is_identity()
+            );
+            assert!(
+                Transform::from_mirror_plane(Vector3::ZERO, Vector3::new(1.0, invalid, 0.0),)
+                    .is_identity()
+            );
+        }
+        assert!(
+            Transform::from_mirror_plane(Vector3::new(f64::MAX, 0.0, 0.0), Vector3::UNIT_X,)
+                .is_identity()
+        );
+    }
+
+    #[test]
+    fn test_mirror_line_uses_xy_projection_and_preserves_z() {
+        let mirror = Transform::from_mirror_line(
+            Vector3::new(2.0, 3.0, -1e300),
+            Vector3::new(3.0, 4.0, 1e300),
+        );
+        let reflected = mirror.apply(Vector3::new(5.0, 4.0, 7.0));
+        assert!((reflected - Vector3::new(3.0, 6.0, 7.0)).length() < 1e-12);
+        let vertical =
+            Transform::from_mirror_line(Vector3::new(2.0, 3.0, 1.0), Vector3::new(2.0, 3.0, 8.0));
+        assert!(vertical.is_identity());
+    }
+
+    #[test]
+    fn test_mirror_line_handles_extreme_finite_directions() {
+        for end in [
+            Vector3::new(1e-300, 1e-300, 0.0),
+            Vector3::new(1e300, 1e300, 0.0),
+        ] {
+            let mirror = Transform::from_mirror_line(Vector3::ZERO, end);
+            let reflected = mirror.apply(Vector3::new(3.0, 5.0, 7.0));
+            assert!((reflected - Vector3::new(5.0, 3.0, 7.0)).length() < 1e-12);
+        }
+        let mirror = Transform::from_mirror_line(
+            Vector3::new(f64::MAX, f64::MAX, 0.0),
+            Vector3::new(-f64::MAX, -f64::MAX, 0.0),
+        );
+        assert!(
+            (mirror.apply(Vector3::new(3.0, 5.0, 7.0)) - Vector3::new(5.0, 3.0, 7.0)).length()
+                < 1e-12
+        );
+        assert!(
+            Transform::from_mirror_line(Vector3::ZERO, Vector3::new(f64::NAN, 1.0, 0.0))
+                .is_identity()
+        );
     }
 
     #[test]

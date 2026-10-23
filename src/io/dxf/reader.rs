@@ -7,8 +7,8 @@ mod text_reader;
 
 pub use binary_reader::DxfBinaryReader;
 pub use stream_reader::DxfStreamReader;
-pub use text_reader::DxfTextReader;
 use stream_reader::XDataRecorder;
+pub use text_reader::DxfTextReader;
 
 use section_reader::SectionReader;
 
@@ -74,11 +74,15 @@ impl DxfReader {
 
         // Create appropriate reader
         let reader: Box<dyn DxfStreamReader> = if is_binary {
-            Box::new(XDataRecorder::new(Box::new(DxfBinaryReader::new(buf_reader)?)))
+            Box::new(XDataRecorder::new(Box::new(DxfBinaryReader::new(
+                buf_reader,
+            )?)))
         } else {
             // Seek back to start for text DXF files
             buf_reader.seek(std::io::SeekFrom::Start(0))?;
-            Box::new(XDataRecorder::new(Box::new(DxfTextReader::new(buf_reader)?)))
+            Box::new(XDataRecorder::new(Box::new(DxfTextReader::new(
+                buf_reader,
+            )?)))
         };
 
         Ok(Self {
@@ -105,11 +109,15 @@ impl DxfReader {
 
         // Create appropriate reader
         let reader: Box<dyn DxfStreamReader> = if is_binary {
-            Box::new(XDataRecorder::new(Box::new(DxfBinaryReader::new(buf_reader)?)))
+            Box::new(XDataRecorder::new(Box::new(DxfBinaryReader::new(
+                buf_reader,
+            )?)))
         } else {
             // Seek back to start for text DXF files
             buf_reader.seek(std::io::SeekFrom::Start(0))?;
-            Box::new(XDataRecorder::new(Box::new(DxfTextReader::new(buf_reader)?)))
+            Box::new(XDataRecorder::new(Box::new(DxfTextReader::new(
+                buf_reader,
+            )?)))
         };
 
         Ok(Self {
@@ -389,10 +397,16 @@ impl DxfReader {
         rewire_dangling_layout_block_records(&mut document);
         document.ensure_model_layout();
         if document.version == crate::types::DxfVersion::AC1009 {
-            let layers: HashMap<_, _> = document.layers.iter().map(|layer| (layer.name.to_uppercase(), layer.handle)).collect();
+            let layers: HashMap<_, _> = document
+                .layers
+                .iter()
+                .map(|layer| (layer.name.to_uppercase(), layer.handle))
+                .collect();
             for entity in document.entities_mut_keep_raw() {
                 if let EntityType::Viewport(viewport) = entity {
-                    crate::io::dwg::legacy_viewport::restore_r12(viewport, |name| layers.get(&name.to_uppercase()).copied());
+                    crate::io::dwg::legacy_viewport::restore_r12(viewport, |name| {
+                        layers.get(&name.to_uppercase()).copied()
+                    });
                 }
             }
         }
@@ -428,6 +442,7 @@ impl DxfReader {
             stream_completed,
             diagnostics,
         );
+        crate::document::sync_dimension_arrow_header(&mut document);
         document.source_path = self.source_path.take();
         crate::objects::restore_visual_style_roundtrip(&mut document);
         crate::objects::restore_table_style_roundtrip(&mut document);
@@ -548,11 +563,8 @@ impl DxfReader {
                 crate::notification::NotificationType::Error,
                 message.clone(),
             );
-            let mut diagnostic = ReadDiagnostic::new(
-                "record-read-failed",
-                ReadStage::RecordStream,
-                message,
-            );
+            let mut diagnostic =
+                ReadDiagnostic::new("record-read-failed", ReadStage::RecordStream, message);
             diagnostic.section = Some(section.to_string());
             diagnostic.source_offset = recovery.context.source_offset;
             diagnostic.source_offset_basis = Some("file-byte".to_string());
@@ -874,7 +886,11 @@ fn rewire_dangling_layout_block_records(document: &mut CadDocument) {
             if records.contains_key(&layout.block_record.value()) {
                 owned.insert(layout.block_record.value());
             } else {
-                dangling.push((layout.tab_order, *handle, layout.name.eq_ignore_ascii_case("Model")));
+                dangling.push((
+                    layout.tab_order,
+                    *handle,
+                    layout.name.eq_ignore_ascii_case("Model"),
+                ));
             }
         }
     }
@@ -889,7 +905,11 @@ fn rewire_dangling_layout_block_records(document: &mut CadDocument) {
         .filter(|(handle, _)| !owned.contains(*handle))
         .filter_map(|(handle, name)| {
             let suffix = name.strip_prefix("*paper_space")?;
-            let order = if suffix.is_empty() { None } else { Some(suffix.parse().ok()?) };
+            let order = if suffix.is_empty() {
+                None
+            } else {
+                Some(suffix.parse().ok()?)
+            };
             Some((order, *handle))
         })
         .collect();

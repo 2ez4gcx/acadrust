@@ -24,7 +24,7 @@
 //!
 //! | DWG Version | AutoCAD | File format  |
 //! |-------------|---------|-------------|
-//! | AC1009      | R12     | Pre-R13     |
+//! | AC1009      | R11/R12 | Pre-R13     |
 //! | AC1012      | R13     | Linear      |
 //! | AC1014      | R14     | Linear      |
 //! | AC1015      | R2000   | Linear      |
@@ -34,8 +34,27 @@
 //! | AC1027      | R2013   | Paged + LZ77 |
 //! | AC1032      | R2018   | Paged + LZ77 |
 
+/// Text from a caught decoder panic, for diagnostics instead of an unwind.
+pub(crate) fn unwind_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| payload.downcast_ref::<&str>().map(|message| (*message).to_string()))
+        .unwrap_or_else(|| "Record decoder failed".to_string())
+}
+
+#[cfg(test)]
+mod unwind_tests {
+    #[test]
+    fn unwind_message_uses_the_panic_text() {
+        let owned: Box<dyn std::any::Any + Send> = Box::new("array count".to_string());
+        assert_eq!(super::unwind_message(owned.as_ref()), "array count");
+        let borrowed: Box<dyn std::any::Any + Send> = Box::new("truncated");
+        assert_eq!(super::unwind_message(borrowed.as_ref()), "truncated");
+    }
+}
+
 pub mod annotative_eed;
-pub(crate) mod typeface_eed;
 pub mod checksum;
 pub mod compression;
 pub mod compressor_ac21;
@@ -54,16 +73,20 @@ pub mod eed_codec;
 pub(crate) mod embedded_entity;
 pub mod file_headers;
 pub(crate) mod legacy_viewport;
+mod mesh_budget;
 mod parallel;
 pub mod preview;
 pub mod r12;
 pub mod reed_solomon;
+pub(crate) mod typeface_eed;
+pub(crate) mod size_limits;
 
 pub use dwg_reader::DwgReadOptions;
 pub use dwg_reader::DwgReader;
 pub use dwg_reference_type::DwgReferenceType;
 pub use dwg_version::DwgVersion;
 pub use dwg_writer::DwgWriter;
+pub use mesh_budget::MeshFaceBudget;
 
 pub(crate) fn sab_fingerprint<'a>(
     entries: impl IntoIterator<Item = (crate::Handle, &'a [u8])>,

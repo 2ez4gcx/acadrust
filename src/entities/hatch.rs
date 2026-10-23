@@ -712,4 +712,12 @@ impl Entity for Hatch {
     fn apply_mirror(&mut self, transform: &crate::types::Transform) {
         super::mirror::mirror_hatch(self, transform);
     }
+
+    fn apply_mirror_with_options(
+        &mut self,
+        transform: &crate::types::Transform,
+        options: super::MirrorOptions,
+    ) {
+        super::mirror::mirror_hatch_with_options(self, transform, options);
+    }
 }

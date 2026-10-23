@@ -374,6 +374,18 @@ impl Entity for AttributeEntity {
     fn apply_transform(&mut self, transform: &crate::types::Transform) {
         super::transform::transform_attribute_entity(self, transform);
     }
+
+    fn apply_mirror(&mut self, transform: &crate::types::Transform) {
+        super::mirror::mirror_attribute_entity(self, transform);
+    }
+
+    fn apply_mirror_with_options(
+        &mut self,
+        transform: &crate::types::Transform,
+        options: super::MirrorOptions,
+    ) {
+        super::mirror::mirror_attribute_entity_with_options(self, transform, options);
+    }
 }
 
 #[cfg(test)]
