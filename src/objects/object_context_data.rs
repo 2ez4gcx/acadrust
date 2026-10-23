@@ -6,9 +6,11 @@
 //! Each leaf is a concrete `ACDB_<TYPE>OBJECTCONTEXTDATA_CLASS` object sharing a
 //! common base:
 //!
-//! - `AcDbObjectContextData`: `70` class_version (BS), `290` is_default (B).
+//! - `AcDbObjectContextData`: `70` class_version (BS), plus the R2010+ file-
+//!   to-extension-dictionary and default flags (B).
 //! - `AcDbAnnotScaleObjectContextData`: `340` handle → the `AcDbScale` this
-//!   representation applies to (rides the object handle stream).
+//!   representation applies to (the hard pointer follows the context base in
+//!   the object handle stream; ODA §20.4.71).
 //!
 //! followed by a type-specific placement payload ([`ObjectContextKind`]).
 //!
@@ -31,8 +33,18 @@ pub struct ObjectContextData {
     pub xdictionary_handle: Option<Handle>,
 
     /// `AcDbObjectContextData` class_version (DXF 70). Real R2018 files write 4;
-    /// LibreDWG's default is 3. Preserved on read.
+    /// ODA documents 3 as the default. Preserved on read.
     pub class_version: i16,
+    /// R2010+ `AcDbObjectContextData` flag indicating that the context data has
+    /// a file to its extension dictionary. ODA §20.4.89 documents a default of
+    /// true. DXF has no field for this DWG-only flag, so DXF-created contexts
+    /// use the documented default.
+    pub has_file_to_extension_dictionary: bool,
+    /// Native MLeader context records sometimes use a historical base that
+    /// omits the R2010+ file-to-extension-dictionary bit. Preserve that wire
+    /// layout separately from the flag's semantic value.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub uses_legacy_mleader_context_base: bool,
     /// `AcDbObjectContextData` is_default flag (DXF 290) — set on the native rep.
     pub is_default: bool,
     /// `AcDbAnnotScaleObjectContextData` scale handle (DXF 340) → an `AcDbScale`
@@ -44,7 +56,8 @@ pub struct ObjectContextData {
 }
 
 /// The type-specific placement payload of an annotative context leaf. Field
-/// layouts follow LibreDWG `dwg2.spec` (the binary-canonical order).
+/// layouts follow the ODA DWG specification where covered; other subtype
+/// layouts remain explicitly reverse-engineered.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ObjectContextKind {
@@ -85,8 +98,8 @@ pub enum ObjectContextKind {
     /// per-scale placement of annotative MTEXT.
     ///
     /// DWG order after the shared base: `BL attachment(70)`, then — note the
-    /// binary stream stores `x_axis_dir` **before** `ins_pt` (LibreDWG flags the
-    /// reversed order an "ODA bug"; DXF emits them the other way) — `3BD
+    /// binary stream stores `x_axis_dir` **before** `ins_pt` (DXF emits them in
+    /// the other order) — `3BD
     /// x_axis_dir`, `3BD ins_pt`, `BD rect_width(40)`, `BD rect_height(41)`,
     /// `BD extents_width(42)`, `BD extents_height(43)`, `BL column_type(71)`,
     /// and — only when `column_type != 0` — the column sub-fields.
@@ -94,10 +107,10 @@ pub enum ObjectContextKind {
 
     /// A dimension per-scale context (`ACDB_<AL|ANG|DM|RA|RADIMLG|ORD>DIMOBJECTCONTEXTDATA_CLASS`).
     ///
-    /// The shared base and aligned subtype are verified by native DWG→DWG→DWG
-    /// plus ODA conversion. The remaining subtype tails follow the same
-    /// Autodesk DXF field contract and LibreDWG binary layout; public fixtures
-    /// for those five tails are not currently available.
+    /// ODA §20.4.89 defines the shared base; §20.4.71 defines annotative scale
+    /// data. Aligned and dimension subtype tails are based on native captures
+    /// and the Autodesk DXF contract; not every subtype has a checked-in native
+    /// fixture yet.
     Dim(DimContext),
 
     /// `AcDbMLeaderObjectContextData`; a standalone annotation context using
@@ -208,6 +221,9 @@ pub struct EmbeddedMTextContext {
     /// R2013+ embedded binary-data flag.
     pub has_binary_data: bool,
     pub class_version: i16,
+    /// R2010+ nested context-base flag. DXF-created contexts use ODA's
+    /// documented default of true.
+    pub has_file_to_extension_dictionary: bool,
     pub is_default: bool,
     pub scale: Handle,
     pub mtext: MTextContext,

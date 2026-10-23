@@ -4723,10 +4723,10 @@ pub fn read_multileader(
     let mut text_bottom_attachment: i16 = 9; // CenterOfText — matches MultiLeader::new() default
     let mut text_top_attachment: i16 = 9; // CenterOfText — matches MultiLeader::new() default
     if version.r2010_plus() {
-        // Order: dir (271), bottom (272), top (273) — per AutoCAD.
+        // ODA §20.4.48 lists attachment direction (271), top (273), bottom (272).
         text_attachment_direction = reader.read_bit_short();
-        text_bottom_attachment = reader.read_bit_short();
         text_top_attachment = reader.read_bit_short();
+        text_bottom_attachment = reader.read_bit_short();
     }
 
     let mut extend_leader_to_text = false;
@@ -4935,6 +4935,7 @@ pub(crate) fn read_multileader_annotation_context(
     let mut text_top_attachment = TextAttachmentType::CenterOfText;
     let mut text_bottom_attachment = TextAttachmentType::CenterOfText;
     if version.r2010_plus() {
+        // ODA §20.4.86 orders these same vertical attachment fields 273 then 272.
         text_top_attachment = TextAttachmentType::from(reader.read_bit_short());
         text_bottom_attachment = TextAttachmentType::from(reader.read_bit_short());
     }
@@ -5179,12 +5180,59 @@ pub struct SurfaceEntityData {
     pub history_handle: u64,
 }
 
-/// Read modeler-geometry (ACIS) data shared by 3DSOLID, REGION, BODY.
-///
-/// This reads both `DECODE_3DSOLID` (acis data) and the wireframe +
-/// `acis_empty_bit` + R2007+ trailing fields from `COMMON_3DSOLID`.
-/// The caller must still read the 3DSOLID-specific history_id handle.
+/// Read the version-1 modeler blocks from ODA section 20.4.41 (p. 144).
+/// Keep the speculative read separate from the caller: a missing terminator
+/// or an oversized block must not consume the following surface fields.
+fn read_sat_blocks(reader: &mut DwgMergedReader, inline_end: Option<i64>) -> Option<String> {
+    let mut blocks = reader.clone();
+    let end = reader.position_in_bits() + reader.main_remaining_bits();
+    blocks.set_main_data_end(inline_end.map_or(end, |limit| limit.min(end)));
+    let mut decoded = Vec::new();
+    loop {
+        let count = blocks.read_bit_long();
+        if blocks.has_error() || count < 0 || i64::from(count) > blocks.main_remaining_bits() / 8 {
+            return None;
+        }
+        if count == 0 {
+            reader.set_position_in_bits(blocks.position_in_bits());
+            return Some(String::from_utf8_lossy(&decoded).into_owned());
+        }
+        // The printable range uses 0x9f substitution. Native SAT keeps its
+        // spaces and line endings; ODA also specifies tab-to-space conversion.
+        // Bytes outside the printable range are not encrypted.
+        decoded.extend(
+            blocks
+                .read_bytes(count as usize)
+                .into_iter()
+                .map(|byte| match byte {
+                    b'\t' => b' ',
+                    0x21..=0x7e => 0x9f - byte,
+                    _ => byte,
+                }),
+        );
+    }
+}
+
+/// ODA 20.4.41, p. 145: a second modeler body has the same version/payload
+/// fields without another wireframe or silhouette block.
 pub(super) fn read_extra_acis_data(
+    reader: &mut DwgMergedReader,
+    inline_end: Option<i64>,
+) -> Option<crate::entities::solid3d::AcisData> {
+    let mut extra = reader.clone();
+    if let Some(end) = inline_end {
+        let main_end = reader.position_in_bits() + reader.main_remaining_bits();
+        extra.set_main_data_end(end.min(main_end));
+    }
+    let data = read_extra_acis_data_impl(&mut extra, inline_end)?;
+    if extra.has_error() {
+        return None;
+    }
+    reader.set_position_in_bits(extra.position_in_bits());
+    Some(data)
+}
+
+fn read_extra_acis_data_impl(
     reader: &mut DwgMergedReader,
     inline_end: Option<i64>,
 ) -> Option<crate::entities::solid3d::AcisData> {
@@ -5222,38 +5270,11 @@ pub(super) fn read_extra_acis_data(
     }
 
     if extra_version == 1 {
-        let mut encrypted = Vec::new();
-        loop {
-            let block_size = reader.read_bit_long();
-            if block_size == 0 {
-                break;
-            }
-            let available = inline_end.map_or_else(
-                || reader.remaining_bytes(),
-                |end| (end - reader.position_in_bits()).max(0) as usize / 8,
-            );
-            if block_size < 0 || block_size as usize > available {
-                reader.set_position_in_bits(prefix_start);
-                return None;
-            }
-            encrypted.extend_from_slice(&reader.read_bytes(block_size as usize));
+        if let Some(sat) = read_sat_blocks(reader, inline_end).filter(|sat| !sat.is_empty()) {
+            return Some(crate::entities::solid3d::AcisData::from_sat(&sat));
         }
-        if encrypted.is_empty() {
-            reader.set_position_in_bits(prefix_start);
-            return None;
-        }
-        let decoded: Vec<u8> = encrypted
-            .into_iter()
-            .map(|byte| {
-                if byte <= 32 {
-                    byte
-                } else {
-                    159u8.wrapping_sub(byte)
-                }
-            })
-            .collect();
-        let sat = String::from_utf8_lossy(&decoded);
-        return Some(crate::entities::solid3d::AcisData::from_sat(&sat));
+        reader.set_position_in_bits(prefix_start);
+        return None;
     }
 
     reader.set_position_in_bits(prefix_start);
@@ -5296,6 +5317,8 @@ fn acis_or_reject(
     }
 }
 
+/// Read shared modeler geometry, display caches and version-specific tails.
+/// The caller reads the 3DSOLID-specific history handle separately.
 pub fn read_acis_entity(
     reader: &mut DwgMergedReader,
     version: DwgVersion,
@@ -5373,8 +5396,7 @@ fn read_acis_entity_impl(
     }
 
     if !acis_empty && !has_ds_data {
-        // Unknown bit — per ODA spec / LibreDWG this B
-        // is always present between acis_empty and the version BS.
+        // ODA 20.4.41, p. 144: the unknown B precedes the version BS.
         let _unknown = reader.read_bit();
 
         acis_version = reader.read_bit_short();
@@ -5383,42 +5405,10 @@ fn read_acis_entity_impl(
         }
 
         if acis_version == 1 {
-            // SAT text — all DWG versions use the same encoding:
-            // BL-sized blocks of encrypted bytes (cipher: 159 - byte)
-            // terminated by BL(0).  Per LibreDWG dwg.spec.
             is_binary = false;
-
-            let mut all_bytes = Vec::new();
-            loop {
-                let raw_block_size = reader.read_bit_long();
-                if let Some(end) = inline_end {
-                    if raw_block_size < 0
-                        || reader.position_in_bits() > end
-                        || raw_block_size as i64 > (end - reader.position_in_bits()) / 8
-                    {
-                        return None;
-                    }
-                }
-                let block_size = reader.checked_main_count(i64::from(raw_block_size), 8) as usize;
-                if block_size == 0 {
-                    break;
-                }
-                let block = reader.read_bytes(block_size);
-                all_bytes.extend_from_slice(&block);
-            }
-
-            // Decrypt with selective 159-substitution cipher
-            // (per LibreDWG dwg.spec: bytes <= 32 pass through, bytes > 32: 159 - byte)
-            let mut decoded = Vec::with_capacity(all_bytes.len());
-            for &b in &all_bytes {
-                if b <= 32 {
-                    decoded.push(b);
-                } else {
-                    decoded.push(159u8.wrapping_sub(b));
-                }
-            }
-            sat_data = String::from_utf8_lossy(&decoded).to_string();
-            sat_data = crate::entities::solid3d::AcisData::strip_sat_terminator(&sat_data);
+            sat_data = crate::entities::solid3d::AcisData::strip_sat_terminator(&read_sat_blocks(
+                reader, inline_end,
+            )?);
         } else if let Some(end) = inline_end {
             // Embedded bodies have no handle/text streams. Bound the SAB
             // probe by the enclosing entity's meaningful bit count instead
@@ -5493,7 +5483,7 @@ fn read_acis_entity_impl(
 
     // Wireframe data (version=1 SAT, R2004–R2006 inline SAB and AcDs-backed
     // empty bodies; R2007+ inline SAB may return early above).
-    // Layout per LibreDWG COMMON_3DSOLID,
+    // ODA 20.4.41, pp. 144-145 describes the cache header and wire arrays,
     // bit-verified against an AutoCAD AC1015 (R2000) v1-SAT sample — the
     // `point` decodes to the body's exact bounding-box centre only WITH the
     // point_present gate (AC1032's solids are SAB and skip this path, so it
@@ -5515,7 +5505,7 @@ fn read_acis_entity_impl(
     let mut silhouettes = Vec::new();
 
     if wireframe_present {
-        // LibreDWG COMMON_3DSOLID: a point_present bit gates the 3BD point.
+        // ODA 20.4.41: point_present gates the 3BD reference point.
         point_present = reader.read_bit();
         if point_present {
             point = reader.read_3bit_double();
@@ -5523,10 +5513,7 @@ fn read_acis_entity_impl(
         isolines = reader.read_bit_long();
         isoline_present = reader.read_bit();
         if isoline_present {
-            let num_wires = safe_count(reader.read_bit_long(), reader);
-            for _ in 0..num_wires {
-                wires.push(read_wire(reader));
-            }
+            wires = read_wires(reader);
         }
 
         // The isoline flag gates only the wire array. The silhouette
@@ -5548,11 +5535,7 @@ fn read_acis_entity_impl(
             let mut sil_wires = Vec::new();
             let has_sil_wires = reader.read_bit();
             if has_sil_wires {
-                let num_sw = safe_count(reader.read_bit_long(), reader);
-                sil_wires.reserve(num_sw as usize);
-                for _ in 0..num_sw {
-                    sil_wires.push(read_wire(reader));
-                }
+                sil_wires = read_wires(reader);
             }
             silhouettes.push(Silhouette {
                 viewport_id,
@@ -5966,17 +5949,31 @@ pub fn read_surface(
     }
 }
 
+/// Both the isoline cache and each silhouette use the ODA 20.4.41 wire array.
+fn read_wires(reader: &mut DwgMergedReader) -> Vec<Wire> {
+    let count = reader.read_bit_long();
+    // RC + BL + BS + BL + BL + B consumes at least 17 main-stream bits,
+    // even for a wire without any vertices or transform. Handles/text cannot
+    // supply bytes for this array.
+    let count = reader.checked_main_count(i64::from(count), 17) as usize;
+    (0..count).map(|_| read_wire(reader)).collect()
+}
+
 /// Read a single wire struct from the DWG stream.
-/// Field order/types per LibreDWG `Dwg_3DSOLID_wire`:
+/// ODA 20.4.41, pp. 144-145 describes the header and point fields:
 /// RC type, BLd selection_marker, BS color, BLd acis_index, BL num_points,
 /// 3BD points…, B transform_present [+ axes/translation/scale/flags].
+/// The existing three-component scale layout is retained; the older ODA
+/// table lists a scalar BD and does not independently establish that layout.
 fn read_wire(reader: &mut DwgMergedReader) -> Wire {
     let wire_type_raw = reader.read_byte();
     let selection_marker = reader.read_bit_long();
     let color_val = reader.read_bit_short();
     let acis_index = reader.read_bit_long();
-    let num_pts = safe_count(reader.read_bit_long(), reader);
-    let mut pts = Vec::with_capacity(num_pts as usize);
+    let num_pts = reader.read_bit_long();
+    // A 3BD point needs at least three two-bit double selectors.
+    let num_pts = reader.checked_main_count(i64::from(num_pts), 6) as usize;
+    let mut pts = Vec::with_capacity(num_pts);
     for _ in 0..num_pts {
         pts.push(reader.read_3bit_double());
     }
@@ -6044,6 +6041,109 @@ mod tests {
     }
 
     #[test]
+    fn oda_sat_blocks_decode_only_printable_bytes_and_preserve_the_tail() {
+        use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+        use crate::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+
+        for offset in 0..8 {
+            let mut writer = DwgBitWriter::new(DwgVersion::AC15, DxfVersion::AC1015);
+            for _ in 0..offset {
+                writer.write_bit(true);
+            }
+            // Independent ODA substitution fixture: ! and ~ swap, tab becomes
+            // space, and non-printable bytes pass through. Split a UTF-8
+            // character across blocks to require decoding after concatenation.
+            writer.write_bit_long(6);
+            writer.write_bytes(&[0x7e, 0x21, 0x20, 0x09, 0x7f, 0xc3]);
+            writer.write_bit_long(3);
+            writer.write_bytes(&[0xa9, 0x0d, 0x0a]);
+            writer.write_bit_long(0);
+            let sat_end = writer.position_in_bits();
+            writer.write_bit_short(0x1234);
+            let end = writer.position_in_bits();
+            let mut reader = DwgMergedReader::from_readers(
+                DwgBitReader::new(writer.into_bytes(), DwgVersion::AC15, DxfVersion::AC1015),
+                None,
+                None,
+                DxfVersion::AC1015,
+            );
+            reader.set_main_data_end(end);
+            reader.set_position_in_bits(offset);
+            assert_eq!(
+                read_sat_blocks(&mut reader, Some(sat_end)).as_deref(),
+                Some("!~  \u{7f}é\r\n")
+            );
+            assert_eq!(reader.position_in_bits(), sat_end);
+            assert_eq!(reader.read_bit_short(), 0x1234);
+            reader.check_error().unwrap();
+        }
+    }
+
+    #[test]
+    fn unterminated_extra_sat_probe_keeps_the_surface_cursor_and_error_state() {
+        use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+        use crate::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+
+        for offset in 0..8 {
+            let mut writer = DwgBitWriter::new(DwgVersion::AC18, DxfVersion::AC1018);
+            for _ in 0..offset {
+                writer.write_bit(true);
+            }
+            writer.write_bit(false);
+            writer.write_bit_short(1);
+            writer.write_bit_long(1);
+            writer.write_byte(0x7e);
+            // There is no BL(0), only the enclosing record's byte padding.
+            let end = writer.position_in_bits();
+            let mut reader = DwgMergedReader::from_readers(
+                DwgBitReader::new(writer.into_bytes(), DwgVersion::AC18, DxfVersion::AC1018),
+                None,
+                None,
+                DxfVersion::AC1018,
+            );
+            reader.set_main_data_end(end);
+            reader.set_position_in_bits(offset);
+            assert!(read_extra_acis_data(&mut reader, Some(end)).is_none());
+            assert_eq!(reader.position_in_bits(), offset);
+            reader.check_error().unwrap();
+        }
+    }
+
+    #[test]
+    fn wire_arrays_and_points_are_bounded_by_the_main_stream() {
+        use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+        use crate::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+
+        for points in [false, true] {
+            let mut writer = DwgBitWriter::new(DwgVersion::AC15, DxfVersion::AC1015);
+            if points {
+                writer.write_byte(WireType::VisibleEdge as u8);
+                writer.write_bit_long(-1);
+                writer.write_bit_short(256);
+                writer.write_bit_long(-1);
+            }
+            writer.write_bit_long(100);
+            // Enough raw bits to satisfy the old one-bit-per-item check,
+            // but fewer than the ODA fields needed by 100 wires/3BD points.
+            writer.write_bytes(&[0; 16]);
+            let end = writer.position_in_bits();
+            let mut reader = DwgMergedReader::from_readers(
+                DwgBitReader::new(writer.into_bytes(), DwgVersion::AC15, DxfVersion::AC1015),
+                None,
+                None,
+                DxfVersion::AC1015,
+            );
+            reader.set_main_data_end(end);
+            if points {
+                assert!(read_wire(&mut reader).points.is_empty());
+            } else {
+                assert!(read_wires(&mut reader).is_empty());
+            }
+            assert!(reader.check_error().is_err());
+        }
+    }
+
+    #[test]
     fn truncated_surface_sets_a_reader_error_instead_of_panicking() {
         let dwg = DwgVersion::AC18;
         let dxf = DxfVersion::AC1018;
@@ -6060,12 +6160,9 @@ mod tests {
 
     #[test]
     fn r2004_surface_keeps_a_second_modeler_body_ahead_of_isolines() {
-        let sab = crate::entities::acis::SabWriter::write(&crate::entities::acis::primitives::build_box(
-            [0.0, 0.0, 0.0],
-            1.0,
-            2.0,
-            3.0,
-        ));
+        let sab = crate::entities::acis::SabWriter::write(
+            &crate::entities::acis::primitives::build_box([0.0, 0.0, 0.0], 1.0, 2.0, 3.0),
+        );
         let dwg = DwgVersion::AC18;
         let dxf = DxfVersion::AC1018;
         let mut reader = make_reader(dwg, dxf, |writer| {
@@ -6348,7 +6445,7 @@ mod tests {
         let mut w = DwgMergedWriter::new(v, d);
         // Write: acis_empty + unknown + version + encrypted blocks + wireframe + acis_empty_bit
         w.write_bit(false); // acis_empty = false (has data)
-        w.write_bit(false); // unknown bit (per ODA/LibreDWG spec)
+        w.write_bit(false); // unknown bit (ODA 20.4.41)
         w.write_bit_short(1); // acis_version = 1 (SAT text)
                               // Encrypt SAT with selective 159-substitution cipher
         let mut full_sat = acis.sat_data.clone();
@@ -6396,7 +6493,7 @@ mod tests {
 
         let mut w = DwgMergedWriter::new(v, d);
         w.write_bit(false); // acis_empty = false
-        w.write_bit(false); // unknown bit (per ODA/LibreDWG spec)
+        w.write_bit(false); // unknown bit (ODA 20.4.41)
         w.write_bit_short(2); // acis_version = 2 (SAB binary)
                               // NO BL size prefix — reader infers size from remaining bits
         w.write_bytes(&sab_data);

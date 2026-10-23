@@ -5383,6 +5383,7 @@ impl<'a> SectionReader<'a> {
                         xdictionary_handle: None,
                         has_binary_data: false,
                         class_version: context_class_version,
+                        has_file_to_extension_dictionary: true,
                         is_default: context_is_default,
                         scale: context_scale,
                         mtext: MTextContext {
@@ -5457,6 +5458,10 @@ impl<'a> SectionReader<'a> {
             reactors,
             xdictionary_handle,
             class_version,
+            // DXF does not expose the R2010+ DWG file-to-extension flag.
+            // ODA §20.4.89 documents true as its default.
+            has_file_to_extension_dictionary: true,
+            uses_legacy_mleader_context_base: false,
             is_default,
             scale,
             kind,

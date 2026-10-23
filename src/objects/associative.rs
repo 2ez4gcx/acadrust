@@ -1412,7 +1412,7 @@ pub fn associative_canonical_name(name: &str) -> String {
         upper
     };
     match canonical.as_str() {
-        // Seen in Autodesk/LibreDWG class tables without the second `D`.
+        // Native class tables include this spelling without the second `D`.
         "ASSOCALIGNEDIMACTIONBODY" => "ASSOCALIGNEDDIMACTIONBODY".to_string(),
         "ACDBPERSSUBENTMANAGER" => "PERSUBENTMGR".to_string(),
         "ACDBDIMASSOC" => "DIMASSOC".to_string(),

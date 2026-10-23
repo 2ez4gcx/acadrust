@@ -82,17 +82,24 @@ pub enum XRecordValueType {
 }
 
 impl XRecordValueType {
-    /// Determine value type from DXF group code
+    /// Determine the inline XRECORD value type for a DXF group code.
+    ///
+    /// ODA section 20.4.104 describes group-code/value pairs. Native AutoCAD
+    /// probes additionally distinguish string handles (5, 105, 320-329) from
+    /// the eight-byte object IDs stored by 330-369 and 390-399. In particular,
+    /// a handle-shaped string must retain its text and versioned string length.
+    /// This classification is shared by the DWG decoder and string transcoder.
     pub fn from_code(code: i32) -> Self {
         match code {
             code if code < 0 => XRecordValueType::Handle,
-            5 | 105 | 320..=329 | 480..=481 => XRecordValueType::Handle,
+            480..=481 => XRecordValueType::Handle,
             330..=369 => XRecordValueType::ObjectId,
             390..=399 | 1005 => XRecordValueType::Handle,
-            0..=4
-            | 6..=9
+            0..=9
             | 100..=102
+            | 105
             | 300..=309
+            | 320..=329
             | 410..=419
             | 430..=439
             | 470..=479
@@ -202,7 +209,7 @@ impl XRecordValue {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct XRecordEntry {
-    /// DXF group code (1-369, except 5 and 105)
+    /// DXF group code of the stored value.
     pub code: i32,
     /// The stored value
     pub value: XRecordValue,
@@ -983,5 +990,21 @@ mod tests {
         assert_eq!(XRecordValueType::from_code(90), XRecordValueType::Int32);
         assert_eq!(XRecordValueType::from_code(290), XRecordValueType::Bool);
         assert_eq!(XRecordValueType::from_code(330), XRecordValueType::ObjectId);
+    }
+
+    #[test]
+    fn handle_spelling_group_codes_follow_native_xrecord_types() {
+        for code in [5, 105, 320, 329] {
+            assert_eq!(XRecordValueType::from_code(code), XRecordValueType::String);
+        }
+        for code in [330, 369] {
+            assert_eq!(
+                XRecordValueType::from_code(code),
+                XRecordValueType::ObjectId
+            );
+        }
+        for code in [390, 399, 480, 481, 1005] {
+            assert_eq!(XRecordValueType::from_code(code), XRecordValueType::Handle);
+        }
     }
 }

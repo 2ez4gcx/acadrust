@@ -7471,8 +7471,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             self.writer.write_string(3, key)?;
             // These dictionary keys are hard-owner entries by definition even
-            // when the dictionary-wide hard-owner flag is clear. AutoCAD,
-            // ODA and LibreDWG all emit code 360 for them. ACAD_LAYOUT and
+            // when the dictionary-wide hard-owner flag is clear. AutoCAD
+            // native captures emit code 360 for these canonical keys. ACAD_LAYOUT and
             // ACAD_PLOTSTYLENAME own their sub-dictionaries; ACAD_FIELD owns
             // the drawing's FIELDLIST. Writing them as soft pointers (350)
             // makes CAD applications treat the targets as erasable orphans

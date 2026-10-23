@@ -39,6 +39,20 @@ use crate::types::Handle;
 use crate::types::LineWeight;
 use std::collections::{HashMap, HashSet};
 
+/// Read the DWG-only context-base flag added in the R2010 layout. ODA
+/// §20.4.89 specifies a default value of true; earlier files retain their
+/// version/default pair.
+fn read_context_file_dictionary_flag(
+    reader: &mut DwgMergedReader,
+    version: crate::io::dwg::dwg_version::DwgVersion,
+) -> bool {
+    if version.r2010_plus() {
+        reader.read_bit()
+    } else {
+        true
+    }
+}
+
 fn linetype_segment_is_complex(segment: &tables::LinetypeSegment, shape_handle: u64) -> bool {
     // Scale, rotation and offsets have no meaning on a plain dash; native
     // writers commonly store scale 0 instead of 1 (issue #128).
@@ -7054,21 +7068,33 @@ impl DwgDocumentBuilder {
                     // Decode every context leaf with a known schema into native,
                     // version-portable fields. These objects no longer depend
                     // on same-version raw-record passthrough.
+                    let mut uses_legacy_mleader_context_base = false;
                     let modeled = if is_context_data {
                         match class_name.as_deref().unwrap_or("") {
                             "ACDB_ANNOTSCALEOBJECTCONTEXTDATA_CLASS" => {
                                 let class_version = reader.read_bit_short();
+                                let has_file_to_extension_dictionary =
+                                    read_context_file_dictionary_flag(
+                                        &mut reader,
+                                        self.obj_reader.version(),
+                                    );
                                 let is_default = reader.read_bit();
                                 let scale = reader.read_handle();
                                 Some((
                                     crate::objects::ObjectContextKind::AnnotScale,
                                     class_version,
+                                    has_file_to_extension_dictionary,
                                     is_default,
                                     scale,
                                 ))
                             }
                             "ACDB_BLKREFOBJECTCONTEXTDATA_CLASS" => {
                                 let class_version = reader.read_bit_short();
+                                let has_file_to_extension_dictionary =
+                                    read_context_file_dictionary_flag(
+                                        &mut reader,
+                                        self.obj_reader.version(),
+                                    );
                                 let is_default = reader.read_bit();
                                 let rotation = reader.read_bit_double();
                                 let insertion = crate::types::Vector3::new(
@@ -7089,12 +7115,18 @@ impl DwgDocumentBuilder {
                                         scale_factor,
                                     },
                                     class_version,
+                                    has_file_to_extension_dictionary,
                                     is_default,
                                     scale,
                                 ))
                             }
                             "ACDB_TEXTOBJECTCONTEXTDATA_CLASS" => {
                                 let class_version = reader.read_bit_short();
+                                let has_file_to_extension_dictionary =
+                                    read_context_file_dictionary_flag(
+                                        &mut reader,
+                                        self.obj_reader.version(),
+                                    );
                                 let is_default = reader.read_bit();
                                 let horizontal_mode = reader.read_bit_short();
                                 let rotation = reader.read_bit_double();
@@ -7115,12 +7147,18 @@ impl DwgDocumentBuilder {
                                         alignment,
                                     },
                                     class_version,
+                                    has_file_to_extension_dictionary,
                                     is_default,
                                     scale,
                                 ))
                             }
                             "ACDB_MTEXTOBJECTCONTEXTDATA_CLASS" => {
                                 let class_version = reader.read_bit_short();
+                                let has_file_to_extension_dictionary =
+                                    read_context_file_dictionary_flag(
+                                        &mut reader,
+                                        self.obj_reader.version(),
+                                    );
                                 let is_default = reader.read_bit();
                                 let attachment = reader.read_bit_long();
                                 // Binary stores x_axis_dir BEFORE ins_pt.
@@ -7179,31 +7217,84 @@ impl DwgDocumentBuilder {
                                         },
                                     ),
                                     class_version,
+                                    has_file_to_extension_dictionary,
                                     is_default,
                                     scale,
                                 ))
                             }
                             "ACDB_MLEADEROBJECTCONTEXTDATA_CLASS" => {
                                 let class_version = reader.read_bit_short();
-                                let is_default = reader.read_bit();
-                                let scale = reader.read_handle();
-                                let context = entities::read_multileader_annotation_context(
-                                    &mut reader,
-                                    self.obj_reader.version(),
-                                    self.obj_reader.dxf_version(),
-                                    true,
-                                );
+                                // AutoCAD's native MLeader context records use
+                                // the historical one-bit base (default flag),
+                                // while the generic ODA §20.4.89 layout has a
+                                // preceding file-to-extension-dictionary bit.
+                                // Try the native form first and fall back to
+                                // the two-bit ODA form when its bounded decode
+                                // rejects the payload (issue134/native reA).
+                                let mut legacy = reader.clone();
+                                let legacy_is_default = legacy.read_bit();
+                                let legacy_scale = legacy.read_handle();
+                                let legacy_context =
+                                    entities::read_multileader_annotation_context(
+                                        &mut legacy,
+                                        self.obj_reader.version(),
+                                        self.obj_reader.dxf_version(),
+                                        true,
+                                    );
+                                let legacy_ok = legacy.check_error().is_ok();
+                                let (
+                                    has_file_to_extension_dictionary,
+                                    is_default,
+                                    scale,
+                                    context,
+                                ) = if legacy_ok {
+                                    *reader = legacy;
+                                    uses_legacy_mleader_context_base = true;
+                                    (
+                                        true,
+                                        legacy_is_default,
+                                        legacy_scale,
+                                        legacy_context,
+                                    )
+                                } else {
+                                    let has_file_to_extension_dictionary =
+                                        read_context_file_dictionary_flag(
+                                            &mut reader,
+                                            self.obj_reader.version(),
+                                        );
+                                    let is_default = reader.read_bit();
+                                    let scale = reader.read_handle();
+                                    let context =
+                                        entities::read_multileader_annotation_context(
+                                            &mut reader,
+                                            self.obj_reader.version(),
+                                            self.obj_reader.dxf_version(),
+                                            true,
+                                        );
+                                    (
+                                        has_file_to_extension_dictionary,
+                                        is_default,
+                                        scale,
+                                        context,
+                                    )
+                                };
                                 Some((
                                     crate::objects::ObjectContextKind::MLeader(
                                         context,
                                     ),
                                     class_version,
+                                    has_file_to_extension_dictionary,
                                     is_default,
                                     scale,
                                 ))
                             }
                             "ACDB_MTEXTATTRIBUTEOBJECTCONTEXTDATA_CLASS" => {
                                 let class_version = reader.read_bit_short();
+                                let has_file_to_extension_dictionary =
+                                    read_context_file_dictionary_flag(
+                                        &mut reader,
+                                        self.obj_reader.version(),
+                                    );
                                 let is_default = reader.read_bit();
                                 let horizontal_mode = reader.read_bit_short();
                                 let rotation = reader.read_bit_double();
@@ -7235,6 +7326,11 @@ impl DwgDocumentBuilder {
                                     };
                                     let embedded_class_version =
                                         reader.read_bit_short();
+                                    let embedded_has_file_to_extension_dictionary =
+                                        read_context_file_dictionary_flag(
+                                            &mut reader,
+                                            self.obj_reader.version(),
+                                        );
                                     let embedded_is_default =
                                         reader.read_bit();
                                     let attachment = reader.read_bit_long();
@@ -7289,6 +7385,7 @@ impl DwgDocumentBuilder {
                                         embedded_no_xdic,
                                         embedded_has_binary_data,
                                         embedded_class_version,
+                                        embedded_has_file_to_extension_dictionary,
                                         embedded_is_default,
                                         crate::objects::MTextContext {
                                             attachment,
@@ -7312,6 +7409,7 @@ impl DwgDocumentBuilder {
                                         embedded_no_xdic,
                                         embedded_has_binary_data,
                                         embedded_class_version,
+                                        embedded_has_file_to_extension_dictionary,
                                         embedded_is_default,
                                         mtext,
                                     )| {
@@ -7342,6 +7440,8 @@ impl DwgDocumentBuilder {
                                             embedded_has_binary_data,
                                         class_version:
                                             embedded_class_version,
+                                        has_file_to_extension_dictionary:
+                                            embedded_has_file_to_extension_dictionary,
                                         is_default: embedded_is_default,
                                         scale: Handle::from(context_scale),
                                         mtext,
@@ -7359,12 +7459,18 @@ impl DwgDocumentBuilder {
                                         },
                                     ),
                                     class_version,
+                                    has_file_to_extension_dictionary,
                                     is_default,
                                     scale,
                                 ))
                             }
                             "ACDB_LEADEROBJECTCONTEXTDATA_CLASS" => {
                                 let class_version = reader.read_bit_short();
+                                let has_file_to_extension_dictionary =
+                                    read_context_file_dictionary_flag(
+                                        &mut reader,
+                                        self.obj_reader.version(),
+                                    );
                                 let is_default = reader.read_bit();
                                 let mut points = Vec::new();
                                 for _ in 0..reader.read_count() {
@@ -7388,12 +7494,18 @@ impl DwgDocumentBuilder {
                                         },
                                     ),
                                     class_version,
+                                    has_file_to_extension_dictionary,
                                     is_default,
                                     scale,
                                 ))
                             }
                             "ACDB_FCFOBJECTCONTEXTDATA_CLASS" => {
                                 let class_version = reader.read_bit_short();
+                                let has_file_to_extension_dictionary =
+                                    read_context_file_dictionary_flag(
+                                        &mut reader,
+                                        self.obj_reader.version(),
+                                    );
                                 let is_default = reader.read_bit();
                                 let location = crate::types::Vector3::new(
                                     reader.read_bit_double(),
@@ -7412,12 +7524,18 @@ impl DwgDocumentBuilder {
                                         horizontal_direction,
                                     },
                                     class_version,
+                                    has_file_to_extension_dictionary,
                                     is_default,
                                     scale,
                                 ))
                             }
                             "ACDB_HATCHSCALECONTEXTDATA_CLASS" => {
                                 let class_version = reader.read_bit_short();
+                                let has_file_to_extension_dictionary =
+                                    read_context_file_dictionary_flag(
+                                        &mut reader,
+                                        self.obj_reader.version(),
+                                    );
                                 let is_default = reader.read_bit();
                                 let scale = reader.read_handle();
                                 Some((
@@ -7428,12 +7546,18 @@ impl DwgDocumentBuilder {
                                         ),
                                     ),
                                     class_version,
+                                    has_file_to_extension_dictionary,
                                     is_default,
                                     scale,
                                 ))
                             }
                             "ACDB_HATCHVIEWCONTEXTDATA_CLASS" => {
                                 let class_version = reader.read_bit_short();
+                                let has_file_to_extension_dictionary =
+                                    read_context_file_dictionary_flag(
+                                        &mut reader,
+                                        self.obj_reader.version(),
+                                    );
                                 let is_default = reader.read_bit();
                                 let hatch = read_hatch_scale_context_data(
                                     &mut reader,
@@ -7459,6 +7583,7 @@ impl DwgDocumentBuilder {
                                         },
                                     ),
                                     class_version,
+                                    has_file_to_extension_dictionary,
                                     is_default,
                                     scale,
                                 ))
@@ -7470,6 +7595,11 @@ impl DwgDocumentBuilder {
                             | "ACDB_RADIMLGOBJECTCONTEXTDATA_CLASS"
                             | "ACDB_ORDDIMOBJECTCONTEXTDATA_CLASS" => {
                                 let class_version = reader.read_bit_short();
+                                let has_file_to_extension_dictionary =
+                                    read_context_file_dictionary_flag(
+                                        &mut reader,
+                                        self.obj_reader.version(),
+                                    );
                                 let is_default = reader.read_bit();
                                 // AcDbDimensionObjectContextData base (data stream).
                                 let def_pt = crate::types::Vector2::new(
@@ -7547,6 +7677,7 @@ impl DwgDocumentBuilder {
                                         },
                                     ),
                                     class_version,
+                                    has_file_to_extension_dictionary,
                                     is_default,
                                     scale,
                                 ))
@@ -7607,7 +7738,14 @@ impl DwgDocumentBuilder {
                         }
                     }
 
-                    if let Some((kind, class_version, is_default, scale)) = modeled {
+                    if let Some((
+                        kind,
+                        class_version,
+                        has_file_to_extension_dictionary,
+                        is_default,
+                        scale,
+                    )) = modeled
+                    {
                         if scale != 0 {
                             document
                                 .context_scales
@@ -7626,6 +7764,8 @@ impl DwgDocumentBuilder {
                             reactors,
                             xdictionary_handle,
                             class_version,
+                            has_file_to_extension_dictionary,
+                            uses_legacy_mleader_context_base,
                             is_default,
                             scale: Handle::from(scale),
                             kind,
@@ -8125,8 +8265,8 @@ fn decode_section_symbol(
 /// Decode the display fields of an `AcDbSectionViewStyle` (DWG class 795).
 ///
 /// `reader` must be positioned at the class-specific data (after
-/// `read_common_non_entity_data`). Fields are read in LibreDWG `dwg2.spec` order
-/// (cross-validated against a real sample): the `AcDbModelDocViewStyle` base
+/// `read_common_non_entity_data`). Native AutoCAD records establish the
+/// `AcDbModelDocViewStyle` base
 /// (version, description, modified-flag), then the section-view fields through
 /// `arrow_symbol_extension_length`. The DATA-stream reads and the interleaved
 /// handle reads use independent cursors, so reading the two null arrow-symbol
@@ -8162,7 +8302,7 @@ fn decode_section_view_style(
     let arrow_size = reader.read_bit_double();
     let _exclude = reader.read_variable_text();
     let arrow_extension = reader.read_bit_double();
-    // Continue through the DATA stream (LibreDWG order) to the late-stored
+    // Continue through the DATA stream to the late-stored
     // placement fields: identifier_position/offset and arrow_position are
     // physically at the record's tail, after the plane/bend/end/view-label
     // and hatch groups.

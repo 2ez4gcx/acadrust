@@ -637,7 +637,9 @@ impl DwgObjectReader {
             linetype_handle = reader.read_handle();
         }
 
-        // R2007+: material flags + shadow flags
+        // Native reC/b2007..b2018: material BB + shadow RC precede plotstyle
+        // BB in DATA. ODA §20.4.1 lists plotstyle earlier; its §20.4.2 handle
+        // order (material then plotstyle) agrees with these native records.
         let mut material_flags = 0u8;
         let mut material_handle: Option<u64> = None;
         let mut shadow_flags = 0u8;

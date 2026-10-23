@@ -182,8 +182,8 @@ impl DxfClassCollection {
     /// Append a class verbatim, preserving order and duplicate dxf names.
     ///
     /// The DWG classes section is *positional*: a custom object's type code is
-    /// `500 + index_in_section`, and readers (libredwg, AutoCAD) resolve the
-    /// class by that index, not by the stored number. Two distinct classes may
+    /// `500 + index_in_section`, and ODA §10 describes resolving each class by
+    /// its position in the section. Two distinct classes may
     /// legitimately share a dxf name (different C++ classes), so deduping by
     /// name — as [`add_or_update`](Self::add_or_update) does — drops one entry,
     /// shifts every later class's effective number, and makes those objects

@@ -2089,31 +2089,35 @@ fn build_acds_prototype(sab_entries: &[(Handle, Vec<u8>)]) -> Vec<u8> {
 
 /// Build the AcDsPrototype_1b file header ("jard", 128 bytes).
 ///
-/// Fourteen little-endian `RL` fields per the ODA datastore layout (field names
-/// follow libredwg's `acds.spec`), then zero padding to 128 bytes. A strict
-/// reader validates these; a wrong `ds_version` in particular
-/// made the whole section read as "invalid data". The segment ordering emitted
+/// Fourteen little-endian 32-bit fields in ODA §24.1 order, followed by zero
+/// padding to the declared header size. Data storage revision is distinct
+/// from the preceding version field. The segment ordering emitted
 /// by [`build_acds_prototype`] is fixed (segidx=1, _data_=2, thumbnail=3,
 /// datidx=4, schdat=5, schidx=6, search=7), so the `*_segidx` pointers are
 /// constant.
 fn build_acds_jard_header(segidx_offset: u32, file_size: u32) -> Vec<u8> {
-    let mut h = vec![0u8; 128];
-    h[0..4].copy_from_slice(b"jard"); // file_signature
-    h[4..8].copy_from_slice(&128u32.to_le_bytes()); // file_header_size
-    h[8..12].copy_from_slice(&2u32.to_le_bytes()); // unknown_1 (always 2)
-    h[12..16].copy_from_slice(&2u32.to_le_bytes()); // version (always 2)
-    h[16..20].copy_from_slice(&0u32.to_le_bytes()); // unknown_2 (always 0)
-    h[20..24].copy_from_slice(&1u32.to_le_bytes()); // ds_version (datastore revision)
-    h[24..28].copy_from_slice(&segidx_offset.to_le_bytes()); // segidx_offset
-    h[28..32].copy_from_slice(&0u32.to_le_bytes()); // segidx_unknown
-    h[32..36].copy_from_slice(&8u32.to_le_bytes()); // num_segidx (null + 7 segments)
-    h[36..40].copy_from_slice(&6u32.to_le_bytes()); // schidx_segidx
-    h[40..44].copy_from_slice(&4u32.to_le_bytes()); // datidx_segidx
-    h[44..48].copy_from_slice(&7u32.to_le_bytes()); // search_segidx
-    h[48..52].copy_from_slice(&0u32.to_le_bytes()); // prvsav_segidx
-    h[52..56].copy_from_slice(&file_size.to_le_bytes()); // file_size
-                                                         // Remaining bytes are zero (padding to file_header_size).
-    h
+    let fields = [
+        u32::from_le_bytes(*b"jard"), // file signature
+        128,                          // file header size
+        2,                            // unknown 1
+        2,                            // version
+        0,                            // unknown 2
+        1,                            // data storage revision
+        segidx_offset,                // segment index offset
+        0,                            // segment index unknown
+        8,                            // segment index entry count (null + 7)
+        6,                            // schema index segment index
+        4,                            // data index segment index
+        7,                            // search segment index
+        0,                            // previous save index
+        file_size,
+    ];
+    let mut header = Vec::with_capacity(fields[1] as usize);
+    for field in fields {
+        header.extend_from_slice(&field.to_le_bytes());
+    }
+    header.resize(fields[1] as usize, 0);
+    header
 }
 
 /// Build `_data_` segment id=2 containing one SAB record per ACIS entity.

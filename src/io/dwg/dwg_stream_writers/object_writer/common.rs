@@ -389,13 +389,12 @@ impl<'a> DwgObjectWriter<'a> {
         }
 
         // ── MAIN: entity mode (2 bits) ──
-        let entmode = if entity_mode_override == Some(1)
-            && owner_handle != self.paper_space_block_handle
-        {
-            0
-        } else {
-            entity_mode_override.unwrap_or_else(|| self.get_entity_mode(&owner_handle))
-        };
+        let entmode =
+            if entity_mode_override == Some(1) && owner_handle != self.paper_space_block_handle {
+                0
+            } else {
+                entity_mode_override.unwrap_or_else(|| self.get_entity_mode(&owner_handle))
+            };
         self.writer.write_2bits(entmode);
 
         // ── HANDLE: owner (if entmode == 0) ──
@@ -574,7 +573,9 @@ impl<'a> DwgObjectWriter<'a> {
                 .write_handle(DwgReferenceType::HardPointer, lt_handle.value());
         }
 
-        // ── R2007+: material flags + shadow flags ──
+        // Native reC/b2007..b2018 DATA order: material BB, shadow RC,
+        // plotstyle BB. Use the native order where ODA §20.4.1 differs;
+        // handle references still follow ODA §20.4.2.
         if self.version.r2007_plus() {
             let material_handle = material_handle.filter(|handle| self.is_writable_object(handle));
             let material_flags = if material_flags == 0b11 && material_handle.is_none() {
