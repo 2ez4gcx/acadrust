@@ -65,8 +65,8 @@ pub(crate) fn object_has_own_dxf_xdata(object: &crate::objects::ObjectType) -> b
         | ObjectType::UnderlayDefinition(_)
         | ObjectType::Field(_) => true,
         ObjectType::SortEntitiesTable(table) => table.raw_dxf_codes.is_some(),
-        // Unknown objects are written only from their raw groups.
-        ObjectType::Unknown { .. } => true,
+        // Unknown and Architecture objects are written only from their raw groups.
+        ObjectType::Unknown { .. } | ObjectType::Architecture(_) => true,
         _ => false,
     }
 }

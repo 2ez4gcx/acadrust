@@ -1408,6 +1408,7 @@ pub(crate) fn transform_invalidates_raw_record(entity: &EntityType) -> bool {
                 | ExtendedEntityData::Legacy(_)
                 | ExtendedEntityData::DynamicBlock(_)
                 | ExtendedEntityData::RegisteredClass(_)
+                | ExtendedEntityData::Architecture(_)
         ),
         _ => true,
     }

@@ -471,6 +471,8 @@ pub enum ObjectType {
     DgnLineStyle(DgnLineStyleObject),
     /// Fixed ACAD proxy-object schema.
     ProxyObject(ProxyObject),
+    /// AutoCAD Architecture non-graphical class (style, display rep, anchor, list).
+    Architecture(crate::classes::arch::ArchObject),
     /// Unknown object type (stored as raw data)
     Unknown {
         /// Object type name
@@ -523,6 +525,11 @@ impl ObjectType {
             ObjectType::RegisteredClass(value) => {
                 value.raw_dwg_data = None;
                 value.raw_dwg_version = None;
+            }
+            ObjectType::Architecture(value) => {
+                value.raw_dwg_data = None;
+                value.raw_dwg_version = None;
+                value.raw_dxf_codes = None;
             }
             ObjectType::Unknown {
                 raw_dxf_codes,
@@ -581,6 +588,7 @@ impl ObjectType {
             ObjectType::RegisteredClass(value) => value.handle,
             ObjectType::DgnLineStyle(value) => value.handle,
             ObjectType::ProxyObject(value) => value.handle,
+            ObjectType::Architecture(value) => value.handle,
             ObjectType::Unknown { handle, .. } => *handle,
         }
     }
@@ -620,6 +628,11 @@ impl ObjectType {
             (Self::RegisteredClass(value), Self::RegisteredClass(source)) => {
                 value.raw_dwg_data = source.raw_dwg_data.clone();
                 value.raw_dwg_version = source.raw_dwg_version;
+            }
+            (Self::Architecture(value), Self::Architecture(source)) => {
+                value.raw_dwg_data = source.raw_dwg_data.clone();
+                value.raw_dwg_version = source.raw_dwg_version;
+                value.raw_dxf_codes = source.raw_dxf_codes.clone();
             }
             (
                 Self::Unknown {
@@ -684,6 +697,7 @@ impl ObjectType {
             ObjectType::RegisteredClass(value) => value.handle = handle,
             ObjectType::DgnLineStyle(value) => value.handle = handle,
             ObjectType::ProxyObject(value) => value.handle = handle,
+            ObjectType::Architecture(value) => value.handle = handle,
             ObjectType::Unknown {
                 handle: old_handle, ..
             } => *old_handle = handle,
@@ -729,6 +743,7 @@ impl ObjectType {
             ObjectType::RegisteredClass(value) => value.handle.is_null(),
             ObjectType::DgnLineStyle(value) => value.handle.is_null(),
             ObjectType::ProxyObject(value) => value.handle.is_null(),
+            ObjectType::Architecture(value) => value.handle.is_null(),
             ObjectType::Unknown { handle, .. } => handle.is_null(),
         }
     }

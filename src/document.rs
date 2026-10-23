@@ -1701,14 +1701,13 @@ impl CadDocument {
             return false;
         }
         // Unsupported non-graphical objects preserved as raw bytes.
-        let raw_objects = self.objects.values().any(|o| {
-            matches!(
-                o,
-                crate::objects::ObjectType::Unknown {
-                    raw_dwg_data: Some(_),
-                    ..
-                }
-            )
+        let raw_objects = self.objects.values().any(|object| match object {
+            crate::objects::ObjectType::Unknown {
+                raw_dwg_data: Some(_),
+                ..
+            } => true,
+            crate::objects::ObjectType::Architecture(value) => value.raw_dwg_data.is_some(),
+            _ => false,
         });
         if raw_objects {
             return true;
@@ -1717,6 +1716,11 @@ impl CadDocument {
         let raw_entities = self.entities.iter().any(|e| {
             let raw = match e.as_ref() {
                 crate::entities::EntityType::Unknown(u) => u.raw_dwg_data.is_some(),
+                crate::entities::EntityType::Extended(entity) => matches!(
+                    &entity.data,
+                    crate::entities::ExtendedEntityData::Architecture(data)
+                        if data.raw_dwg_data.is_some()
+                ),
                 _ => false,
             };
             raw || !e.common().extended_data.raw_dwg_eed.is_empty()
@@ -4036,6 +4040,7 @@ impl CadDocument {
             ObjectType::RegisteredClass(value) => Some(value.owner),
             ObjectType::DgnLineStyle(value) => Some(value.owner),
             ObjectType::ProxyObject(value) => Some(value.owner),
+            ObjectType::Architecture(value) => Some(value.owner),
             ObjectType::Unknown { owner, .. } => Some(*owner),
             ObjectType::UnderlayDefinition(_) => None,
         }

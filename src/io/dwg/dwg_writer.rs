@@ -228,6 +228,21 @@ fn validate_unknown_records(document: &CadDocument) -> Result<()> {
                 entity.common().handle
             )));
         }
+        if let crate::entities::EntityType::Extended(entity) = entity {
+            if let crate::entities::ExtendedEntityData::Architecture(data) = &entity.data {
+                if data.raw_dwg_data.is_none()
+                    || data
+                        .dwg_source_version
+                        .is_some_and(|version| version != document.version)
+                    || document.version == DxfVersion::AC1009
+                {
+                    return Err(DxfError::NotImplemented(format!(
+                        "Cannot encode Architecture entity {} at handle {} as DWG {:?}: compatible raw DWG data is required",
+                        data.dxf_name, entity.common.handle, document.version
+                    )));
+                }
+            }
+        }
         if let crate::entities::EntityType::Unknown(entity) = entity {
             if entity.raw_dwg_data.is_none()
                 || entity
@@ -243,6 +258,19 @@ fn validate_unknown_records(document: &CadDocument) -> Result<()> {
         }
     }
     for object in document.objects.values() {
+        if let crate::objects::ObjectType::Architecture(object) = object {
+            if object.raw_dwg_data.is_none()
+                || object
+                    .raw_dwg_version
+                    .is_some_and(|version| version != document.version)
+                || document.version == DxfVersion::AC1009
+            {
+                return Err(DxfError::NotImplemented(format!(
+                    "Cannot encode Architecture object {} at handle {} as DWG {:?}: compatible raw DWG data is required",
+                    object.dxf_name, object.handle, document.version
+                )));
+            }
+        }
         if let crate::objects::ObjectType::Unknown {
             type_name,
             handle,

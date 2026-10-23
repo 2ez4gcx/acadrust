@@ -3802,9 +3802,7 @@ impl<'a> SectionReader<'a> {
                         self.skip_entity()?;
                     }
                     _ => {
-                        // Read as unknown entity in block — common fields preserved
-                        let entity = self.read_unknown_entity(&pair.value_string)?;
-                        block_entities.push(EntityType::Unknown(entity));
+                        block_entities.push(self.read_custom_entity(&pair.value_string)?);
                     }
                 }
             }
@@ -4134,16 +4132,16 @@ impl<'a> SectionReader<'a> {
                             self.skip_entity()?;
                         }
                         _ => {
-                            // Read as unknown entity — common fields preserved, entity-specific codes discarded
-                            document.notifications.notify(
-                                crate::notification::NotificationType::NotImplemented,
-                                format!(
-                                    "Entity not supported, read as UnknownEntity: {}",
-                                    entity_type
-                                ),
-                            );
-                            let entity = self.read_unknown_entity(&entity_type)?;
-                            let _ = document.add_entity(EntityType::Unknown(entity));
+                            if !crate::classes::arch::is_architecture_name(&entity_type) {
+                                document.notifications.notify(
+                                    crate::notification::NotificationType::NotImplemented,
+                                    format!(
+                                        "Entity not supported, read as UnknownEntity: {}",
+                                        entity_type
+                                    ),
+                                );
+                            }
+                            let _ = document.add_entity(self.read_custom_entity(&entity_type)?);
                         }
                     }
                     Ok(())
@@ -7010,31 +7008,36 @@ impl<'a> SectionReader<'a> {
                                 .insert(object.handle, ObjectType::RegisteredClass(object));
                         }
                         _ => {
-                            document.notifications.notify(
-                                crate::notification::NotificationType::NotImplemented,
-                                format!(
-                                    "Object not supported, read as Unknown: {}",
-                                    pair.value_string
-                                ),
-                            );
                             let type_name = pair.value_string.clone();
+                            if !crate::classes::arch::is_architecture_name(&type_name) {
+                                document.notifications.notify(
+                                    crate::notification::NotificationType::NotImplemented,
+                                    format!("Object not supported, read as Unknown: {type_name}"),
+                                );
+                            }
                             let (handle, owner, raw_codes) = self.read_unknown_object_full()?;
-                            document.objects.insert(
-                                handle,
+                            let raw_dxf_codes = if raw_codes.is_empty() {
+                                None
+                            } else {
+                                Some(raw_codes)
+                            };
+                            let object = if crate::classes::arch::is_architecture_name(&type_name) {
+                                let mut arch =
+                                    crate::classes::arch::ArchObject::new(type_name, handle, owner);
+                                arch.raw_dxf_codes = raw_dxf_codes;
+                                ObjectType::Architecture(arch)
+                            } else {
                                 ObjectType::Unknown {
                                     type_name,
                                     handle,
                                     owner,
-                                    raw_dxf_codes: if raw_codes.is_empty() {
-                                        None
-                                    } else {
-                                        Some(raw_codes)
-                                    },
+                                    raw_dxf_codes,
                                     raw_dwg_data: None,
                                     raw_dwg_handle_bits: 0,
                                     raw_dwg_version: None,
-                                },
-                            );
+                                }
+                            };
+                            document.objects.insert(handle, object);
                         }
                     }
                     Ok(())
@@ -11591,6 +11594,31 @@ impl<'a> SectionReader<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Read an entity that is not one of the built-in DXF types.
+    ///
+    /// Architecture classes become editable [`ExtendedEntityData::Architecture`]
+    /// records. Everything else stays an [`UnknownEntity`].
+    fn read_custom_entity(&mut self, dxf_name: &str) -> Result<EntityType> {
+        let entity = self.read_unknown_entity(dxf_name)?;
+        if !crate::classes::arch::is_architecture_name(dxf_name) {
+            return Ok(EntityType::Unknown(entity));
+        }
+        let mut data = crate::classes::arch::ArchEntityData::from_parts(
+            entity.dxf_name.clone(),
+            String::new(),
+            entity.common.graphic_data.as_deref(),
+        );
+        data.raw_dxf_codes = entity.raw_dxf_codes;
+        data.dwg_type_code = entity.dwg_type_code;
+        data.dwg_handle_bits = entity.dwg_handle_bits;
+        data.raw_dwg_data = entity.raw_dwg_data;
+        data.dwg_source_version = entity.dwg_source_version;
+        Ok(EntityType::Extended(Box::new(ExtendedEntity {
+            common: entity.common,
+            data: ExtendedEntityData::Architecture(data),
+        })))
     }
 
     /// Read an unknown entity, capturing common data and preserving

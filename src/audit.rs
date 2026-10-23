@@ -742,6 +742,7 @@ impl CadDocument {
                 ObjectType::Dictionary(value) => value.owner,
                 ObjectType::DictionaryWithDefault(value) => value.owner,
                 ObjectType::Unknown { owner, .. } => *owner,
+                ObjectType::Architecture(value) => value.owner,
                 _ => Handle::NULL,
             };
             if !owner.is_null() {

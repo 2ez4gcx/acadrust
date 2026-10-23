@@ -1,10 +1,15 @@
 //! DXF class definitions (CLASSES section)
 //!
+//! [`arch`] is the AutoCAD Architecture (AEC) class catalog and the geometry
+//! model used to read, write, build, and modify those entities and objects.
+
 //! Classes define custom object types registered in the DXF drawing.
 //! Each class maps a DXF entity/object name to its C++ class name and
 //! application that registered it.
 //!
 //! Corresponds to the classic `DxfClass` and `DxfClassCollection`.
+
+pub mod arch;
 
 use std::collections::HashMap;
 

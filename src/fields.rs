@@ -152,6 +152,7 @@ fn owner_of(doc: &CadDocument, h: Handle) -> Option<Handle> {
     match doc.objects.get(&h)? {
         ObjectType::Dictionary(d) => Some(d.owner),
         ObjectType::Unknown { owner, .. } => Some(*owner),
+        ObjectType::Architecture(object) => Some(object.owner),
         _ => None,
     }
 }

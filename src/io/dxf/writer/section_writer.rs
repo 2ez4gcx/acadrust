@@ -160,6 +160,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                         continue;
                     }
                 }
+                ObjectType::Architecture(object) => {
+                    if object.raw_dxf_codes.is_none() {
+                        continue;
+                    }
+                }
                 ObjectType::Associative(assoc) => {
                     if is_unrestorable_assoc_object(&assoc.dxf_name) {
                         continue;
@@ -2370,6 +2375,16 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 return Ok(());
             }
         }
+        if let ExtendedEntityData::Architecture(data) = &e.data {
+            if let Some(raw) = &data.raw_dxf_codes {
+                self.writer.write_entity_type(&data.dxf_name)?;
+                self.write_common_entity_data(&e.common, owner)?;
+                for (code, item) in raw {
+                    self.writer.write_string(*code, item)?;
+                }
+                return Ok(());
+            }
+        }
         if let ExtendedEntityData::RegisteredClass(data) = &e.data {
             if data.payload.bit_count != 0 {
                 self.writer.write_entity_type("ACAD_PROXY_ENTITY")?;
@@ -2593,6 +2608,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.write_semantic_properties(&data.properties)?;
                 self.write_proxy_references_dxf(&data.object_ids)?;
             }
+            ExtendedEntityData::Architecture(_) => {}
         }
         Ok(())
     }
@@ -6001,6 +6017,14 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 ObjectType::RegisteredClass(obj) => self.write_registered_class_object_dxf(obj)?,
                 ObjectType::DgnLineStyle(obj) => self.write_dgn_line_style_object_dxf(obj)?,
                 ObjectType::ProxyObject(obj) => self.write_proxy_object_dxf(obj)?,
+                ObjectType::Architecture(obj) => {
+                    self.write_unknown_object(
+                        &obj.dxf_name,
+                        obj.handle,
+                        obj.owner,
+                        obj.raw_dxf_codes.as_deref(),
+                    )?;
+                }
                 ObjectType::Unknown {
                     type_name,
                     handle,

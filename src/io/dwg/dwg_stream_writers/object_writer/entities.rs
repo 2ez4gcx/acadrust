@@ -159,6 +159,9 @@ impl<'a> DwgObjectWriter<'a> {
                         .raw_dwg_data
                         .as_ref()
                         .map(|raw| (raw, data.raw_dwg_handle_bits, data.raw_dwg_version)),
+                    ExtendedEntityData::Architecture(data) => data.raw_dwg_data.as_ref().map(|raw| {
+                        (raw, data.dwg_handle_bits, data.dwg_source_version)
+                    }),
                     _ => None,
                 };
                 if let Some((raw, handle_bits, version)) = raw {
@@ -257,6 +260,8 @@ impl<'a> DwgObjectWriter<'a> {
                     common::OBJ_PROXY_ENTITY
                 }
             }
+            // Written earlier from the original class record.
+            ExtendedEntityData::Architecture(_) => return,
         };
 
         if let ExtendedEntityData::Proxy(data) = &e.data {
@@ -493,6 +498,7 @@ impl<'a> DwgObjectWriter<'a> {
                     self.write_registered_payload(&payload, &data.object_ids);
                 }
             }
+            ExtendedEntityData::Architecture(_) => {}
         }
         self.register_object(e.common.handle);
     }

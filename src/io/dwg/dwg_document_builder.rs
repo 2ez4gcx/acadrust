@@ -5590,13 +5590,36 @@ impl DwgDocumentBuilder {
                                 .cloned()
                                 .filter(|n| !n.is_empty())
                                 .unwrap_or_else(|| format!("DWG_TYPE_{}", type_code));
-                            let mut e = UnknownEntity::new(name);
-                            e.common = entity_common;
-                            e.dwg_type_code = type_code;
-                            e.dwg_handle_bits = reader.get_handle_bits();
-                            e.raw_dwg_data = Some(reader.raw_merged_data());
-                            e.dwg_source_version = Some(document.version);
-                            let _ = document.add_entity(EntityType::Unknown(e));
+                            if crate::classes::arch::is_architecture_name(&name) {
+                                let cpp = class_names
+                                    .cpp
+                                    .get(&type_code)
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let mut data = crate::classes::arch::ArchEntityData::from_parts(
+                                    name,
+                                    cpp,
+                                    entity_common.graphic_data.as_deref(),
+                                );
+                                data.dwg_type_code = type_code;
+                                data.dwg_handle_bits = reader.get_handle_bits();
+                                data.raw_dwg_data = Some(reader.raw_merged_data());
+                                data.dwg_source_version = Some(document.version);
+                                let _ = document.add_entity(EntityType::Extended(Box::new(
+                                    ExtendedEntity {
+                                        common: entity_common,
+                                        data: ExtendedEntityData::Architecture(data),
+                                    },
+                                )));
+                            } else {
+                                let mut e = UnknownEntity::new(name);
+                                e.common = entity_common;
+                                e.dwg_type_code = type_code;
+                                e.dwg_handle_bits = reader.get_handle_bits();
+                                e.raw_dwg_data = Some(reader.raw_merged_data());
+                                e.dwg_source_version = Some(document.version);
+                                let _ = document.add_entity(EntityType::Unknown(e));
+                            }
                         }
                     }
                 }
@@ -7626,8 +7649,31 @@ impl DwgDocumentBuilder {
                         }
                         let type_name =
                             Self::unknown_object_type_name(class_names, raw_type_code);
-                        document.objects.insert(
-                            Handle::from(handle),
+                        let object = if crate::classes::arch::is_architecture_name(&type_name) {
+                            let mut arch = crate::classes::arch::ArchObject::new(
+                                type_name,
+                                Handle::from(handle),
+                                owner_handle,
+                            );
+                            arch.cpp_class_name = class_names
+                                .cpp
+                                .get(&raw_type_code)
+                                .cloned()
+                                .filter(|name| !name.is_empty())
+                                .unwrap_or(arch.cpp_class_name);
+                            arch.reactors = non_entity_data
+                                .reactors
+                                .iter()
+                                .copied()
+                                .map(Handle::from)
+                                .collect();
+                            arch.xdictionary_handle =
+                                non_entity_data.xdictionary_handle.map(Handle::from);
+                            arch.raw_dwg_data = Some(raw_data);
+                            arch.raw_dwg_handle_bits = raw_handle_bits;
+                            arch.raw_dwg_version = Some(document.version);
+                            crate::objects::ObjectType::Architecture(arch)
+                        } else {
                             crate::objects::ObjectType::Unknown {
                                 type_name,
                                 handle: Handle::from(handle),
@@ -7636,8 +7682,9 @@ impl DwgDocumentBuilder {
                                 raw_dwg_data: Some(raw_data),
                                 raw_dwg_handle_bits: raw_handle_bits,
                                 raw_dwg_version: Some(document.version),
-                            },
-                        );
+                            }
+                        };
+                        document.objects.insert(Handle::from(handle), object);
                     }
                 }
             }

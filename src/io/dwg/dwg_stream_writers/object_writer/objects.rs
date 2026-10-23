@@ -469,6 +469,16 @@ impl<'a> DwgObjectWriter<'a> {
             }
             ObjectType::DgnLineStyle(value) => self.write_dgn_line_style_object(value),
             ObjectType::ProxyObject(value) => self.write_proxy_object(value),
+            ObjectType::Architecture(value) => {
+                if !self.raw_excluded_handles.contains(&value.handle.value()) {
+                    if let Some(raw) = &value.raw_dwg_data {
+                        if self.raw_passthrough_compatible(value.raw_dwg_version) {
+                            self.register_raw_object(value.handle, raw, value.raw_dwg_handle_bits);
+                            return;
+                        }
+                    }
+                }
+            }
             ObjectType::VisualStyle(v) => self.write_visual_style(v),
             ObjectType::Material(m) => self.write_material(m),
             ObjectType::TableContent(t) => self.write_table_content_object(t),
@@ -1506,6 +1516,10 @@ impl<'a> DwgObjectWriter<'a> {
                 }
                 ObjectType::TableStyle(_) => {
                     self.document.classes.get_by_name("TABLESTYLE").is_some()
+                }
+                ObjectType::Architecture(value) => {
+                    value.raw_dwg_data.is_some()
+                        && self.raw_passthrough_compatible(value.raw_dwg_version)
                 }
                 ObjectType::Unknown {
                     type_name,
