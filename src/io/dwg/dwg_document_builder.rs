@@ -5202,6 +5202,10 @@ impl DwgDocumentBuilder {
                     e.dwg_mode = data.mode;
                     e.is_paper_space = data.mode == 1;
                     e.lock_aspect = data.lock_aspect;
+                    // DWG keeps no source application; the object's storage
+                    // names it.
+                    e.source_application =
+                        crate::entities::ole_user_type(&e.encoded_payload()).unwrap_or_default();
                     let _ = document.add_entity(EntityType::Ole2Frame(Box::new(e)));
                 }
 

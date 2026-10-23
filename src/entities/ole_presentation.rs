@@ -74,6 +74,18 @@ pub fn extract_presentation(data: &[u8]) -> Option<OlePresentation> {
     scan_bmp(data).map(OlePresentation::Raster)
 }
 
+/// The object's user type ("Adobe Photoshop Image", "Paintbrush Picture"),
+/// read from the `\x01CompObj` stream of a raw OLE2FRAME data blob: the
+/// first length-prefixed ANSI string after the 28-byte stream header.
+pub fn ole_user_type(data: &[u8]) -> Option<String> {
+    let cfb = find_cfb(data).and_then(Cfb::parse)?;
+    let stream = cfb.stream("\u{1}CompObj")?;
+    let len = u32::from_le_bytes(stream.get(28..32)?.try_into().ok()?) as usize;
+    let text = stream.get(32..32 + len)?;
+    let text = text.split(|b| *b == 0).next().unwrap_or_default();
+    (!text.is_empty()).then(|| text.iter().map(|&b| char::from(b)).collect())
+}
+
 /// Strip the `\x01Ole10Native` u32 length prefix; other streams pass through.
 fn native_body<'a>(name: &str, stream: &'a [u8]) -> &'a [u8] {
     if name == "\u{1}Ole10Native" && stream.len() > 4 {
