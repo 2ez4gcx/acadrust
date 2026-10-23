@@ -25,7 +25,7 @@ use crate::xdata::{ExtendedData, ExtendedDataRecord, XDataValue};
 /// values. In the [`Matrix4`] (column-vector) convention that is one
 /// matrix row per group of four, translation last:
 /// `[m00, m01, m02, Tx, m10, m11, m12, Ty, m20, m21, m22, Tz]`.
-/// AutoCAD writes an XCLIP of an insert at (5, 5) as
+/// ACAD writes an XCLIP of an insert at (5, 5) as
 /// `[1, 0, 0, -5, 0, 1, 0, -5, 0, 0, 1, 0]`; reading it as four columns of
 /// three turns `y` into a constant and collapses the boundary to a line.
 fn matrix_from_dxf_4x3(v: &[f64]) -> Matrix4 {
@@ -1037,7 +1037,7 @@ impl DynamicDxfFields {
             .unwrap_or(Handle::NULL)
     }
 
-    /// Vector stored as 140/141/142 (AutoCAD) or 140/150/160 (older acadrust output).
+    /// Vector stored as 140/141/142 (ACAD) or 140/150/160 (older acadrust output).
     fn vector_140(&self, section: &str) -> Vector3 {
         let pick = |a: i32, b: i32| {
             if self.values(section, a).is_empty() {
@@ -1067,7 +1067,7 @@ fn dynamic_dxf_eval(fields: &DynamicDxfFields) -> BlockEvalExpression {
         // No 70 group means "no value" (-9999).
         .unwrap_or(-9999);
     let value = match value_code {
-        // AutoCAD writes a real value as 140; older acadrust output used 40.
+        // ACAD writes a real value as 140; older acadrust output used 40.
         40 if !fields.values(section, 140).is_empty() => {
             BlockEvalValue::Real(fields.f64(section, 140))
         }
@@ -5205,7 +5205,7 @@ impl<'a> SectionReader<'a> {
                 }
             }
             "ACDB_MTEXTOBJECTCONTEXTDATA_CLASS" => {
-                // AutoCAD: no subclass marker, fields follow the annotation
+                // ACAD: no subclass marker, fields follow the annotation
                 // scale groups, 10 = x-axis direction, 11 = insertion point.
                 // Older acadrust output: an AcDbMTextObjectContextData marker
                 // with the two points the other way round.
@@ -6834,7 +6834,7 @@ impl<'a> SectionReader<'a> {
                                 .objects
                                 .insert(obj.handle, ObjectType::DataObject(obj));
                         }
-                        // AutoCAD emits the record name with an underscore; accept
+                        // ACAD emits the record name with an underscore; accept
                         // both spellings so the INSERT xclip chain resolves.
                         "SPATIAL_FILTER" | "SPATIALFILTER" => {
                             if let Some(obj) = self.read_spatial_filter()? {
@@ -7025,7 +7025,7 @@ impl<'a> SectionReader<'a> {
                                 let mut arch =
                                     crate::classes::arch::ArchObject::new(type_name, handle, owner);
                                 arch.raw_dxf_codes = raw_dxf_codes;
-                                ObjectType::Architecture(arch)
+                                ObjectType::Arch(arch)
                             } else {
                                 ObjectType::Unknown {
                                     type_name,
@@ -9722,7 +9722,7 @@ impl<'a> SectionReader<'a> {
                 // (0 = plain dash — must NOT materialize complex data, or every
                 // dashed linetype turns "complex" and renders nothing, #314),
                 // 75 = shape number. These were read swapped AND
-                // unconditionally, so AutoCAD's plain `74 0` gave every element
+                // unconditionally, so ACAD's plain `74 0` gave every element
                 // a Shape{0} complex record.
                 74 => {
                     if let Some(last) = linetype.elements.last_mut() {
@@ -11598,7 +11598,7 @@ impl<'a> SectionReader<'a> {
 
     /// Read an entity that is not one of the built-in DXF types.
     ///
-    /// Architecture classes become editable [`ExtendedEntityData::Architecture`]
+    /// Arch classes become editable [`ExtendedEntityData::Arch`]
     /// records. Everything else stays an [`UnknownEntity`].
     fn read_custom_entity(&mut self, dxf_name: &str) -> Result<EntityType> {
         let entity = self.read_unknown_entity(dxf_name)?;
@@ -11617,7 +11617,7 @@ impl<'a> SectionReader<'a> {
         data.dwg_source_version = entity.dwg_source_version;
         Ok(EntityType::Extended(Box::new(ExtendedEntity {
             common: entity.common,
-            data: ExtendedEntityData::Architecture(data),
+            data: ExtendedEntityData::Arch(data),
         })))
     }
 
@@ -22353,7 +22353,7 @@ mod tests {
         }
     }
 
-    /// The inverse block transform AutoCAD 2013 (AC1027) writes for an XCLIP
+    /// The inverse block transform ACAD 2013 (AC1027) writes for an XCLIP
     /// of an insert at (5, 5): one matrix row per group of four, translation
     /// last. Source: ezdxf `exploration/BlockClipped.dxf`, SPATIAL_FILTER #C1.
     #[test]
@@ -22381,7 +22381,7 @@ mod tests {
         assert!(p.y.abs() < 1e-9, "y={}", p.y);
     }
 
-    /// Reads a complete AutoCAD SPATIAL_FILTER object (values from the same
+    /// Reads a complete ACAD SPATIAL_FILTER object (values from the same
     /// AC1027 file) through the DXF reader.
     #[test]
     fn spatial_filter_from_native_dxf_keeps_its_boundary_area() {
@@ -22397,7 +22397,7 @@ mod tests {
             .write_to_vec()
             .unwrap();
         let text = String::from_utf8(bytes).unwrap();
-        // Swap the written object body for AutoCAD's: keep every line up to the
+        // Swap the written object body for ACAD's: keep every line up to the
         // SPATIAL_FILTER type line and from its next group-0 line on.
         let lines: Vec<&str> = text.lines().collect();
         let start = (1..lines.len())

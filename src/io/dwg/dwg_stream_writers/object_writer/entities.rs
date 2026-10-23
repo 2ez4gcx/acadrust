@@ -16,7 +16,72 @@ use crate::types::{Color, Handle, LineWeight, Vector2, Vector3};
 use super::common;
 use super::DwgObjectWriter;
 
+struct ArchitectureRecordBody {
+    type_code: i16,
+    has_ds_data: bool,
+    payload: crate::objects::ProxyPayload,
+    text: crate::objects::ProxyPayload,
+    references: Vec<crate::objects::ProxyObjectReference>,
+}
+
 impl<'a> DwgObjectWriter<'a> {
+    fn architecture_record_body(
+        data: &crate::classes::arch::ArchEntityData,
+        version: crate::types::DxfVersion,
+    ) -> crate::error::Result<ArchitectureRecordBody> {
+        use crate::io::dwg::dwg_stream_readers::object_reader::{
+            entities::read_proxy_payload, DwgObjectReader,
+        };
+
+        let raw = data.raw_dwg_data.as_deref().ok_or_else(|| {
+            crate::error::DxfError::NotImplemented(format!(
+                "Arch entity {} has no DWG class body",
+                data.dxf_name
+            ))
+        })?;
+        let objects = DwgObjectReader::new(Vec::new(), version, Default::default())?;
+        let (type_code, mut reader) = objects.read_raw_record(raw, data.dwg_handle_bits)?;
+        let common = objects.read_common_entity_data(&mut reader, type_code);
+        reader.check_error()?;
+        let (payload, text, references) = read_proxy_payload(&mut reader, common.common.handle);
+        reader.check_error()?;
+        Ok(ArchitectureRecordBody {
+            type_code,
+            has_ds_data: common.has_ds_data,
+            payload,
+            text,
+            references,
+        })
+    }
+
+    pub(crate) fn validate_architecture_record(
+        data: &crate::classes::arch::ArchEntityData,
+        version: crate::types::DxfVersion,
+    ) -> crate::error::Result<()> {
+        Self::architecture_record_body(data, version).map(|_| ())
+    }
+
+    fn write_architecture_entity(
+        &mut self,
+        entity: &ExtendedEntity,
+        data: &crate::classes::arch::ArchEntityData,
+    ) {
+        let body = Self::architecture_record_body(data, self.dxf_version)
+            .expect("Arch class record was validated before writing");
+        let type_code = self.class_type_code(&data.dxf_name, body.type_code);
+        self.pending_has_ds_data = body.has_ds_data;
+        self.entity_preamble(type_code, &entity.common);
+        // The opaque class body is independent of the common entity header.
+        // Decode its handle stream so relative references survive a new handle.
+        self.write_registered_payload(&body.payload, &body.references);
+        let text = body.text.data();
+        for bit in 0..body.text.bit_count as usize {
+            self.writer
+                .write_text_bit(text[bit / 8] & (0x80 >> (bit % 8)) != 0);
+        }
+        self.register_object(entity.common.handle);
+    }
+
     /// Encode only a REGION body for a construction-history profile. Common
     /// entity data, database handles and external AcDs records do not belong
     /// to an embedded entity, so use the shared inline modeler writer.
@@ -83,12 +148,15 @@ impl<'a> DwgObjectWriter<'a> {
                 && matches!(entity, EntityType::MText(text) if text.background_fill_flags & 0x11 == 0x10);
             let stale_paper_owner = entity.common().entity_mode == Some(1)
                 && entity.common().owner_handle != self.paper_space_block_handle;
+            let architecture = matches!(entity, EntityType::Extended(entity)
+                if matches!(&entity.data, ExtendedEntityData::Arch(_)));
             let ok = self.version.r2004_plus()
                 && raw.version == self.dxf_version
                 && !self.raw_excluded_handles.contains(&handle.value())
                 && !compound
                 && !frame_only_mtext
                 && !stale_paper_owner
+                && !architecture
                 && !(acis && self.version.r2013_plus(self.dxf_version))
                 && !self.owner_overrides.contains_key(&handle)
                 // EED naming an application this drawing has no APPID for
@@ -150,6 +218,10 @@ impl<'a> DwgObjectWriter<'a> {
             EntityType::SectionSymbol(e) => self.write_section_symbol(e),
             EntityType::ViewBorder(e) => self.write_view_border(e),
             EntityType::Extended(e) => {
+                if let ExtendedEntityData::Arch(data) = &e.data {
+                    self.write_architecture_entity(e, data);
+                    return;
+                }
                 let raw = match &e.data {
                     ExtendedEntityData::Format(data) => data
                         .raw_dwg_data
@@ -159,9 +231,6 @@ impl<'a> DwgObjectWriter<'a> {
                         .raw_dwg_data
                         .as_ref()
                         .map(|raw| (raw, data.raw_dwg_handle_bits, data.raw_dwg_version)),
-                    ExtendedEntityData::Architecture(data) => data.raw_dwg_data.as_ref().map(|raw| {
-                        (raw, data.dwg_handle_bits, data.dwg_source_version)
-                    }),
                     _ => None,
                 };
                 if let Some((raw, handle_bits, version)) = raw {
@@ -261,7 +330,7 @@ impl<'a> DwgObjectWriter<'a> {
                 }
             }
             // Written earlier from the original class record.
-            ExtendedEntityData::Architecture(_) => return,
+            ExtendedEntityData::Arch(_) => return,
         };
 
         if let ExtendedEntityData::Proxy(data) = &e.data {
@@ -498,7 +567,7 @@ impl<'a> DwgObjectWriter<'a> {
                     self.write_registered_payload(&payload, &data.object_ids);
                 }
             }
-            ExtendedEntityData::Architecture(_) => {}
+            ExtendedEntityData::Arch(_) => {}
         }
         self.register_object(e.common.handle);
     }
@@ -932,7 +1001,7 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit_long(e.background_fill_flags);
 
             // A frame alone does not carry fill properties in the R2018 layout.
-            // Including them shifts the annotative/column fields in AutoCAD.
+            // Including them shifts the annotative/column fields in ACAD.
             if (e.background_fill_flags & 0x01) != 0 {
                 // Background scale factor BD 45
                 self.writer.write_bit_double(e.background_scale);
@@ -4286,7 +4355,7 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_cm_color(&e.line_color);
 
         // 341 LeaderLineTypeID (handle) - HardPointer. Without one, ByBlock:
-        // AutoCAD's default for a multileader's leader lines.
+        // ACAD's default for a multileader's leader lines.
         let lt = e
             .line_type_handle
             .filter(|handle| !handle.is_null())
@@ -4408,7 +4477,7 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_double(e.scale_factor);
 
         // R2010+: attachment directions — order is dir(271), bottom(272),
-        // top(273) per AutoCAD, NOT the dir/top/bottom of the
+        // top(273) per ACAD, NOT the dir/top/bottom of the
         // public libredwg spec.
         if self.version.r2010_plus() {
             // 271 Text attachment direction (BS)
@@ -5758,7 +5827,7 @@ impl<'a> DwgObjectWriter<'a> {
 
         if wireframe_present {
             // Wireframe anchor: the entity's stored reference point (bbox
-            // centre in AutoCAD-authored files), falling back to the first
+            // centre in ACAD-authored files), falling back to the first
             // wire vertex.
             let anchor = if acis.wireframe_point_present || point != Vector3::ZERO {
                 point

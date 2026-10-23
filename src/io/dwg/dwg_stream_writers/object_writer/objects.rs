@@ -267,7 +267,7 @@ fn encode_xrecord_entries(
 }
 
 /// Flatten a [`Matrix4`](crate::types::Matrix4) into the 12 doubles of a
-/// spatial-filter transform, as AutoCAD stores them in DWG and DXF code 40:
+/// spatial-filter transform, as ACAD stores them in DWG and DXF code 40:
 /// one matrix row per group of four, translation last; the bottom row is
 /// dropped.
 fn matrix_to_dxf_4x3(m: &crate::types::Matrix4) -> [f64; 12] {
@@ -469,15 +469,8 @@ impl<'a> DwgObjectWriter<'a> {
             }
             ObjectType::DgnLineStyle(value) => self.write_dgn_line_style_object(value),
             ObjectType::ProxyObject(value) => self.write_proxy_object(value),
-            ObjectType::Architecture(value) => {
-                if !self.raw_excluded_handles.contains(&value.handle.value()) {
-                    if let Some(raw) = &value.raw_dwg_data {
-                        if self.raw_passthrough_compatible(value.raw_dwg_version) {
-                            self.register_raw_object(value.handle, raw, value.raw_dwg_handle_bits);
-                            return;
-                        }
-                    }
-                }
+            ObjectType::Arch(value) => {
+                self.write_architecture_object(value);
             }
             ObjectType::VisualStyle(v) => self.write_visual_style(v),
             ObjectType::Material(m) => self.write_material(m),
@@ -1517,7 +1510,7 @@ impl<'a> DwgObjectWriter<'a> {
                 ObjectType::TableStyle(_) => {
                     self.document.classes.get_by_name("TABLESTYLE").is_some()
                 }
-                ObjectType::Architecture(value) => {
+                ObjectType::Arch(value) => {
                     value.raw_dwg_data.is_some()
                         && self.raw_passthrough_compatible(value.raw_dwg_version)
                 }
@@ -1602,7 +1595,7 @@ impl<'a> DwgObjectWriter<'a> {
             // Dictionary item handles ALWAYS use reference code 2 (soft owner),
             // regardless of the hard-owner flag. The hard/soft distinction is
             // carried only by the is_hardowner byte (and the DXF 350/360 group),
-            // NOT the DWG handle code. Writing code 3 here makes AutoCAD reject
+            // NOT the DWG handle code. Writing code 3 here makes ACAD reject
             // every entry (eWrongObjectType) and discard the whole dictionary.
             // (libredwg dwg.spec: HANDLE_VECTOR_N(itemhandles, numitems, 2, 0).)
             self.writer
@@ -1643,7 +1636,7 @@ impl<'a> DwgObjectWriter<'a> {
         for (name, handle) in &entries {
             self.writer.write_variable_text(name);
             // Dictionary item handles always use reference code 2 (see
-            // write_dictionary) — never code 3, which AutoCAD rejects.
+            // write_dictionary) — never code 3, which ACAD rejects.
             self.writer
                 .write_handle(DwgReferenceType::SoftOwnership, handle.value());
 
@@ -2623,13 +2616,13 @@ impl<'a> DwgObjectWriter<'a> {
             // Sort handles are sort-order keys, NOT object references — they use
             // reference code 0 (Undefined/absolute), per the ODA spec
             // (FIELD_HANDLE(sort_ents, 0, 5)). Writing them as a resolvable
-            // pointer makes AutoCAD's audit dereference them and mark the
+            // pointer makes ACAD's audit dereference them and mark the
             // SORTENTS object ePermanentlyErased when a key has no live object.
             self.writer
                 .write_main_handle(DwgReferenceType::Undefined, entry.sort_handle.value());
         }
         // block_owner is a soft pointer (code 4), not hard — matches the ODA
-        // spec FIELD_HANDLE(block_owner, 4, 0); a hard ref here makes AutoCAD
+        // spec FIELD_HANDLE(block_owner, 4, 0); a hard ref here makes ACAD
         // reject the table (eWrongObjectType).
         self.writer.write_handle(
             DwgReferenceType::SoftPointer,

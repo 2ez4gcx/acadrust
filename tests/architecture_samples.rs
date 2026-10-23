@@ -1,5 +1,5 @@
-//! Architecture sample drawings: read the AEC classes, move a wall, and
-//! confirm the class record still round-trips.
+//! Optional checks against local ACAD Arch project drawings.
+//! Run with `--ignored` after supplying the named fixtures.
 
 use acadrust::classes::arch::{is_architecture_name, reshape_rectangle, ArchKind};
 use acadrust::entities::{EntityType, ExtendedEntityData};
@@ -9,21 +9,21 @@ use acadrust::{DwgReader, DwgWriter};
 
 const SHELL: &str = r"C:\Users\Hakan\Documents\Autodesk\My Projects\Sample Project 2027\Constructs\Architectural\Shell\01 Masonry Shell.dwg";
 
-fn shell_path() -> Option<std::path::PathBuf> {
+fn shell_path() -> std::path::PathBuf {
     let path = std::path::PathBuf::from(SHELL);
-    path.is_file().then_some(path)
+    assert!(path.is_file(), "missing fixture: {}", path.display());
+    path
 }
 
 #[test]
+#[ignore = "requires the local ACAD Arch Sample Project 2027 masonry shell"]
 fn masonry_shell_walls_round_trip_after_move() {
-    let Some(path) = shell_path() else {
-        return;
-    };
+    let path = shell_path();
     let mut doc = DwgReader::from_file(&path).unwrap().read().unwrap();
     let mut walls = 0usize;
     let mut styled = 0usize;
     for object in doc.objects.values() {
-        if let ObjectType::Architecture(object) = object {
+        if let ObjectType::Arch(object) = object {
             assert!(is_architecture_name(&object.dxf_name));
             assert!(object.raw_dwg_data.is_some());
             styled += 1;
@@ -37,7 +37,7 @@ fn masonry_shell_walls_round_trip_after_move() {
         let EntityType::Extended(entity) = entity else {
             continue;
         };
-        let ExtendedEntityData::Architecture(data) = &mut entity.data else {
+        let ExtendedEntityData::Arch(data) = &mut entity.data else {
             continue;
         };
         if data.kind != ArchKind::Wall {
@@ -61,9 +61,9 @@ fn masonry_shell_walls_round_trip_after_move() {
     let reread = DwgReader::from_file(&out).unwrap().read().unwrap();
     let entity = reread.get_entity(handle).expect("moved wall");
     let EntityType::Extended(entity) = entity else {
-        panic!("wall was not kept as an Architecture entity");
+        panic!("wall was not kept as an Arch entity");
     };
-    let ExtendedEntityData::Architecture(data) = &entity.data else {
+    let ExtendedEntityData::Arch(data) = &entity.data else {
         panic!("wall class payload missing");
     };
     assert_eq!(data.dxf_name, "AEC_WALL");
@@ -72,51 +72,50 @@ fn masonry_shell_walls_round_trip_after_move() {
 }
 
 #[test]
-fn masonry_shell_wall_can_be_reshaped() {
-    let Some(path) = shell_path() else {
-        return;
-    };
+#[ignore = "requires the local ACAD Arch Sample Project 2027 masonry shell"]
+fn masonry_shell_wall_rejects_preview_only_reshape() {
+    let path = shell_path();
     let mut doc = DwgReader::from_file(&path).unwrap().read().unwrap();
     let start = Vector3::new(0.0, 0.0, 0.0);
     let end = Vector3::new(240.0, 0.0, 0.0);
-    let mut reshaped = false;
+    let mut checked = false;
     for entity in doc.entities_mut() {
         let EntityType::Extended(entity) = entity else {
             continue;
         };
-        let ExtendedEntityData::Architecture(data) = &entity.data else {
+        let ExtendedEntityData::Arch(data) = &entity.data else {
             continue;
         };
-        if data.kind != ArchKind::Wall || data.profiles.first().map(|profile| profile.len()) != Some(5)
+        if data.kind != ArchKind::Wall
+            || data.profiles.first().map(|profile| profile.len()) != Some(5)
         {
             continue;
         }
-        let ExtendedEntityData::Architecture(data) = &mut entity.data else {
+        let ExtendedEntityData::Arch(data) = &mut entity.data else {
             continue;
         };
-        assert!(reshape_rectangle(
+        let before = data.clone();
+        let graphics_before = entity.common.graphic_data.clone();
+        assert!(!reshape_rectangle(
             data,
             &mut entity.common.graphic_data,
             start,
             end,
             8.0
         ));
-        assert_eq!(data.profiles[0][0], start);
-        assert_eq!(data.profiles[0][1], end);
-        reshaped = true;
+        assert_eq!(*data, before);
+        assert_eq!(entity.common.graphic_data, graphics_before);
+        checked = true;
         break;
     }
-    assert!(reshaped, "no 5-point wall profile to reshape");
-    let out = std::env::temp_dir().join("acadrust-arch-reshaped.dwg");
-    DwgWriter::write_to_file(&out, &doc).unwrap();
+    assert!(checked, "no 5-point wall profile to check");
 }
 
 #[test]
+#[ignore = "requires the manually saved acadrust-arch-moved-acad.dwg fixture"]
 fn autocad_keeps_architecture_entities_after_save() {
     let path = std::env::temp_dir().join("acadrust-arch-moved-acad.dwg");
-    if !path.is_file() {
-        return;
-    }
+    assert!(path.is_file(), "missing fixture: {}", path.display());
     let doc = DwgReader::from_file(&path).unwrap().read().unwrap();
     let mut walls = 0usize;
     let mut doors = 0usize;
@@ -125,7 +124,7 @@ fn autocad_keeps_architecture_entities_after_save() {
         let EntityType::Extended(entity) = entity else {
             continue;
         };
-        let ExtendedEntityData::Architecture(data) = &entity.data else {
+        let ExtendedEntityData::Arch(data) = &entity.data else {
             continue;
         };
         match data.kind {

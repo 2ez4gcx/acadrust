@@ -1,6 +1,6 @@
 //! Semantic model for associative-network objects.
 //!
-//! AutoCAD stores most associative objects as short inheritance chains.  The
+//! ACAD stores most associative objects as short inheritance chains.  The
 //! shared structs below mirror those chains so DWG and DXF use one lossless
 //! representation instead of class-specific byte blobs.
 

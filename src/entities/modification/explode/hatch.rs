@@ -1,10 +1,10 @@
 //! EXPLODE implementation for patterned HATCH entities.
 //!
-//! AutoCAD explodes a patterned hatch to the visible portions of its pattern,
+//! ACAD explodes a patterned hatch to the visible portions of its pattern,
 //! rather than to the boundary edges.  The implementation below generates the
 //! infinite pattern families, intersects them with the analytic hatch edges,
 //! applies the hatch fill rule, and emits the clipped dashes as LINE/POINT
-//! entities.  Solid and gradient hatches are intentionally atomic (AutoCAD
+//! entities.  Solid and gradient hatches are intentionally atomic (ACAD
 //! leaves those entities in the drawing when EXPLODE is invoked).
 
 use std::f64::consts::TAU;
@@ -95,7 +95,7 @@ struct LoopGeometry {
 ///
 /// This is `pub(super)` so the dispatch in `explode.rs` can remain the public
 /// API.  A solid or gradient HATCH returns an empty vector, matching native
-/// AutoCAD EXPLODE (the source object survives).
+/// ACAD EXPLODE (the source object survives).
 pub(super) fn explode_hatch(hatch: &Hatch) -> Vec<EntityType> {
     if hatch.is_solid || hatch.gradient_color.enabled || hatch.pattern.lines.is_empty() {
         return Vec::new();
@@ -240,7 +240,7 @@ fn line_indices(origin: Vector2, offset: Vector2, dir: Vector2, bounds: &Bounds)
     // Keep the unused argument explicit: it documents that direction controls
     // the line while offset controls family spacing.
     let _ = dir;
-    // AutoCAD walks the visible scan lines from the positive offset side
+    // ACAD walks the visible scan lines from the positive offset side
     // toward the negative side (the order is observable in the generated
     // entity handles), so preserve that deterministic ordering.
     (first..=last).rev().collect()
@@ -684,7 +684,7 @@ fn inside_fill(point: Vector2, loops: &[LoopGeometry], style: HatchStyleType) ->
     match style {
         HatchStyleType::Ignore => contains.iter().any(|v| *v),
         HatchStyleType::Outer => {
-            // The outermost loop is the one with the largest area.  AutoCAD's
+            // The outermost loop is the one with the largest area.  ACAD's
             // OUTER style ignores all nested islands.
             let outer = loops
                 .iter()

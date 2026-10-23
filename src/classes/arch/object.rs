@@ -1,12 +1,13 @@
-//! Non-graphical Architecture object.
+//! Non-graphical Arch object.
 //!
 //! Styles, display representations, anchors, list definitions, and the other
 //! AEC dictionary objects keep the original DWG body. The class name is the
-//! supported identity; the bytes are what Architecture reads back.
+//! supported identity; the bytes are what Arch reads back.
 
 use crate::types::{DxfVersion, Handle};
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ArchObject {
     pub handle: Handle,
     pub owner: Handle,

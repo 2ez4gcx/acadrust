@@ -58,7 +58,7 @@ pub struct Insert {
 }
 
 impl Insert {
-    /// Hard upper bound for detached MINSERT expansion.  AutoCAD's command
+    /// Hard upper bound for detached MINSERT expansion.  ACAD's command
     /// refuses MINSERT references; the context-free helper keeps support for
     /// ordinary arrays while refusing pathological work that would otherwise
     /// materialize billions of transforms or entities.
@@ -312,7 +312,7 @@ impl Insert {
 
     /// Resolve ByBlock / layer-"0" property inheritance for an exploded entity.
     ///
-    /// AutoCAD convention:
+    /// ACAD convention:
     /// - Entities on layer `"0"` in the block inherit the Insert's layer.
     /// - `Color::ByBlock` inherits the Insert's color.
     /// - `LineWeight::ByBlock` inherits the Insert's line weight.
@@ -370,7 +370,7 @@ impl Insert {
     /// are restored as transformed definitions; instance attribute values
     /// are not included.
     ///
-    /// **Property inheritance** (AutoCAD convention):
+    /// **Property inheritance** (ACAD convention):
     /// - Entities on layer `"0"` → inherit the Insert's layer.
     /// - `Color::ByBlock` → inherit the Insert's color.
     /// - `LineWeight::ByBlock` → inherit the Insert's line weight.
@@ -434,7 +434,7 @@ impl Insert {
     /// This is used by the document-aware EXPLODE path after it has resolved
     /// the block base point and validated the reference.  It deliberately
     /// bypasses MINSERT array generation; the caller has already applied
-    /// AutoCAD's refusal rules for array references.
+    /// ACAD's refusal rules for array references.
     pub(crate) fn explode_with_transform(
         &self,
         block_entities: &[EntityType],
@@ -532,7 +532,7 @@ impl Insert {
 
     /// Expand bulged polylines before applying a non-uniform block transform.
     /// A retained bulge would still describe a circular arc after stretching,
-    /// while AutoCAD emits an exact elliptical segment.
+    /// while ACAD emits an exact elliptical segment.
     fn explode_single_many(&self, entity: &EntityType, transform: &Transform) -> Vec<EntityType> {
         // Modeler entities are explodable when the block transform is a
         // rigid transform or uniform scale.  Under those transforms their
@@ -734,7 +734,7 @@ impl Insert {
         &self,
         document: &crate::document::CadDocument,
     ) -> Vec<EntityType> {
-        // AutoCAD's EXPLODE command refuses array inserts and external
+        // ACAD's EXPLODE command refuses array inserts and external
         // references.  The context-aware document API applies the same rules;
         // keep this read-only convenience wrapper consistent as well.
         if self.is_minsert() {

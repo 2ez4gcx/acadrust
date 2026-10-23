@@ -4723,7 +4723,7 @@ pub fn read_multileader(
     let mut text_bottom_attachment: i16 = 9; // CenterOfText — matches MultiLeader::new() default
     let mut text_top_attachment: i16 = 9; // CenterOfText — matches MultiLeader::new() default
     if version.r2010_plus() {
-        // Order: dir (271), bottom (272), top (273) — per AutoCAD.
+        // Order: dir (271), bottom (272), top (273) — per ACAD.
         text_attachment_direction = reader.read_bit_short();
         text_bottom_attachment = reader.read_bit_short();
         text_top_attachment = reader.read_bit_short();
@@ -5082,10 +5082,10 @@ fn read_leader_line(reader: &mut DwgMergedReader, version: DwgVersion) -> Leader
     let mut line_color = Color::ByBlock;
     let mut line_type_handle: Option<Handle> = None;
     // Defaults for a pre-R2010 source upconverted to R2010+: a leader line that
-    // does not override these must match AutoCAD's emission — ByBlock weight and
+    // does not override these must match ACAD's emission — ByBlock weight and
     // a 0.0 arrow size. 0.0 is load-bearing: write_bit_double emits the 2-bit
     // BD-zero code, not a 66-bit double, so the annotation context stays the
-    // length AutoCAD's R2018 reader expects (a non-zero default over-runs it →
+    // length ACAD's R2018 reader expects (a non-zero default over-runs it →
     // eDwgObjectImproperlyRead).
     let mut line_weight = crate::types::LineWeight::ByBlock;
     let mut arrowhead_size = 0.0;
@@ -5494,7 +5494,7 @@ fn read_acis_entity_impl(
     // Wireframe data (version=1 SAT, R2004–R2006 inline SAB and AcDs-backed
     // empty bodies; R2007+ inline SAB may return early above).
     // Layout per LibreDWG COMMON_3DSOLID,
-    // bit-verified against an AutoCAD AC1015 (R2000) v1-SAT sample — the
+    // bit-verified against an ACAD AC1015 (R2000) v1-SAT sample — the
     // `point` decodes to the body's exact bounding-box centre only WITH the
     // point_present gate (AC1032's solids are SAB and skip this path, so it
     // was never really exercised before):
@@ -5607,7 +5607,7 @@ fn read_acis_entity_impl(
     }
 
     // R2013+ (AC1027+): the modeler-geometry revision block. It must be read
-    // (and later written back) or the entity stream desyncs — AutoCAD/TrueView
+    // (and later written back) or the entity stream desyncs — ACAD/TrueView
     // then reject the file.
     let revision = if version.r2013_plus(dxf_version) {
         let has_guid = reader.read_bit();
@@ -6060,12 +6060,9 @@ mod tests {
 
     #[test]
     fn r2004_surface_keeps_a_second_modeler_body_ahead_of_isolines() {
-        let sab = crate::entities::acis::SabWriter::write(&crate::entities::acis::primitives::build_box(
-            [0.0, 0.0, 0.0],
-            1.0,
-            2.0,
-            3.0,
-        ));
+        let sab = crate::entities::acis::SabWriter::write(
+            &crate::entities::acis::primitives::build_box([0.0, 0.0, 0.0], 1.0, 2.0, 3.0),
+        );
         let dwg = DwgVersion::AC18;
         let dxf = DxfVersion::AC1018;
         let mut reader = make_reader(dwg, dxf, |writer| {

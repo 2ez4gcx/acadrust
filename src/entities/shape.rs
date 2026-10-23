@@ -397,7 +397,7 @@ impl Entity for Shape {
 // Shape-related utilities
 // ============================================================================
 
-/// Common shape names found in standard AutoCAD shape files.
+/// Common shape names found in standard ACAD shape files.
 pub mod standard_shapes {
     /// Box shape (standard).
     pub const BOX: &str = "BOX";

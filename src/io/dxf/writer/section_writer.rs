@@ -27,7 +27,7 @@ use super::stream_writer::{DxfStreamWriter, DxfStreamWriterExt};
 use std::collections::{HashMap, HashSet};
 
 /// Sanitize a symbol table record name: strip control characters and
-/// characters forbidden by AutoCAD (`< > / \ " : ; ? * | , = \``).
+/// characters forbidden by ACAD (`< > / \ " : ; ? * | , = \``).
 fn sanitize_symbol_name(name: &str) -> String {
     name.chars()
         .filter(|c| {
@@ -160,7 +160,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                         continue;
                     }
                 }
-                ObjectType::Architecture(object) => {
+                ObjectType::Arch(object) => {
                     if object.raw_dxf_codes.is_none() {
                         continue;
                     }
@@ -1180,7 +1180,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_double(49, element.length)?;
             // DXF LTYPE per-element codes: 74 = element-type FLAGS
             // (0x01=abs rot, 0x02=text, 0x04=shape; 0 = plain dash),
-            // 75 = shape number. These used to be emitted swapped — AutoCAD
+            // 75 = shape number. These used to be emitted swapped — ACAD
             // then read every element as complex (OCS#314).
             if let Some(c) = &element.complex {
                 let mut flags: i16 = c.source_flags as i16;
@@ -1196,7 +1196,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
                 self.writer.write_i16(74, flags)?;
                 self.writer.write_i16(75, c.shape_number().unwrap_or(0))?;
-                // AutoCAD's DXF reader is order-sensitive here: the STYLE
+                // ACAD's DXF reader is order-sensitive here: the STYLE
                 // pointer (340) must follow 75 directly and must be present
                 // for every complex element, otherwise the whole file is
                 // rejected with "Missing group code 340 in complex linetype".
@@ -1230,7 +1230,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     }
                 }
             } else {
-                // Plain dash element — AutoCAD emits the zero flag word.
+                // Plain dash element — ACAD emits the zero flag word.
                 self.writer.write_i16(74, 0)?;
             }
         }
@@ -1337,7 +1337,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_bool(290, layer.is_plottable)?;
 
         let mut generated = Vec::new();
-        // AutoCAD stores layer transparency as AcCmTransparency XDATA.
+        // ACAD stores layer transparency as AcCmTransparency XDATA.
         if !layer.transparency.is_opaque()
             || document
                 .object_xdata
@@ -1388,7 +1388,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// `AcadAnnotative` application, in the form
     /// `AnnotativeData { <version=1> <flag> }`. Written only when the record
     /// is annotative; its absence on read means non-annotative. This matches
-    /// how AutoCAD stores annotative on STYLE / DIMSTYLE / TABLESTYLE records.
+    /// how ACAD stores annotative on STYLE / DIMSTYLE / TABLESTYLE records.
     fn write_annotative_xdata(&mut self, annotative: bool) -> Result<()> {
         if !annotative {
             return Ok(());
@@ -2375,7 +2375,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 return Ok(());
             }
         }
-        if let ExtendedEntityData::Architecture(data) = &e.data {
+        if let ExtendedEntityData::Arch(data) = &e.data {
             if let Some(raw) = &data.raw_dxf_codes {
                 self.writer.write_entity_type(&data.dxf_name)?;
                 self.write_common_entity_data(&e.common, owner)?;
@@ -2418,7 +2418,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             // The proxy graphics are written once, inside AcDbProxyEntity.
             // `common.graphic_data` holds the same bytes read from the DWG
             // entity preamble; writing them in AcDbEntity as well makes
-            // AutoCAD reject the entity.
+            // ACAD reject the entity.
             let mut common = e.common.clone();
             let preamble_graphics = common.graphic_data.take().unwrap_or_default();
             self.write_common_entity_data(&common, owner)?;
@@ -2501,7 +2501,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_handle(330, data.arc_handle)?;
             }
             ExtendedEntityData::RemoteText(data) => {
-                // Express Tools writes its subclass marker as "RText"; AutoCAD
+                // Express Tools writes its subclass marker as "RText"; ACAD
                 // rejects the entity otherwise ("Class separator for class
                 // RText expected").
                 self.writer.write_subclass("RText")?;
@@ -2608,7 +2608,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.write_semantic_properties(&data.properties)?;
                 self.write_proxy_references_dxf(&data.object_ids)?;
             }
-            ExtendedEntityData::Architecture(_) => {}
+            ExtendedEntityData::Arch(_) => {}
         }
         Ok(())
     }
@@ -2713,7 +2713,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i32(90, value.node_id)?;
         self.writer.write_i32(98, value.major)?;
         self.writer.write_i32(99, value.minor)?;
-        // -9999 = no value: AutoCAD writes nothing after 99 (a "70 -9999"
+        // -9999 = no value: ACAD writes nothing after 99 (a "70 -9999"
         // group makes it reject the object). Otherwise it writes an (empty)
         // expression string, the value type, then the value.
         if value.value_code == -9999 {
@@ -3356,7 +3356,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             DynamicBlockData::RotationParameter(value) => {
                 self.write_dynamic_two_point_dxf(&value.parameter)?;
                 self.writer.write_subclass("AcDbBlockRotationParameter")?;
-                // AutoCAD order: labels (305, 306) before the base-angle point.
+                // ACAD order: labels (305, 306) before the base-angle point.
                 self.writer.write_string(305, &value.angle_name)?;
                 self.writer.write_string(306, &value.angle_description)?;
                 self.writer
@@ -3460,7 +3460,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.write_dynamic_action_with_base_dxf(&value.action)?;
                 // The DXF subclass marker is not the C++ class name for the
                 // rotate action (AcDbBlockRotateAction is written as
-                // AcDbBlockRotationAction); AutoCAD rejects the object otherwise.
+                // AcDbBlockRotationAction); ACAD rejects the object otherwise.
                 let subclass = if matches!(object.data, DynamicBlockData::RotateAction(_)) {
                     "AcDbBlockRotationAction"
                 } else {
@@ -3793,7 +3793,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_color(62, common.color)?;
         }
 
-        // True color (code 420) — only for AC1018+ (AutoCAD 2004+)
+        // True color (code 420) — only for AC1018+ (ACAD 2004+)
         if self.dxf_version >= DxfVersion::AC1018 {
             if let Some(tc) = common.color.to_true_color_value() {
                 self.writer.write_i32(420, tc)?;
@@ -4849,7 +4849,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
 
         // Pixel size: present exactly when a boundary path is derived (the
-        // same rule as the DWG record); AutoCAD requires it before 98.
+        // same rule as the DWG record); ACAD requires it before 98.
         if hatch.paths.iter().any(|path| path.flags.is_derived()) {
             self.writer.write_double(47, hatch.pixel_size)?;
         }
@@ -5015,7 +5015,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             BoundaryEdge::Spline(spline) => {
                 self.writer.write_i16(72, 4)?; // Spline type
-                                               // AutoCAD requires the degree (94) before the flags.
+                                               // ACAD requires the degree (94) before the flags.
                 self.writer.write_i32(94, spline.degree)?;
                 self.writer
                     .write_i16(73, if spline.rational { 1 } else { 0 })?;
@@ -6017,7 +6017,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 ObjectType::RegisteredClass(obj) => self.write_registered_class_object_dxf(obj)?,
                 ObjectType::DgnLineStyle(obj) => self.write_dgn_line_style_object_dxf(obj)?,
                 ObjectType::ProxyObject(obj) => self.write_proxy_object_dxf(obj)?,
-                ObjectType::Architecture(obj) => {
+                ObjectType::Arch(obj) => {
                     self.write_unknown_object(
                         &obj.dxf_name,
                         obj.handle,
@@ -6274,7 +6274,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
     /// DXF group code of a proxy object id: 330 soft pointer, 340 hard
     /// pointer, 350 soft owner, 360 hard owner (the DXF reference-group
-    /// convention; AutoCAD writes a proxy's hard pointers as 340).
+    /// convention; ACAD writes a proxy's hard pointers as 340).
     fn proxy_reference_code(kind: crate::objects::ProxyReferenceKind) -> i32 {
         match kind {
             crate::objects::ProxyReferenceKind::Undefined
@@ -6300,7 +6300,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     }
 
     /// Body of an ACAD_PROXY_ENTITY / ACAD_PROXY_OBJECT after its subclass
-    /// marker, in the layout AutoCAD itself writes for each DXF version:
+    /// marker, in the layout ACAD itself writes for each DXF version:
     ///
     /// ```text
     /// R2000/R2004: 90 91 95 70 [92 310*] 93 310* refs 94
@@ -7471,7 +7471,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             self.writer.write_string(3, key)?;
             // These dictionary keys are hard-owner entries by definition even
-            // when the dictionary-wide hard-owner flag is clear. AutoCAD,
+            // when the dictionary-wide hard-owner flag is clear. ACAD,
             // ODA and LibreDWG all emit code 360 for them. ACAD_LAYOUT and
             // ACAD_PLOTSTYLENAME own their sub-dictionaries; ACAD_FIELD owns
             // the drawing's FIELDLIST. Writing them as soft pointers (350)
@@ -8243,7 +8243,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_handle(330, scale.owner_handle)?;
         self.writer.write_subclass("AcDbScale")?;
 
-        // Flag word (always 0 in AutoCAD output); AutoCAD requires it before 300.
+        // Flag word (always 0 in ACAD output); ACAD requires it before 300.
         self.writer.write_i16(70, 0)?;
 
         // Scale name
@@ -8315,7 +8315,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_double(21, alignment.y)?;
             }
             ObjectContextKind::MText(m) => {
-                // AutoCAD writes these fields straight after the
+                // ACAD writes these fields straight after the
                 // AcDbAnnotScaleObjectContextData groups, without an
                 // AcDbMTextObjectContextData marker (it rejects the object
                 // with one: "Missing DXF group code: 1"), and with the x-axis
@@ -9213,7 +9213,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     }
 
     /// Write a `SPATIAL_FILTER` transform as 12 code-40 doubles the way
-    /// AutoCAD does: one matrix row per group of four, translation last
+    /// ACAD does: one matrix row per group of four, translation last
     /// (the bottom row is implied). See `matrix_from_dxf_4x3` in the reader.
     fn write_matrix_4x3(&mut self, m: &crate::types::Matrix4) -> Result<()> {
         for row in 0..3 {
@@ -9297,7 +9297,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_handle(330, obj.owner)?;
         // Same AcDbEvalExpr layout as every other parameter: a -9999 "no
         // value" sentinel emits nothing after 99 (a "70 -9999" pair makes
-        // AutoCAD reject the object), otherwise an empty expression string,
+        // ACAD reject the object), otherwise an empty expression string,
         // the value type, then the value.
         self.write_dynamic_eval_dxf(&crate::objects::BlockEvalExpression {
             parent_id: crate::objects::BlockEvalExpression::NO_PARENT,
@@ -9850,11 +9850,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         self.writer.write_string(301, "}")?; // End CONTEXT_DATA
 
-        // Main properties — the code map mirrors AutoCAD's own DXF output
+        // Main properties — the code map mirrors ACAD's own DXF output
         // (verified against an R2018 sample): 170 is the leader PATH type and
         // 172 the content type; 342 the arrow block, 343 the text style, 344
         // the block content. The old map wrote the content type at 170, which
-        // AutoCAD reads as the path type (an MText leader became "spline").
+        // ACAD reads as the path type (an MText leader became "spline").
 
         // Style handle
         if let Some(h) = mleader.style_handle {
@@ -9872,7 +9872,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_color_i32(91, mleader.line_color)?;
 
         // Leader line type handle (code 341). A ByBlock leader stays ByBlock
-        // (it is AutoCAD's default for a multileader's leader lines); only a
+        // (it is ACAD's default for a multileader's leader lines); only a
         // missing one is written as ByBlock, the same default.
         {
             let h = mleader

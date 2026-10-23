@@ -451,7 +451,7 @@ fn classify_object(object: &ObjectType) -> SemanticObjectV1<'_> {
         | ObjectType::RegisteredClass(_)
         | ObjectType::DgnLineStyle(_)
         | ObjectType::ProxyObject(_)
-        | ObjectType::Architecture(_) => SemanticObjectV1::Typed(object),
+        | ObjectType::Arch(_) => SemanticObjectV1::Typed(object),
     }
 }
 

@@ -20,7 +20,9 @@ pub struct ExtendedEntity {
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ExtendedEntityData {
-    Camera { view_handle: Handle },
+    Camera {
+        view_handle: Handle,
+    },
     SectionObject(SectionObjectData),
     ArcAlignedText(ArcAlignedTextData),
     RemoteText(RemoteTextData),
@@ -35,10 +37,10 @@ pub enum ExtendedEntityData {
     Legacy(LegacyEntityData),
     DynamicBlock(crate::objects::DynamicBlockData),
     RegisteredClass(RegisteredClassEntityData),
-    /// AutoCAD Architecture entity (wall, door, stair, space, and the other
+    /// ACAD Arch entity (wall, door, stair, space, and the other
     /// AEC entities). The class record stays intact; profiles can be moved
     /// and reshaped.
-    Architecture(crate::classes::arch::ArchEntityData),
+    Arch(crate::classes::arch::ArchEntityData),
 }
 
 impl ExtendedEntityData {
@@ -53,7 +55,7 @@ impl ExtendedEntityData {
                 value.raw_dwg_version = source.raw_dwg_version;
                 value.raw_dxf_codes = source.raw_dxf_codes.clone();
             }
-            (Self::Architecture(value), Self::Architecture(source)) => {
+            (Self::Arch(value), Self::Arch(source)) => {
                 value.raw_dwg_data = source.raw_dwg_data.clone();
                 value.raw_dxf_codes = source.raw_dxf_codes.clone();
                 value.dwg_source_version = source.dwg_source_version;
@@ -336,7 +338,7 @@ impl ExtendedEntity {
                 data.entity_dxf_name().unwrap_or("DYNAMICBLOCKENTITY")
             }
             ExtendedEntityData::RegisteredClass(data) => &data.dxf_name,
-            ExtendedEntityData::Architecture(data) => data.dxf_name.as_str(),
+            ExtendedEntityData::Arch(data) => data.dxf_name.as_str(),
         }
     }
 }
@@ -405,7 +407,7 @@ impl Entity for ExtendedEntity {
                 vec![data.extents_min, data.extents_max]
             }
             ExtendedEntityData::PointCloudEx(data) => point_cloud_ex_corners(data).to_vec(),
-            ExtendedEntityData::Architecture(data) => {
+            ExtendedEntityData::Arch(data) => {
                 data.profiles.iter().flatten().copied().collect()
             }
             _ => Vec::new(),
@@ -437,7 +439,7 @@ impl Entity for ExtendedEntity {
                 // placement moves.
                 data.ucs_origin = data.ucs_origin + offset;
             }
-            ExtendedEntityData::Architecture(data) => {
+            ExtendedEntityData::Arch(data) => {
                 let _ = data.translate(&mut self.common.graphic_data, offset);
             }
             _ => {}
@@ -532,7 +534,7 @@ impl Entity for ExtendedEntity {
                 data.ucs_y_direction = transform.apply_rotation(data.ucs_y_direction);
                 data.ucs_z_direction = transform.apply_rotation(data.ucs_z_direction);
             }
-            ExtendedEntityData::Architecture(data) => {
+            ExtendedEntityData::Arch(data) => {
                 let _ = data.transform_points(&mut self.common.graphic_data, |point| {
                     transform.apply(point)
                 });

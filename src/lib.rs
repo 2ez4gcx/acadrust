@@ -185,7 +185,7 @@
 //!
 //! ## File Version Support
 //!
-//! | Code | AutoCAD | DXF | DWG |
+//! | Code | ACAD | DXF | DWG |
 //! |------|---------|-----|-----|
 //! | AC1009 | R11/R12 | R/W | R/W |
 //! | AC1012 | R13 | R/W | R/W |

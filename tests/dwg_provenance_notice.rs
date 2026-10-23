@@ -9,7 +9,10 @@ fn includes_acadsharp_mit_attribution_and_license_terms() {
         "The above copyright notice and this permission notice",
         "THE SOFTWARE IS PROVIDED \"AS IS\"",
     ] {
-        assert!(NOTICES.contains(required), "missing notice text: {required}");
+        assert!(
+            NOTICES.contains(required),
+            "missing notice text: {required}"
+        );
     }
 }
 
@@ -25,6 +28,9 @@ fn records_oda_and_reverse_engineering_as_primary_format_sources() {
         "translated routines.",
         "no LibreDWG routines",
     ] {
-        assert!(NOTICES.contains(required), "missing provenance text: {required}");
+        assert!(
+            NOTICES.contains(required),
+            "missing provenance text: {required}"
+        );
     }
 }

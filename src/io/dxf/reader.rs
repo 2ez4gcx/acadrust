@@ -37,7 +37,7 @@ pub struct DxfReaderConfiguration {
     /// Default encoding to use for non-UTF8 strings if the DXF file does not
     /// specify it via $DWGCODEPAGE.
     ///
-    /// Only applies to DXF versions prior to AC1021 (AutoCAD 2007).
+    /// Only applies to DXF versions prior to AC1021 (ACAD 2007).
     pub default_encoding: Option<String>,
 }
 
