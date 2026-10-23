@@ -5,7 +5,10 @@
 //! the decoded profiles, and the original DWG or DXF body so a save reproduces
 //! the record Architecture wrote.
 
-use crate::classes::arch::geometry::{decode_profiles, map_profile_points};
+use crate::classes::arch::geometry::{
+    decode_profiles, find_straight_wall_fields, map_profile_points, write_bit_double_at,
+    WALL_CORNER_BIAS,
+};
 use crate::types::{DxfVersion, Vector3};
 
 /// Which Architecture entity a class name represents.
@@ -128,7 +131,11 @@ impl ArchEntityData {
         if current.len() != points.len() || points.is_empty() {
             return false;
         }
-        let pairs: Vec<(Vector3, Vector3)> = current.iter().copied().zip(points.iter().copied()).collect();
+        let pairs: Vec<(Vector3, Vector3)> = current
+            .iter()
+            .copied()
+            .zip(points.iter().copied())
+            .collect();
         let ok = self.map_points(graphic_data, |point| {
             pairs
                 .iter()
@@ -226,12 +233,127 @@ pub fn rectangle_profile(start: Vector3, end: Vector3, width: f64) -> Option<Vec
         return None;
     }
     let normal = Vector3::new(-edge.y / length, edge.x / length, 0.0) * width;
+    Some(vec![start, end, end + normal, start + normal, start])
+}
+
+/// Rewrite a 2027 straight wall onto a new baseline.
+///
+/// The wall's start, direction, perpendicular, length, width, and height are
+/// full bit-doubles. Zero components stay full doubles so a later edit does
+/// not change the record size. The preview becomes the axis-aligned bounds of
+/// the center-justified wall, which is the outline Architecture stores.
+pub fn set_straight_wall(
+    data: &mut ArchEntityData,
+    graphic_data: &mut Option<Vec<u8>>,
+    start: Vector3,
+    end: Vector3,
+    width: f64,
+    height: f64,
+) -> bool {
+    if data.kind != ArchKind::Wall {
+        return false;
+    }
+    let Some(current) = data.profiles.first().cloned() else {
+        return false;
+    };
+    if current.len() != 5 || current.first() != current.last() {
+        return false;
+    }
+    let edge = end - start;
+    let length = edge.length();
+    if length <= f64::EPSILON || !width.is_finite() || width <= f64::EPSILON || !height.is_finite()
+    {
+        return false;
+    }
+    let along = edge * (1.0 / length);
+    let Some(points) = centered_wall_profile(start, end, width) else {
+        return false;
+    };
+    let Some(raw) = data.raw_dwg_data.as_ref() else {
+        return false;
+    };
+    let Some(fields) = find_straight_wall_fields(raw) else {
+        return false;
+    };
+    let old_corner = current[0];
+    if !data.reshape(graphic_data, &points) {
+        return false;
+    }
+    let Some(raw) = data.raw_dwg_data.as_mut() else {
+        return false;
+    };
+    replace_point(raw, old_corner + corner_bias(), points[0] + corner_bias());
+    if let Some(preview) = graphic_data.as_mut() {
+        replace_point(
+            preview,
+            old_corner + corner_bias(),
+            points[0] + corner_bias(),
+        );
+    }
+    write_bit_double_at(raw, fields.start_x, start.x)
+        && write_bit_double_at(raw, fields.start_y, start.y)
+        && write_bit_double_at(raw, fields.dir_x, along.x)
+        && write_bit_double_at(raw, fields.dir_y, along.y)
+        && write_bit_double_at(raw, fields.normal_x, -along.y)
+        && write_bit_double_at(raw, fields.normal_y, along.x)
+        && write_bit_double_at(raw, fields.height, height)
+        && write_bit_double_at(raw, fields.width, width)
+        && write_bit_double_at(raw, fields.length, length)
+}
+
+fn corner_bias() -> Vector3 {
+    Vector3::new(WALL_CORNER_BIAS, WALL_CORNER_BIAS, 0.0)
+}
+
+fn replace_point(buffer: &mut [u8], from: Vector3, to: Vector3) {
+    let from = point_bytes(from);
+    let to = point_bytes(to);
+    let mut offset = 0usize;
+    while offset + 24 <= buffer.len() {
+        if buffer[offset..offset + 24] == from {
+            buffer[offset..offset + 24].copy_from_slice(&to);
+            offset += 24;
+        } else {
+            offset += 1;
+        }
+    }
+}
+
+fn point_bytes(point: Vector3) -> [u8; 24] {
+    let mut bytes = [0u8; 24];
+    bytes[0..8].copy_from_slice(&point.x.to_le_bytes());
+    bytes[8..16].copy_from_slice(&point.y.to_le_bytes());
+    bytes[16..24].copy_from_slice(&point.z.to_le_bytes());
+    bytes
+}
+
+/// Closed preview of a center-justified straight wall.
+///
+/// Architecture stores the wall's axis-aligned bounds, counterclockwise from
+/// the lower-left corner.
+pub fn centered_wall_profile(start: Vector3, end: Vector3, width: f64) -> Option<Vec<Vector3>> {
+    let edge = end - start;
+    let length = edge.length();
+    if length <= f64::EPSILON || !width.is_finite() || width <= f64::EPSILON {
+        return None;
+    }
+    let along = edge * (1.0 / length);
+    let left = Vector3::new(-along.y, along.x, 0.0) * (width * 0.5);
+    let corners = [start - left, end - left, end + left, start + left];
+    let mut min = corners[0];
+    let mut max = corners[0];
+    for corner in corners.into_iter().skip(1) {
+        min.x = min.x.min(corner.x);
+        min.y = min.y.min(corner.y);
+        max.x = max.x.max(corner.x);
+        max.y = max.y.max(corner.y);
+    }
     Some(vec![
-        start,
-        end,
-        end + normal,
-        start + normal,
-        start,
+        Vector3::new(min.x, min.y, start.z),
+        Vector3::new(max.x, min.y, start.z),
+        Vector3::new(max.x, max.y, start.z),
+        Vector3::new(min.x, max.y, start.z),
+        Vector3::new(min.x, min.y, start.z),
     ])
 }
 
