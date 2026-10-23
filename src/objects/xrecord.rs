@@ -271,7 +271,7 @@ impl XRecordEntry {
 ///
 /// The payload always remains available through [`XRecord::entries`].  This
 /// classification only adds a stable, typed access path for schemas used by
-/// AutoCAD and Autodesk vertical products; unknown/private schemas are kept
+/// ACAD and Autodesk vertical products; unknown/private schemas are kept
 /// losslessly as ordinary group-code/value pairs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

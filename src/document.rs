@@ -849,9 +849,9 @@ impl Default for HeaderVariables {
             sort_entities: 127,
             index_control: 0,
             hide_text: 1,
-            // AutoCAD's default: clip frames display (not plotted). Older
+            // ACAD's default: clip frames display (not plotted). Older
             // headers (R2000) don't carry the variable at all, so the default
-            // must match what AutoCAD shows for them.
+            // must match what ACAD shows for them.
             xclip_frame: 2,
             // New drawings show DWF frames without plotting them and hide
             // DGN frames.
@@ -1160,7 +1160,7 @@ pub struct FieldDef {
 }
 
 /// Document summary information (the DWG `SummaryInfo` section — the same
-/// properties AutoCAD's DWGPROPS dialog edits). Backs the Document-category
+/// properties ACAD's DWGPROPS dialog edits). Backs the Document-category
 /// dynamic-text fields (Author, Title, Subject, Keywords, Comments,
 /// HyperlinkBase, RevisionNumber) plus arbitrary custom properties.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -1185,7 +1185,7 @@ pub struct CadDocument {
     /// Document version
     pub version: DxfVersion,
 
-    /// AutoCAD maintenance release version (from file header byte 0x0B).
+    /// ACAD maintenance release version (from file header byte 0x0B).
     ///
     /// Used to determine encoding variations within a major DWG version.
     /// For AC1024 (R2010), maintenance > 3 triggers an extra 4-byte RL field
@@ -1570,7 +1570,7 @@ impl CadDocument {
             view_rep_refs: std::collections::HashMap::new(),
             section_view_reps: Vec::new(),
             // Start handle allocation above reserved table handles (0x1-0xA)
-            // Table handles are well-known fixed values used by AutoCAD
+            // Table handles are well-known fixed values used by ACAD
             next_handle: 0x10,
         };
 
@@ -1706,7 +1706,7 @@ impl CadDocument {
                 raw_dwg_data: Some(_),
                 ..
             } => true,
-            crate::objects::ObjectType::Architecture(value) => value.raw_dwg_data.is_some(),
+            crate::objects::ObjectType::Arch(value) => value.raw_dwg_data.is_some(),
             _ => false,
         });
         if raw_objects {
@@ -1718,7 +1718,7 @@ impl CadDocument {
                 crate::entities::EntityType::Unknown(u) => u.raw_dwg_data.is_some(),
                 crate::entities::EntityType::Extended(entity) => matches!(
                     &entity.data,
-                    crate::entities::ExtendedEntityData::Architecture(data)
+                    crate::entities::ExtendedEntityData::Arch(data)
                         if data.raw_dwg_data.is_some()
                 ),
                 _ => false,
@@ -1857,7 +1857,7 @@ impl CadDocument {
         self.header.acad_layout_dict_handle = self.allocate_handle();
         self.header.acad_plotsettings_dict_handle = self.allocate_handle();
         self.header.acad_plotstylename_dict_handle = self.allocate_handle();
-        // R2004+/R2007+ dictionaries (AutoCAD requires these even if empty)
+        // R2004+/R2007+ dictionaries (ACAD requires these even if empty)
         self.header.acad_material_dict_handle = self.allocate_handle();
         self.header.acad_color_dict_handle = self.allocate_handle();
         self.header.acad_visualstyle_dict_handle = self.allocate_handle();
@@ -3740,12 +3740,42 @@ impl CadDocument {
         Some(entity)
     }
 
-    /// Remove an entity by handle
+    /// Remove an entity by handle.
+    ///
+    /// Arch entities anchored to this one (a door, window, opening, or
+    /// window corner on a wall) are removed with it, along with the anchor and
+    /// associative objects they own.
     pub fn remove_entity(&mut self, handle: Handle) -> Option<EntityType> {
-        let entity = self.remove_entity_arc(handle)?;
-        // Hand back an owned entity: take it out of the Arc if we hold the last
-        // reference (a snapshot may still share it), else clone.
-        Some(Arc::try_unwrap(entity).unwrap_or_else(|a| (*a).clone()))
+        if self.get_entity(handle).is_none() {
+            return None;
+        }
+        let mut queue = vec![handle];
+        let mut doomed = Vec::new();
+        let mut seen = HashSet::new();
+        while let Some(handle) = queue.pop() {
+            if !seen.insert(handle) {
+                continue;
+            }
+            if crate::classes::arch::is_architecture_entity(self, handle) {
+                queue.extend(crate::classes::arch::entities_anchored_to(self, handle));
+            }
+            doomed.push(handle);
+        }
+        let mut removed = None;
+        for handle in doomed {
+            for owned in crate::classes::arch::objects_owned_by(self, handle) {
+                self.objects.remove(&owned);
+                self.reactors_by_handle.remove(&owned);
+            }
+            let Some(entity) = self.remove_entity_arc(handle) else {
+                continue;
+            };
+            let entity = Arc::try_unwrap(entity).unwrap_or_else(|arc| (*arc).clone());
+            if removed.is_none() {
+                removed = Some(entity);
+            }
+        }
+        removed
     }
 
     /// Add a new paper space layout to the document.
@@ -3774,7 +3804,7 @@ impl CadDocument {
         }
 
         // Determine the next *Paper_Space block name.
-        // AutoCAD uses: *Paper_Space, *Paper_Space0, *Paper_Space1, …
+        // ACAD uses: *Paper_Space, *Paper_Space0, *Paper_Space1, …
         let ps_count = self
             .block_records
             .iter()
@@ -3853,7 +3883,7 @@ impl CadDocument {
             })
             .collect();
         for record in self.block_records.iter_mut() {
-            // Preserve an explicitly saved self-reference. AutoCAD leaves this
+            // Preserve an explicitly saved self-reference. ACAD leaves this
             // unresolved when the drawing is loaded as an xref; callers can use
             // the Layout's reverse link when opening it as the root drawing.
             if record.layout == record.handle {
@@ -4040,7 +4070,7 @@ impl CadDocument {
             ObjectType::RegisteredClass(value) => Some(value.owner),
             ObjectType::DgnLineStyle(value) => Some(value.owner),
             ObjectType::ProxyObject(value) => Some(value.owner),
-            ObjectType::Architecture(value) => Some(value.owner),
+            ObjectType::Arch(value) => Some(value.owner),
             ObjectType::Unknown { owner, .. } => Some(*owner),
             ObjectType::UnderlayDefinition(_) => None,
         }

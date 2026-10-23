@@ -412,7 +412,7 @@ pub fn read_class_object_data(
         }
         // AcDbSpatialIndex is an undocumented, host-rebuilt acceleration cache. The
         // previous field-level parse mis-read it (garbage extents and ids) and the
-        // re-written object made AutoCAD reject the drawing (issue #80). Leave it
+        // re-written object made ACAD reject the drawing (issue #80). Leave it
         // to the opaque path, which carries the record through verbatim.
         "SPATIAL_INDEX" => return None,
         "LAYERFILTER" => {

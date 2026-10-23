@@ -162,7 +162,7 @@ impl<W: Write> DxfStreamWriter for DxfBinaryWriter<W> {
         self.write_code(code)?;
         // Sanitize embedded newlines to DXF paragraph markers, matching the
         // ASCII writer.  While binary DXF uses null-terminated strings (so raw
-        // newlines won't structurally break the file), many AutoCAD consumers
+        // newlines won't structurally break the file), many ACAD consumers
         // still expect \P instead of literal line breaks in string values.
         if value.contains('\n') || value.contains('\r') {
             let sanitized = value

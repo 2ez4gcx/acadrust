@@ -628,7 +628,7 @@ pub struct ImageDefinition {
     /// Image size in pixels.
     pub size: Vector2,
 
-    /// Default pixel size in AutoCAD units.
+    /// Default pixel size in ACAD units.
     pub pixel_size: Vector2,
 
     /// Whether the image file is loaded.

@@ -16,7 +16,7 @@ use crate::error::DxfError;
 /// section map. Real files use a few KiB (5,212 bytes was the largest in 181 drawings).
 pub(crate) const MAX_SYSTEM_PAGE_SIZE: usize = 16 * 1024 * 1024;
 
-/// Largest size of one data page. AutoCAD pages AC18 sections at 0x7400 bytes and AC21
+/// Largest size of one data page. ACAD pages AC18 sections at 0x7400 bytes and AC21
 /// sections at 0xF800; single-page sections such as previews reach about 1 MiB.
 pub(crate) const MAX_DATA_PAGE_SIZE: usize = 4 * 1024 * 1024;
 

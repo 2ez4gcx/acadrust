@@ -175,7 +175,7 @@ pub struct DwgFileHeaderInfo {
     pub version_string: String,
     /// Parsed DWG version enum
     pub version: DwgVersion,
-    /// AutoCAD maintenance version
+    /// ACAD maintenance version
     pub acad_maintenance_version: u8,
     /// Preview image address
     pub preview_address: i32,
@@ -369,7 +369,7 @@ fn find_acds_magic(buf: &[u8], from: usize) -> Option<usize> {
 
 /// End-of-body terminator for an Autodesk ShapeManager (ASM) SAB blob, written
 /// as separate tagged tokens: `0E 03 "End" 0E 02 "of" 0E 03 "ASM" 0D 04 "data"`.
-/// This is what AutoCAD 2013+ / BricsCAD emit.
+/// This is what ACAD 2013+ / BricsCAD emit.
 const ASM_END_MARKER: &[u8] = b"\x0E\x03End\x0E\x02of\x0E\x03ASM\x0D\x04data";
 /// End-of-body terminator for a classic ACIS SAB blob, written as one tagged
 /// identifier string. This is what acadrust's own `SabWriter` emits, so the
@@ -515,7 +515,7 @@ fn extract_acds_record_blobs(buf: &[u8], modeler_handles: &HashSet<u64>) -> Vec<
 /// order they appear.
 ///
 /// Each blob runs from its header magic — `"ACIS BinaryFile"` (classic ACIS) or
-/// `"ASM BinaryFile"` (Autodesk ShapeManager, AutoCAD 2013+) — through its
+/// `"ASM BinaryFile"` (Autodesk ShapeManager, ACAD 2013+) — through its
 /// end-of-body terminator (`End-of-ASM-data` or `End-of-ACIS-data`).
 fn extract_acds_sab_blob_ranges(buf: &[u8]) -> Vec<(usize, usize)> {
     let mut blobs = Vec::new();
@@ -1575,7 +1575,7 @@ impl<R: Read + Seek> DwgReader<R> {
         // block is R2004+): the two colours in EED (GradientColor1ACI /
         // GradientColor2ACI) and the gradient type in an ACAD_XREC_ROUNDTRIP
         // XRecord under the hatch's extension dictionary. Reconstruct the
-        // gradient so it renders as AutoCAD/ODA show it instead of a flat
+        // gradient so it renders as ACAD/ODA show it instead of a flat
         // solid fill.
         //
         // Gate strictly to pre-R2004: a native R2004+ file carries the real
@@ -2080,7 +2080,7 @@ impl<R: Read + Seek> DwgReader<R> {
             let page_size = cursor.read_i32::<LittleEndian>()?;
 
             // Entries with page_size <= 0 are alignment/padding markers
-            // emitted by AutoCAD; skip them so they don't corrupt the
+            // emitted by ACAD; skip them so they don't corrupt the
             // running file offset.
             if page_size <= 0 {
                 continue;
@@ -3500,7 +3500,7 @@ pub(crate) fn recover_roundtrip_gradients(document: &mut crate::document::CadDoc
                         }
                         // A DXF-sourced round-trip XRecord encodes the gradient
                         // type as a number in the 1004 binary (first LE int32 =
-                        // 123 + gradient index in AutoCAD's dropdown order),
+                        // 123 + gradient index in ACAD's dropdown order),
                         // not as an ASCII name; decode it when no name matched.
                         if name.is_empty() && xr.raw_data.len() >= 4 {
                             const BY_INDEX: &[&str] = &[
@@ -3565,10 +3565,10 @@ pub(crate) fn recover_roundtrip_gradients(document: &mut crate::document::CadDoc
 /// Recover an MTEXT background fill that a pre-R2004 (R2000/R14) save stored as
 /// round-trip EED (`ACAD_MTEXT_BBRT` … `ACAD_MTEXT_BERT`) instead of the native
 /// codes (90 flags / 63|421 colour / 45 scale / 441 transparency), which those
-/// versions predate. AutoCAD/ODA render the fill from this metadata; without it
+/// versions predate. ACAD/ODA render the fill from this metadata; without it
 /// a down-saved dimension text (or any MTEXT) shows no background. Applied only
 /// when the entity has no native fill flag. The colour is stored with the
-/// AutoCAD "method byte" (0xC2 = RGB, 0xC3 = ACI, 0xC0/0xC1 = ByLayer/ByBlock).
+/// ACAD "method byte" (0xC2 = RGB, 0xC3 = ACI, 0xC0/0xC1 = ByLayer/ByBlock).
 pub(crate) fn recover_mtext_bg_roundtrip(document: &mut crate::document::CadDocument) {
     use crate::entities::EntityType;
     use crate::types::{Color, Handle};

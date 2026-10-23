@@ -1,6 +1,6 @@
 //! DXF class definitions (CLASSES section)
 //!
-//! [`arch`] is the AutoCAD Architecture (AEC) class catalog and the geometry
+//! [`arch`] is the ACAD Arch (AEC) class catalog and the geometry
 //! model used to read, write, build, and modify those entities and objects.
 
 //! Classes define custom object types registered in the DXF drawing.
@@ -182,8 +182,8 @@ impl DxfClassCollection {
     /// Append a class verbatim, preserving order and duplicate dxf names.
     ///
     /// The DWG classes section is *positional*: a custom object's type code is
-    /// `500 + index_in_section`, and ODA §10 describes resolving each class by
-    /// its position in the section. Two distinct classes may
+    /// `500 + index_in_section`, and readers (libredwg, ACAD) resolve the
+    /// class by that index, not by the stored number. Two distinct classes may
     /// legitimately share a dxf name (different C++ classes), so deduping by
     /// name — as [`add_or_update`](Self::add_or_update) does — drops one entry,
     /// shifts every later class's effective number, and makes those objects
@@ -291,7 +291,7 @@ impl DxfClassCollection {
         }
     }
 
-    /// Populate with default class definitions that AutoCAD expects.
+    /// Populate with default class definitions that ACAD expects.
     ///
     /// This mirrors the reference `DxfClassCollection.UpdateDxfClasses()`.
     pub fn update_defaults(&mut self) {
@@ -319,19 +319,19 @@ impl<'a> IntoIterator for &'a DxfClassCollection {
     }
 }
 
-/// Build the set of default DXF classes that AutoCAD registers.
+/// Build the set of default DXF classes that ACAD registers.
 ///
-/// DXF names, proxy flags, and application names match AutoCAD R2013 (AC1027)
+/// DXF names, proxy flags, and application names match ACAD R2013 (AC1027)
 /// reference output.
 pub(crate) fn default_classes() -> Vec<DxfClass> {
     // (dxf_name, cpp_class_name, proxy_flags, app_name, is_entity)
     let defs: &[(&str, &str, u16, &str, bool)] = &[
         // ── Entity classes ──────────────────────────────────────────
         ("MESH", "AcDbSubDMesh", 4095,
-            "AcDbSubDMesh|Description: AutoCAD subD mesh", true),
+            "AcDbSubDMesh|Description: ACAD subD mesh", true),
         ("ACAD_TABLE", "AcDbTable", 1025, "ObjectDBX Classes", true),
         ("WIPEOUT", "AcDbWipeout", 127,
-            "WipeOut|AutoCAD Express Tool|www.autodesk.com", true),
+            "WipeOut|ACAD Express Tool|www.autodesk.com", true),
         ("IMAGE", "AcDbRasterImage", 127, "ISM", true),
         ("PDFREFERENCE", "AcDbPdfReference", 1, "ObjectDBX Classes", true),
         ("DWFREFERENCE", "AcDbDwfReference", 1, "ObjectDBX Classes", true),
@@ -362,10 +362,10 @@ pub(crate) fn default_classes() -> Vec<DxfClass> {
             "ARCALIGNEDTEXT",
             "AcDbArcAlignedText",
             127,
-            "AutoCAD Express Tools",
+            "ACAD Express Tools",
             true,
         ),
-        ("RTEXT", "AcDbRText", 127, "AutoCAD Express Tools", true),
+        ("RTEXT", "AcDbRText", 127, "ACAD Express Tools", true),
         (
             "POSITIONMARKER",
             "AcDbGeoPositionMarker",
@@ -716,7 +716,7 @@ pub(crate) fn default_classes() -> Vec<DxfClass> {
             false,
         ),
         ("WIPEOUTVARIABLES", "AcDbWipeoutVariables", 0,
-            "WipeOut|AutoCAD Express Tool|www.autodesk.com", false),
+            "WipeOut|ACAD Express Tool|www.autodesk.com", false),
         ("DIMASSOC", "AcDbDimAssoc", 0,
             "AcDbDimAssoc|Product Desc:     AcDim ARX App For Dimension|Company:          Autodesk|WEB Address:      www.autodesk.com", false),
         ("TABLECONTENT", "AcDbTableContent", 1025, "ObjectDBX Classes", false),

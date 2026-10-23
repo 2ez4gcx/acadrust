@@ -23,6 +23,7 @@ pub mod data_objects;
 pub mod dynamic_block;
 pub mod entities;
 pub mod field;
+mod native_architecture;
 pub mod objects;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -67,7 +68,8 @@ fn dwg_block_name<'a>(
             return "*Paper_Space";
         }
         if record.name.eq_ignore_ascii_case("*Paper_Space") {
-            if let Some(active_record) = document.block_records.iter().find(|r| r.handle == active) {
+            if let Some(active_record) = document.block_records.iter().find(|r| r.handle == active)
+            {
                 return &active_record.name;
             }
         }
@@ -76,7 +78,10 @@ fn dwg_block_name<'a>(
         let prefix_end = record.name[1..]
             .find(|c: char| !c.is_ascii_alphabetic())
             .map_or(record.name.len(), |pos| pos + 1);
-        if record.name[prefix_end..].chars().all(|c| c.is_ascii_digit()) {
+        if record.name[prefix_end..]
+            .chars()
+            .all(|c| c.is_ascii_digit())
+        {
             return &record.name[..prefix_end];
         }
     }
@@ -2302,7 +2307,7 @@ impl<'a> DwgObjectWriter<'a> {
         // R2000+: insert handles come BEFORE the layout handle (ODA spec
         // order: endblk, inserts[num_inserts], layout). Writing layout first
         // desyncs the handle stream for any block that is referenced by an
-        // insert, making AutoCAD discard the block record (eWrongObjectType).
+        // insert, making ACAD discard the block record (eWrongObjectType).
         if self.version.r2000_plus() {
             for ih in self.block_insert_handles(record) {
                 self.writer

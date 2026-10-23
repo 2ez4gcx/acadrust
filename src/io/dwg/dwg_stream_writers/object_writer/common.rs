@@ -155,7 +155,7 @@ impl<'a> DwgObjectWriter<'a> {
     /// ```
     ///
     /// **CRC-16** (seed `0xC0C1`) covers everything from the ModularShort
-    /// through the end of `merged_data`.  AutoCAD validates this checksum
+    /// through the end of `merged_data`.  ACAD validates this checksum
     /// on every object load ("Level 3" check).
     ///
     /// **Byte alignment**: The merged data from `merge()` is guaranteed
@@ -166,7 +166,7 @@ impl<'a> DwgObjectWriter<'a> {
         // Duplicate-handle guard: a handle must appear in the object map exactly
         // once. If this one was already emitted (e.g. an xdictionary XRECORD
         // reached from two paths), drop this repeat — duplicate handles are a
-        // hard integrity error AutoCAD's audit rejects.
+        // hard integrity error ACAD's audit rejects.
         if !handle.is_null() && !self.registered_handles.insert(handle.value()) {
             self.writer.reset();
             self.pending_type_code = None;
@@ -179,7 +179,7 @@ impl<'a> DwgObjectWriter<'a> {
 
         // Verify the merged data is byte-aligned.  If this fires, the
         // merge function has a bug — partial bytes would corrupt the
-        // CRC-16 and cause "Invalid Input" in AutoCAD.
+        // CRC-16 and cause "Invalid Input" in ACAD.
         debug_assert!(
             !data.is_empty() || handle.is_null(),
             "register_object: merged data is empty for handle {:#X}",
@@ -222,7 +222,7 @@ impl<'a> DwgObjectWriter<'a> {
         // 4. CRC-16 over everything from `pos`:
         //    [MS(size)] [MC(handle_bits)] [merged_data]
         //    Seed 0xC0C1, no final XOR.  This is the per-object checksum
-        //    that AutoCAD validates ("Level 3" object integrity check).
+        //    that ACAD validates ("Level 3" object integrity check).
         let crc_val = crc::crc16(crc::CRC16_SEED, &self.output[pos as usize..]);
         self.output.extend_from_slice(&crc_val.to_le_bytes());
 
@@ -415,7 +415,7 @@ impl<'a> DwgObjectWriter<'a> {
         // Filter entity xdic handle: only keep it if the referenced dictionary
         // is actually WRITTEN. `contains_key` is not enough — a dictionary that
         // is present in the document but dropped on this save (e.g. an AEC/
-        // version-locked object) would leave a dangling handle that AutoCAD's
+        // version-locked object) would leave a dangling handle that ACAD's
         // reader rejects (the object reads as improperly read / erased).
         let effective_entity_xdic =
             xdictionary_handle.filter(|xdic| !xdic.is_null() && self.is_writable_object(xdic));
@@ -742,6 +742,8 @@ impl<'a> DwgObjectWriter<'a> {
             xdictionary_handle,
             extra_eed,
             false,
+            false,
+            None,
         );
     }
 
@@ -761,6 +763,32 @@ impl<'a> DwgObjectWriter<'a> {
             xdictionary_handle,
             Vec::new(),
             true,
+            false,
+            None,
+        );
+    }
+
+    /// Write common fields that are fully represented by the typed object.
+    pub(super) fn write_complete_non_entity_data(
+        &mut self,
+        type_code: i16,
+        handle: Handle,
+        owner_handle: Handle,
+        reactors: &[Handle],
+        xdictionary_handle: &Option<Handle>,
+        extra_eed: Vec<(u64, Vec<u8>)>,
+        has_ds_data: bool,
+    ) {
+        self.write_common_non_entity_data_eed_internal(
+            type_code,
+            handle,
+            owner_handle,
+            reactors,
+            xdictionary_handle,
+            extra_eed,
+            false,
+            true,
+            Some(has_ds_data),
         );
     }
 
@@ -773,6 +801,8 @@ impl<'a> DwgObjectWriter<'a> {
         xdictionary_handle: &Option<Handle>,
         extra_eed: Vec<(u64, Vec<u8>)>,
         relative_owner: bool,
+        complete_common: bool,
+        has_ds_data_override: Option<bool>,
     ) {
         // ── writeCommonData portion ──
 
@@ -866,7 +896,7 @@ impl<'a> DwgObjectWriter<'a> {
 
         // Use side-channel reactors if struct reactors are empty (roundtrip preservation)
         let effective_reactors: Vec<Handle>;
-        let reactors_to_write: &[Handle] = if reactors.is_empty() {
+        let reactors_to_write: &[Handle] = if reactors.is_empty() && !complete_common {
             if let Some(saved) = self.document.reactors_by_handle.get(&handle) {
                 effective_reactors = saved.clone();
                 &effective_reactors
@@ -889,7 +919,7 @@ impl<'a> DwgObjectWriter<'a> {
         // Use side-channel xdictionary if struct value is None (roundtrip preservation)
         // Only use it if the xdictionary object actually exists in document.objects,
         // otherwise strict readers report an erased object for the dangling reference.
-        let effective_xdic = if xdictionary_handle.is_none() {
+        let effective_xdic = if xdictionary_handle.is_none() && !complete_common {
             self.extension_dictionary_handle(handle)
                 .filter(|xdic| self.document.objects.contains_key(xdic))
         } else {
@@ -923,8 +953,10 @@ impl<'a> DwgObjectWriter<'a> {
 
         // R2013+: retain data-store links while reusing the source section.
         if self.version.r2013_plus(self.dxf_version) {
-            let has_ds_data = self.document.dwg_source_version == Some(self.dxf_version)
-                && self.document.dwg_data_store_handles.contains(&handle);
+            let has_ds_data = has_ds_data_override.unwrap_or_else(|| {
+                self.document.dwg_source_version == Some(self.dxf_version)
+                    && self.document.dwg_data_store_handles.contains(&handle)
+            });
             self.writer.write_bit(has_ds_data);
         }
     }
@@ -949,7 +981,7 @@ impl<'a> DwgObjectWriter<'a> {
         if self.version.r2007_plus() {
             // R2007+: is_xref_resolved BS — only 0 (not xref-dependent) or
             // 256 (0x100, xref-resolved) are valid; the reader derives
-            // is_xref_dep from `== 256`. Writing 0x10 makes AutoCAD reject the
+            // is_xref_dep from `== 256`. Writing 0x10 makes ACAD reject the
             // record (eDwgObjectImproperlyRead) on xref-dependent table entries.
             let combined: i16 = if xref_resolved || xref_dependent {
                 0x100

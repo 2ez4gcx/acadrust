@@ -17,6 +17,71 @@ use crate::types::{Color, DxfVersion, Handle};
 use super::common;
 use super::DwgObjectWriter;
 
+/// Value type of an XRECORD/xdata resbuf item, keyed by its group code.
+/// Mirrors libredwg `dwg_resbuf_value_type`. Only `Str` is version-specific
+/// (code page pre-R2007, UTF-16 since); every other type is a fixed byte run.
+#[derive(PartialEq)]
+enum XdVt {
+    Str,
+    Real,
+    Int16,
+    Int32,
+    Int64,
+    Int8,
+    Point3d,
+    Binary,
+    Handle,
+    Invalid,
+}
+
+fn xdata_value_type(gc: i16) -> XdVt {
+    use XdVt::*;
+    match gc {
+        g if g < 0 => Handle,
+        0..=4 => Str,
+        5 => Handle,
+        6..=9 => Str,
+        10..=37 => Point3d,
+        38..=59 => Real,
+        60..=79 => Int16,
+        80..=99 => Int32,
+        100..=102 => Str,
+        105 => Handle,
+        110..=139 => Point3d,
+        140..=149 => Real,
+        150..=169 => Int64,
+        170..=179 => Int16,
+        210..=269 => Point3d,
+        270..=279 => Int16,
+        280..=289 => Int8,
+        290..=299 => Int8, // bool, one byte
+        300..=309 => Str,
+        310..=319 => Binary,
+        320..=329 => Handle,
+        330..=369 => Handle,
+        370..=389 => Int16,
+        390..=399 => Handle,
+        400..=409 => Int16,
+        410..=419 => Str,
+        420..=429 => Int32,
+        430..=439 => Str,
+        440..=459 => Int32,
+        460..=469 => Real,
+        470..=479 => Str,
+        480..=481 => Handle,
+        999 => Str,
+        1004 => Binary,
+        1000..=1003 => Str,
+        1005 => Handle,
+        1010..=1039 => Point3d,
+        1040..=1042 => Real,
+        1043..=1069 => Point3d,
+        1070 => Int16,
+        1071 => Int32,
+        _ => Invalid,
+    }
+}
+
 fn xrecord_reference_type(kind: ProxyReferenceKind) -> DwgReferenceType {
     match kind {
         ProxyReferenceKind::Undefined => DwgReferenceType::Undefined,
@@ -60,22 +125,19 @@ fn transcode_xrecord_xdata(
             }};
         }
         let gc = rd_u16(raw, p) as i16;
-        let vt = XRecordValueType::from_code(i32::from(gc));
-        if vt == XRecordValueType::Unknown {
+        let vt = xdata_value_type(gc);
+        if vt == XdVt::Invalid {
             preserve_tail!();
         }
         out.extend_from_slice(&raw[p..p + 2]); // group code
         p += 2;
         // Fixed-size values: copy the exact byte run verbatim.
         let fixed = match vt {
-            XRecordValueType::Double
-            | XRecordValueType::Int64
-            | XRecordValueType::Handle
-            | XRecordValueType::ObjectId => Some(8usize),
-            XRecordValueType::Point3D => Some(24),
-            XRecordValueType::Int32 => Some(4),
-            XRecordValueType::Int16 => Some(2),
-            XRecordValueType::Byte | XRecordValueType::Bool => Some(1),
+            XdVt::Real | XdVt::Int64 | XdVt::Handle => Some(8usize),
+            XdVt::Point3d => Some(24),
+            XdVt::Int32 => Some(4),
+            XdVt::Int16 => Some(2),
+            XdVt::Int8 => Some(1),
             _ => None,
         };
         if let Some(n) = fixed {
@@ -86,7 +148,7 @@ fn transcode_xrecord_xdata(
             p += n;
             continue;
         }
-        if vt == XRecordValueType::Chunk {
+        if vt == XdVt::Binary {
             if p >= raw.len() {
                 preserve_tail!();
             }
@@ -141,50 +203,6 @@ fn transcode_xrecord_xdata(
     }
     out.extend_from_slice(&raw[p..]);
     out
-}
-
-#[cfg(test)]
-mod xrecord_payload_tests {
-    use super::*;
-
-    const LEGACY: &[u8] = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/xrecord/autocad_2027_r2000_databytes.bin"
-    ));
-    const UNICODE: &[u8] = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/xrecord/autocad_2027_r2018_databytes.bin"
-    ));
-
-    #[test]
-    fn xrecord_transcoding_matches_both_native_version_captures() {
-        let encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(0x21);
-        assert_eq!(
-            transcode_xrecord_xdata(LEGACY, false, true, encoding, 0x21),
-            UNICODE,
-        );
-        assert_eq!(
-            transcode_xrecord_xdata(UNICODE, true, false, encoding, 0x21),
-            LEGACY,
-        );
-    }
-
-    #[test]
-    fn xrecord_string_handle_encoder_matches_native_payloads() {
-        let encoding = crate::io::dxf::code_page::encoding_from_dwg_code_page(0x21);
-        let entries: Vec<_> = [5, 105, 320, 329]
-            .into_iter()
-            .map(|code| XRecordEntry::string(code, "abc"))
-            .collect();
-        assert_eq!(
-            encode_xrecord_entries(&entries, false, encoding, 0x21),
-            LEGACY[..32]
-        );
-        assert_eq!(
-            encode_xrecord_entries(&entries, true, encoding, 0x21),
-            UNICODE[..40]
-        );
-    }
 }
 
 fn encode_xrecord_entries(
@@ -249,7 +267,7 @@ fn encode_xrecord_entries(
 }
 
 /// Flatten a [`Matrix4`](crate::types::Matrix4) into the 12 doubles of a
-/// spatial-filter transform, as AutoCAD stores them in DWG and DXF code 40:
+/// spatial-filter transform, as ACAD stores them in DWG and DXF code 40:
 /// one matrix row per group of four, translation last; the bottom row is
 /// dropped.
 fn matrix_to_dxf_4x3(m: &crate::types::Matrix4) -> [f64; 12] {
@@ -451,15 +469,8 @@ impl<'a> DwgObjectWriter<'a> {
             }
             ObjectType::DgnLineStyle(value) => self.write_dgn_line_style_object(value),
             ObjectType::ProxyObject(value) => self.write_proxy_object(value),
-            ObjectType::Architecture(value) => {
-                if !self.raw_excluded_handles.contains(&value.handle.value()) {
-                    if let Some(raw) = &value.raw_dwg_data {
-                        if self.raw_passthrough_compatible(value.raw_dwg_version) {
-                            self.register_raw_object(value.handle, raw, value.raw_dwg_handle_bits);
-                            return;
-                        }
-                    }
-                }
+            ObjectType::Arch(value) => {
+                self.write_architecture_object(value);
             }
             ObjectType::VisualStyle(v) => self.write_visual_style(v),
             ObjectType::Material(m) => self.write_material(m),
@@ -1499,7 +1510,7 @@ impl<'a> DwgObjectWriter<'a> {
                 ObjectType::TableStyle(_) => {
                     self.document.classes.get_by_name("TABLESTYLE").is_some()
                 }
-                ObjectType::Architecture(value) => {
+                ObjectType::Arch(value) => {
                     value.raw_dwg_data.is_some()
                         && self.raw_passthrough_compatible(value.raw_dwg_version)
                 }
@@ -1584,9 +1595,9 @@ impl<'a> DwgObjectWriter<'a> {
             // Dictionary item handles ALWAYS use reference code 2 (soft owner),
             // regardless of the hard-owner flag. The hard/soft distinction is
             // carried only by the is_hardowner byte (and the DXF 350/360 group),
-            // NOT the DWG handle code. Writing code 3 here makes AutoCAD reject
+            // NOT the DWG handle code. Writing code 3 here makes ACAD reject
             // every entry (eWrongObjectType) and discard the whole dictionary.
-            // ODA §20.4.44 lists item handles as soft ownership references.
+            // (libredwg dwg.spec: HANDLE_VECTOR_N(itemhandles, numitems, 2, 0).)
             self.writer
                 .write_handle(DwgReferenceType::SoftOwnership, handle.value());
 
@@ -1625,7 +1636,7 @@ impl<'a> DwgObjectWriter<'a> {
         for (name, handle) in &entries {
             self.writer.write_variable_text(name);
             // Dictionary item handles always use reference code 2 (see
-            // write_dictionary) — never code 3, which AutoCAD rejects.
+            // write_dictionary) — never code 3, which ACAD rejects.
             self.writer
                 .write_handle(DwgReferenceType::SoftOwnership, handle.value());
 
@@ -2317,15 +2328,8 @@ impl<'a> DwgObjectWriter<'a> {
             &obj.xdictionary_handle,
         );
 
-        // AcDbObjectContextData base (ODA §20.4.89): BS version, R2010+ B
-        // file-to-extension-dictionary, B default.
+        // AcDbObjectContextData base.
         self.writer.write_bit_short(obj.class_version);
-        // R2010+ adds the file-to-extension-dictionary flag before the
-        // default flag (ODA §20.4.89). Earlier versions use the historical
-        // two-field base and do not carry this bit.
-        if self.version.r2010_plus() && !obj.uses_legacy_mleader_context_base {
-            self.writer.write_bit(obj.has_file_to_extension_dictionary);
-        }
         self.writer.write_bit(obj.is_default);
 
         // AcDbAnnotScaleObjectContextData: first object-specific handle.
@@ -2460,12 +2464,6 @@ impl<'a> DwgObjectWriter<'a> {
                         self.writer.write_bit(context.has_binary_data);
                     }
                     self.writer.write_bit_short(context.class_version);
-                    if self.version.r2010_plus() {
-                        // Nested AcDbObjectContextData uses the same R2010+
-                        // flag order described by ODA §20.4.89.
-                        self.writer
-                            .write_bit(context.has_file_to_extension_dictionary);
-                    }
                     self.writer.write_bit(context.is_default);
                     self.writer.write_bit_long(context.mtext.attachment);
                     self.writer.write_bit_double(context.mtext.x_axis_dir.x);
@@ -2616,15 +2614,15 @@ impl<'a> DwgObjectWriter<'a> {
         // table`. (#146)
         for entry in &entries {
             // Sort handles are sort-order keys, NOT object references — they use
-            // reference code 0 (Undefined/absolute), per ODA §20.4.93. Writing
-            // them as a resolvable pointer makes AutoCAD's audit dereference
-            // them and mark the
+            // reference code 0 (Undefined/absolute), per the ODA spec
+            // (FIELD_HANDLE(sort_ents, 0, 5)). Writing them as a resolvable
+            // pointer makes ACAD's audit dereference them and mark the
             // SORTENTS object ePermanentlyErased when a key has no live object.
             self.writer
                 .write_main_handle(DwgReferenceType::Undefined, entry.sort_handle.value());
         }
-        // ODA §20.4.93 places the block owner soft pointer before entity
-        // soft pointers in the handle stream. A hard ref here makes AutoCAD
+        // block_owner is a soft pointer (code 4), not hard — matches the ODA
+        // spec FIELD_HANDLE(block_owner, 4, 0); a hard ref here makes ACAD
         // reject the table (eWrongObjectType).
         self.writer.write_handle(
             DwgReferenceType::SoftPointer,

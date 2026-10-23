@@ -152,7 +152,7 @@ fn owner_of(doc: &CadDocument, h: Handle) -> Option<Handle> {
     match doc.objects.get(&h)? {
         ObjectType::Dictionary(d) => Some(d.owner),
         ObjectType::Unknown { owner, .. } => Some(*owner),
-        ObjectType::Architecture(object) => Some(object.owner),
+        ObjectType::Arch(object) => Some(object.owner),
         _ => None,
     }
 }
@@ -1921,7 +1921,7 @@ fn diesel_macro(doc: &CadDocument, inner: &str, ctx: &dyn FieldContext) -> Optio
     })
 }
 
-/// AutoCAD system variables the engine answers directly (from the document +
+/// ACAD system variables the engine answers directly (from the document +
 /// context clock); anything else is delegated to the host via
 /// [`FieldContext::getvar`]. `None` keeps the cached field text.
 fn getvar(doc: &CadDocument, name: &str, ctx: &dyn FieldContext) -> Option<String> {

@@ -65,6 +65,7 @@ impl<'a> DxfWriter<'a> {
 
     /// Write to a file
     pub fn write_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        self.validate_architecture_records()?;
         let file = File::create(path)?;
         let writer = BufWriter::new(file);
         self.write_to_writer(writer)
@@ -72,6 +73,7 @@ impl<'a> DxfWriter<'a> {
 
     /// Write to any writer
     pub fn write_to_writer<W: Write>(&self, writer: W) -> Result<()> {
+        self.validate_architecture_records()?;
         if self.version == Some(crate::types::DxfVersion::AC1009) {
             return self.write_r12(writer);
         }
@@ -115,6 +117,38 @@ impl<'a> DxfWriter<'a> {
             }
             self.write_dxf(&mut stream_writer, output_version)?;
             stream_writer.flush()?;
+        }
+        Ok(())
+    }
+
+    fn validate_architecture_records(&self) -> Result<()> {
+        let r12 = self.version == Some(crate::types::DxfVersion::AC1009);
+        let reason = if r12 {
+            "R12 does not support Arch classes"
+        } else {
+            "a native DXF class body is required"
+        };
+        for entity in self.document.entities() {
+            if let EntityType::Extended(entity) = entity {
+                if let crate::entities::ExtendedEntityData::Arch(data) = &entity.data {
+                    if r12 || data.raw_dxf_codes.is_none() {
+                        return Err(crate::error::DxfError::NotImplemented(format!(
+                            "Cannot export Arch entity {} at handle {} to DXF: {reason}; save as the source DWG version to preserve its payload",
+                            data.dxf_name, entity.common.handle,
+                        )));
+                    }
+                }
+            }
+        }
+        for object in self.document.objects.values() {
+            if let crate::objects::ObjectType::Arch(object) = object {
+                if r12 || object.raw_dxf_codes.is_none() {
+                    return Err(crate::error::DxfError::NotImplemented(format!(
+                        "Cannot export Arch object {} at handle {} to DXF: {reason}; save as the source DWG version to preserve its payload",
+                        object.dxf_name, object.handle,
+                    )));
+                }
+            }
         }
         Ok(())
     }

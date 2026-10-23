@@ -4,7 +4,7 @@
 //! (which produce `*Data` structs) and the high-level domain model
 //! (entities, objects, tables in `CadDocument`).
 //!
-//! ## Two-Pass Architecture
+//! ## Two-Pass Arch
 //!
 //! **Pass 1 (Tables):** Read all table entries (layers, block headers,
 //! text styles, linetypes) and build handle→name lookup maps.
@@ -22,10 +22,10 @@ use crate::io::dwg::dwg_stream_readers::object_reader::entities;
 use crate::io::dwg::dwg_stream_readers::object_reader::objects;
 use crate::io::dwg::dwg_stream_readers::object_reader::tables;
 
-/// Recognize AutoCAD's hidden per-viewport layer-override records.
+/// Recognize ACAD's hidden per-viewport layer-override records.
 ///
 /// These records use `<base layer> @ <decimal viewport handle>` names but
-/// resolve as the base layer in AutoCAD's public layer table.
+/// resolve as the base layer in ACAD's public layer table.
 fn viewport_override_base_layer(name: &str) -> Option<&str> {
     let (base, viewport) = name.rsplit_once(" @ ")?;
     (!base.is_empty() && !viewport.is_empty() && viewport.bytes().all(|byte| byte.is_ascii_digit()))
@@ -1336,14 +1336,14 @@ impl DwgDocumentBuilder {
 
             // Recover paper-space suffixes from the BLOCK begin marker;
             // control order can drift past null or erased slots (#55, #66).
-            // Bare anonymous records instead take AutoCAD's reopen numbering
+            // Bare anonymous records instead take ACAD's reopen numbering
             // below, since their marker suffix can be stale after evaluation.
             for (idx, h, name) in &block_info {
                 if !name.starts_with('*') {
                     continue;
                 }
                 // Bare anonymous records are renumbered from live control
-                // entries when AutoCAD opens the database. Their BLOCK marker
+                // entries when ACAD opens the database. Their BLOCK marker
                 // may retain an older evaluation suffix (e.g. *U18 versus *U2).
                 // Keep those bare until anonymous_block_names resolves them;
                 // marker suffixes remain useful for paper-space records.
@@ -2565,7 +2565,7 @@ impl DwgDocumentBuilder {
         document.resolve_xrecord_names();
 
         // Advanced material properties are not stored in the AcDbMaterial
-        // object body. AutoCAD keeps them in the ADVMATERIAL XRECORD owned by
+        // object body. ACAD keeps them in the ADVMATERIAL XRECORD owned by
         // the material's extension dictionary. Expose those values on the
         // Material model while retaining the XRECORD as the authoritative
         // on-disk representation.
@@ -3545,7 +3545,7 @@ impl DwgDocumentBuilder {
                 // (seen in the wild: BLOCK_CONTROL.model_space NULL and the
                 // "Model" Layout pointing at the LAYER_CONTROL handle).
                 // Synthesizing the record under that handle duplicates it in
-                // the object stream on the next save — AutoCAD/ODA then follow
+                // the object stream on the next save — ACAD/ODA then follow
                 // the handle, find the layer table, and abort the whole file.
                 // Allocate a fresh handle instead and re-point the header and
                 // the owning Layout at it.
@@ -4970,7 +4970,7 @@ impl DwgDocumentBuilder {
                     // Carry the full text geometry the reader parsed. Without
                     // these the attribute reverts to left/baseline with no
                     // alignment point (DataFlags 0x02|0x40), discarding the
-                    // real placement — AutoCAD's R2018 reader rejects it.
+                    // real placement — ACAD's R2018 reader rejects it.
                     e.horizontal_alignment = match data.text_data.horizontal_alignment {
                         1 => HorizontalAlignment::Center,
                         2 => HorizontalAlignment::Right,
@@ -5259,7 +5259,7 @@ impl DwgDocumentBuilder {
                     e.acis_data.acis_empty_bit = data.acis_empty_bit;
                     e.acis_data.extra_acis_data = data.extra_acis_data.map(Box::new);
                     e.acis_data.wireframe_isolines = data.isolines;
-                    // The wireframe anchor AutoCAD bakes in (point_present +
+                    // The wireframe anchor ACAD bakes in (point_present +
                     // 3BD) is the body's bounding-box centre — the natural
                     // reference point. Empty/degenerate bodies (no anchor) fall
                     // back to the geometry centre, then the SAT placement.
@@ -5309,7 +5309,7 @@ impl DwgDocumentBuilder {
                     e.acis_data.acis_empty_bit = data.acis_empty_bit;
                     e.acis_data.extra_acis_data = data.extra_acis_data.map(Box::new);
                     e.acis_data.wireframe_isolines = data.isolines;
-                    // The wireframe anchor AutoCAD bakes in (point_present +
+                    // The wireframe anchor ACAD bakes in (point_present +
                     // 3BD) is the body's bounding-box centre — the natural
                     // reference point. Empty/degenerate bodies (no anchor) fall
                     // back to the geometry centre, then the SAT placement.
@@ -5350,7 +5350,7 @@ impl DwgDocumentBuilder {
                     e.acis_data.acis_empty_bit = data.acis_empty_bit;
                     e.acis_data.extra_acis_data = data.extra_acis_data.map(Box::new);
                     e.acis_data.wireframe_isolines = data.isolines;
-                    // The wireframe anchor AutoCAD bakes in (point_present +
+                    // The wireframe anchor ACAD bakes in (point_present +
                     // 3BD) is the body's bounding-box centre — the natural
                     // reference point. Empty/degenerate bodies (no anchor) fall
                     // back to the geometry centre, then the SAT placement.
@@ -5619,10 +5619,11 @@ impl DwgDocumentBuilder {
                                 data.dwg_handle_bits = reader.get_handle_bits();
                                 data.raw_dwg_data = Some(reader.raw_merged_data());
                                 data.dwg_source_version = Some(document.version);
+                                data.decode_fields();
                                 let _ = document.add_entity(EntityType::Extended(Box::new(
                                     ExtendedEntity {
                                         common: entity_common,
-                                        data: ExtendedEntityData::Architecture(data),
+                                        data: ExtendedEntityData::Arch(data),
                                     },
                                 )));
                             } else {
@@ -7812,7 +7813,7 @@ impl DwgDocumentBuilder {
                             arch.raw_dwg_data = Some(raw_data);
                             arch.raw_dwg_handle_bits = raw_handle_bits;
                             arch.raw_dwg_version = Some(document.version);
-                            crate::objects::ObjectType::Architecture(arch)
+                            crate::objects::ObjectType::Arch(arch)
                         } else {
                             crate::objects::ObjectType::Unknown {
                                 type_name,
@@ -8432,7 +8433,7 @@ fn dedupe_block_names(
     renames
 }
 
-/// AutoCAD numbers bare anonymous names in BLOCK_CONTROL order. Ordinary
+/// ACAD numbers bare anonymous names in BLOCK_CONTROL order. Ordinary
 /// records consume an ordinal too; dangling/erased entries do not. This is
 /// independent of object-handle order and excludes the control's two special
 /// model/paper-space pointers. Preserve names with an explicit stored suffix.

@@ -1,4 +1,4 @@
-//! Fixed-layout AC1009 (AutoCAD R11/R12) drawing and table headers.
+//! Fixed-layout AC1009 (ACAD R11/R12) drawing and table headers.
 
 use crate::document::{HeaderVariables, LegacyHeaderState};
 use crate::error::{DxfError, Result};

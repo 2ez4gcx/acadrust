@@ -137,7 +137,7 @@ impl LegacyEncoding {
 /// Windows-1252 fallback.
 ///
 /// # Rules
-/// - If the DXF version is AC1021 (AutoCAD 2007+) or later, UTF-8 is always
+/// - If the DXF version is AC1021 (ACAD 2007+) or later, UTF-8 is always
 ///   used regardless of $DWGCODEPAGE — callers should not call this function.
 /// - Otherwise, the code page string (case-insensitive) is looked up in the
 ///   mapping table.
@@ -323,7 +323,7 @@ pub fn encoding_from_dwg_code_page(index: u16) -> LegacyEncoding {
 
 /// Encode a string to a legacy (pre-UTF-16) DWG code page.
 ///
-/// Characters the code page cannot represent are emitted as AutoCAD CIF
+/// Characters the code page cannot represent are emitted as ACAD CIF
 /// `\U+XXXX` escapes (astral-plane characters as a surrogate pair of
 /// escapes) instead of `encoding_rs`'s HTML `&#NNNNN;` references, which
 /// no CAD application understands. Well-formed CIF escapes round-trip
@@ -351,7 +351,7 @@ pub fn encode_legacy_string(text: &str, encoding: impl Into<LegacyEncoding>) -> 
     out
 }
 
-/// Decode AutoCAD CIF `\U+XXXX` escapes (exactly four hex digits) into
+/// Decode ACAD CIF `\U+XXXX` escapes (exactly four hex digits) into
 /// Unicode characters.
 ///
 /// A high-surrogate escape followed by a low-surrogate escape combines into
@@ -407,7 +407,7 @@ pub fn decode_cif_escapes(text: &str) -> String {
     out
 }
 
-/// Decode AutoCAD MIF `\M+nxxyy` escapes into Unicode characters.
+/// Decode ACAD MIF `\M+nxxyy` escapes into Unicode characters.
 ///
 /// The digit `n` selects the legacy double-byte code page: 1 is Shift-JIS,
 /// 2 is Big5, 3 is EUC-KR, 4 is Johab, and 5 is GB2312/GBK. The following
@@ -455,7 +455,7 @@ pub fn has_legacy_escape(text: &str) -> bool {
     text.contains("\\U+") || text.contains("\\M+")
 }
 
-/// Decode both legacy AutoCAD escape formats found in pre-Unicode strings.
+/// Decode both legacy ACAD escape formats found in pre-Unicode strings.
 pub fn decode_legacy_escapes(text: &str) -> String {
     decode_cif_escapes(&decode_mif_escapes(text))
 }

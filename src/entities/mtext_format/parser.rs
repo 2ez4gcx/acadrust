@@ -1,6 +1,6 @@
 //! MTEXT format string parser.
 //!
-//! Parses AutoCAD MTEXT formatted strings into structured [`MTextDocument`]
+//! Parses ACAD MTEXT formatted strings into structured [`MTextDocument`]
 //! containing paragraphs and styled spans.
 //!
 //! For the full specification of supported control codes, see the [`mtext_format`] module.
@@ -12,7 +12,7 @@ use super::types::*;
 /// Parse an MTEXT format string into a structured document.
 ///
 /// Recognizes all control codes whether or not the content is wrapped in
-/// `{...}`. Matches the behavior of AutoCAD MTEXT and MLEADER entities.
+/// `{...}`. Matches the behavior of ACAD MTEXT and MLEADER entities.
 ///
 /// # Arguments
 ///

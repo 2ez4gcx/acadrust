@@ -1,10 +1,10 @@
-//! RGB-to-AutoCAD color mapping and material-layer utilities.
+//! RGB-to-ACAD color mapping and material-layer utilities.
 
 use crate::document::CadDocument;
 use crate::tables::{Layer, TableEntry};
 use crate::types::Color;
 
-/// Map an RGB colour to the nearest AutoCAD Color Index (ACI 1–255).
+/// Map an RGB colour to the nearest ACAD Color Index (ACI 1–255).
 ///
 /// Uses Euclidean distance in RGB space.  If you need true-colour fidelity,
 /// use [`Color::Rgb`] directly instead.
@@ -51,7 +51,7 @@ pub fn create_material_layer(
 
 /// Sanitize a string for use as a DXF layer name.
 ///
-/// Replaces characters that are invalid in AutoCAD layer names with `_`.
+/// Replaces characters that are invalid in ACAD layer names with `_`.
 fn sanitize_layer_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for ch in name.chars() {

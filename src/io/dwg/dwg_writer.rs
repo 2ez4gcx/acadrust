@@ -229,7 +229,7 @@ fn validate_unknown_records(document: &CadDocument) -> Result<()> {
             )));
         }
         if let crate::entities::EntityType::Extended(entity) = entity {
-            if let crate::entities::ExtendedEntityData::Architecture(data) = &entity.data {
+            if let crate::entities::ExtendedEntityData::Arch(data) = &entity.data {
                 if data.raw_dwg_data.is_none()
                     || data
                         .dwg_source_version
@@ -237,10 +237,14 @@ fn validate_unknown_records(document: &CadDocument) -> Result<()> {
                     || document.version == DxfVersion::AC1009
                 {
                     return Err(DxfError::NotImplemented(format!(
-                        "Cannot encode Architecture entity {} at handle {} as DWG {:?}: compatible raw DWG data is required",
+                        "Cannot encode Arch entity {} at handle {} as DWG {:?}: compatible raw DWG data is required",
                         data.dxf_name, entity.common.handle, document.version
                     )));
                 }
+                crate::io::dwg::dwg_stream_writers::DwgObjectWriter::validate_architecture_record(
+                    data,
+                    document.version,
+                )?;
             }
         }
         if let crate::entities::EntityType::Unknown(entity) = entity {
@@ -258,7 +262,7 @@ fn validate_unknown_records(document: &CadDocument) -> Result<()> {
         }
     }
     for object in document.objects.values() {
-        if let crate::objects::ObjectType::Architecture(object) = object {
+        if let crate::objects::ObjectType::Arch(object) = object {
             if object.raw_dwg_data.is_none()
                 || object
                     .raw_dwg_version
@@ -266,10 +270,11 @@ fn validate_unknown_records(document: &CadDocument) -> Result<()> {
                 || document.version == DxfVersion::AC1009
             {
                 return Err(DxfError::NotImplemented(format!(
-                    "Cannot encode Architecture object {} at handle {} as DWG {:?}: compatible raw DWG data is required",
+                    "Cannot encode Arch object {} at handle {} as DWG {:?}: compatible raw DWG data is required",
                     object.dxf_name, object.handle, document.version
                 )));
             }
+            DwgObjectWriter::validate_architecture_object(object, document.version)?;
         }
         if let crate::objects::ObjectType::Unknown {
             type_name,
@@ -1480,7 +1485,7 @@ fn write_ac18<W: Write + Seek>(
     // R2010+ per-section "extra RL" (which locates the header/classes string
     // stream) on `maintenance_version > 3`. A fresh document defaults to 0,
     // which for R2013 (AC1027) omits that RL and makes the header string
-    // stream unreadable in AutoCAD/TrueView. Use the canonical per-version
+    // stream unreadable in ACAD/TrueView. Use the canonical per-version
     // value so R2013 files are always well-formed.
     let maint = aux_header_writer::dwg_maintenance_version(version) as u8;
 

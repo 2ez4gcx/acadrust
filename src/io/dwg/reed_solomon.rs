@@ -14,7 +14,7 @@
 //! error correction is performed by our reader).
 //!
 //! On encode, real GF(2^8) parity bytes are computed so that other readers
-//! (AutoCAD, ODA) can verify and error-correct the data.
+//! (ACAD, ODA) can verify and error-correct the data.
 
 // ---------------------------------------------------------------------------
 // Constants

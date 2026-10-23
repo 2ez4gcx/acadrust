@@ -123,7 +123,7 @@ impl CadDocument {
         let scale = match insert.and_then(|h| self.get_entity(h)) {
             Some(EntityType::Insert(i)) => {
                 let s = i.x_scale().abs();
-                // AutoCAD exposes no dynamic property collection for a
+                // ACAD exposes no dynamic property collection for a
                 // nonuniformly scaled reference. Mirroring is still uniform.
                 if (i.y_scale().abs() - s).abs() > 1e-10 * s.max(1.0)
                     || (i.z_scale().abs() - s).abs() > 1e-10 * s.max(1.0)

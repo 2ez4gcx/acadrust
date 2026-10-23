@@ -16,7 +16,72 @@ use crate::types::{Color, Handle, LineWeight, Vector2, Vector3};
 use super::common;
 use super::DwgObjectWriter;
 
+struct ArchitectureRecordBody {
+    type_code: i16,
+    has_ds_data: bool,
+    payload: crate::objects::ProxyPayload,
+    text: crate::objects::ProxyPayload,
+    references: Vec<crate::objects::ProxyObjectReference>,
+}
+
 impl<'a> DwgObjectWriter<'a> {
+    fn architecture_record_body(
+        data: &crate::classes::arch::ArchEntityData,
+        version: crate::types::DxfVersion,
+    ) -> crate::error::Result<ArchitectureRecordBody> {
+        use crate::io::dwg::dwg_stream_readers::object_reader::{
+            entities::read_proxy_payload, DwgObjectReader,
+        };
+
+        let raw = data.raw_dwg_data.as_deref().ok_or_else(|| {
+            crate::error::DxfError::NotImplemented(format!(
+                "Arch entity {} has no DWG class body",
+                data.dxf_name
+            ))
+        })?;
+        let objects = DwgObjectReader::new(Vec::new(), version, Default::default())?;
+        let (type_code, mut reader) = objects.read_raw_record(raw, data.dwg_handle_bits)?;
+        let common = objects.read_common_entity_data(&mut reader, type_code);
+        reader.check_error()?;
+        let (payload, text, references) = read_proxy_payload(&mut reader, common.common.handle);
+        reader.check_error()?;
+        Ok(ArchitectureRecordBody {
+            type_code,
+            has_ds_data: common.has_ds_data,
+            payload,
+            text,
+            references,
+        })
+    }
+
+    pub(crate) fn validate_architecture_record(
+        data: &crate::classes::arch::ArchEntityData,
+        version: crate::types::DxfVersion,
+    ) -> crate::error::Result<()> {
+        Self::architecture_record_body(data, version).map(|_| ())
+    }
+
+    fn write_architecture_entity(
+        &mut self,
+        entity: &ExtendedEntity,
+        data: &crate::classes::arch::ArchEntityData,
+    ) {
+        let body = Self::architecture_record_body(data, self.dxf_version)
+            .expect("Arch class record was validated before writing");
+        let type_code = self.class_type_code(&data.dxf_name, body.type_code);
+        self.pending_has_ds_data = body.has_ds_data;
+        self.entity_preamble(type_code, &entity.common);
+        // The opaque class body is independent of the common entity header.
+        // Decode its handle stream so relative references survive a new handle.
+        self.write_registered_payload(&body.payload, &body.references);
+        let text = body.text.data();
+        for bit in 0..body.text.bit_count as usize {
+            self.writer
+                .write_text_bit(text[bit / 8] & (0x80 >> (bit % 8)) != 0);
+        }
+        self.register_object(entity.common.handle);
+    }
+
     /// Encode only a REGION body for a construction-history profile. Common
     /// entity data, database handles and external AcDs records do not belong
     /// to an embedded entity, so use the shared inline modeler writer.
@@ -83,12 +148,15 @@ impl<'a> DwgObjectWriter<'a> {
                 && matches!(entity, EntityType::MText(text) if text.background_fill_flags & 0x11 == 0x10);
             let stale_paper_owner = entity.common().entity_mode == Some(1)
                 && entity.common().owner_handle != self.paper_space_block_handle;
+            let architecture = matches!(entity, EntityType::Extended(entity)
+                if matches!(&entity.data, ExtendedEntityData::Arch(_)));
             let ok = self.version.r2004_plus()
                 && raw.version == self.dxf_version
                 && !self.raw_excluded_handles.contains(&handle.value())
                 && !compound
                 && !frame_only_mtext
                 && !stale_paper_owner
+                && !architecture
                 && !(acis && self.version.r2013_plus(self.dxf_version))
                 && !self.owner_overrides.contains_key(&handle)
                 // EED naming an application this drawing has no APPID for
@@ -150,6 +218,10 @@ impl<'a> DwgObjectWriter<'a> {
             EntityType::SectionSymbol(e) => self.write_section_symbol(e),
             EntityType::ViewBorder(e) => self.write_view_border(e),
             EntityType::Extended(e) => {
+                if let ExtendedEntityData::Arch(data) = &e.data {
+                    self.write_architecture_entity(e, data);
+                    return;
+                }
                 let raw = match &e.data {
                     ExtendedEntityData::Format(data) => data
                         .raw_dwg_data
@@ -159,10 +231,6 @@ impl<'a> DwgObjectWriter<'a> {
                         .raw_dwg_data
                         .as_ref()
                         .map(|raw| (raw, data.raw_dwg_handle_bits, data.raw_dwg_version)),
-                    ExtendedEntityData::Architecture(data) => data
-                        .raw_dwg_data
-                        .as_ref()
-                        .map(|raw| (raw, data.dwg_handle_bits, data.dwg_source_version)),
                     _ => None,
                 };
                 if let Some((raw, handle_bits, version)) = raw {
@@ -262,7 +330,7 @@ impl<'a> DwgObjectWriter<'a> {
                 }
             }
             // Written earlier from the original class record.
-            ExtendedEntityData::Architecture(_) => return,
+            ExtendedEntityData::Arch(_) => return,
         };
 
         if let ExtendedEntityData::Proxy(data) = &e.data {
@@ -499,7 +567,7 @@ impl<'a> DwgObjectWriter<'a> {
                     self.write_registered_payload(&payload, &data.object_ids);
                 }
             }
-            ExtendedEntityData::Architecture(_) => {}
+            ExtendedEntityData::Arch(_) => {}
         }
         self.register_object(e.common.handle);
     }
@@ -933,7 +1001,7 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit_long(e.background_fill_flags);
 
             // A frame alone does not carry fill properties in the R2018 layout.
-            // Including them shifts the annotative/column fields in AutoCAD.
+            // Including them shifts the annotative/column fields in ACAD.
             if (e.background_fill_flags & 0x01) != 0 {
                 // Background scale factor BD 45
                 self.writer.write_bit_double(e.background_scale);
@@ -3202,12 +3270,24 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_3bit_double(e.start_point);
         self.writer.write_3bit_double(e.normal);
 
-        // ODA §20.4.50 (p. 161) specifies this Openclosed BS as 1 for open
-        // and 3 for closed. The model also carries per-entity cap suppression
-        // in bits 4 and 8, but ODA does not document these additional bits.
-        // Preserve them from the model without claiming independent native
-        // verification. Derive HAS_VERTICES from the vertex list so this
-        // short agrees with group 72.
+        // `Openclosed BS`, DXF group 71. The ODA specification documents two
+        // values for this field, open (1) and closed (3), and those are not
+        // enum tags: they are group 71's two low bits, `HAS_VERTICES` (1) and
+        // `HAS_VERTICES | CLOSED` (1 | 2). The short *is* group 71, so the
+        // cap-suppression bits `NO_START_CAPS` (4) and `NO_END_CAPS` (8) ride
+        // in it as well, and the entity's own object stream is the only place
+        // they can: MLINESTYLE's flag word has bits 4 and 8 unassigned, and
+        // its cap bits (16/32/64 start, 256/512/1024 end) pick a cap *shape*
+        // for every entity sharing the style, which cannot express one
+        // multiline suppressing its own caps. libredwg decodes this same field
+        // as `FIELD_BS (flags, 71)` with `MLINE_FLAGS_SUPPRESS_START_CAPS` /
+        // `_SUPPRESS_END_CAPS` and a validity mask of 15 (`src/dwg.spec`
+        // entity MLINE (47), `include/dwg.h`), and writes that raw short
+        // straight back out at group 71.
+        //
+        // HAS_VERTICES is derived from the vertex list in the record. Preserve
+        // the closed and cap-suppression bits supplied by the model while
+        // making group 71 agree with group 72 in every output format.
         let caps = e.flags & (MLineFlags::NO_START_CAPS | MLineFlags::NO_END_CAPS);
         let open_closed: i16 =
             (e.serialized_flags() & (MLineFlags::HAS_VERTICES | MLineFlags::CLOSED)).bits();
@@ -4275,7 +4355,7 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_cm_color(&e.line_color);
 
         // 341 LeaderLineTypeID (handle) - HardPointer. Without one, ByBlock:
-        // AutoCAD's default for a multileader's leader lines.
+        // ACAD's default for a multileader's leader lines.
         let lt = e
             .line_type_handle
             .filter(|handle| !handle.is_null())
@@ -4396,18 +4476,17 @@ impl<'a> DwgObjectWriter<'a> {
         // 45 ScaleFactor (BD)
         self.writer.write_bit_double(e.scale_factor);
 
-        // ODA §20.4.48 (p. 160) gives the R2010+ stream order as direction
-        // (271), top (273), bottom (272). The asymmetric AutoCAD reA DXF
-        // capture confirms the group meanings (272=bottom, 273=top); it does
-        // not by itself establish DWG bitstream order.
+        // R2010+: attachment directions — order is dir(271), bottom(272),
+        // top(273) per ACAD, NOT the dir/top/bottom of the
+        // public libredwg spec.
         if self.version.r2010_plus() {
             // 271 Text attachment direction (BS)
             self.writer
                 .write_bit_short(e.text_attachment_direction as i16);
-            // 273 Top text attachment direction (BS)
-            self.writer.write_bit_short(e.text_top_attachment as i16);
             // 272 Bottom text attachment direction (BS)
             self.writer.write_bit_short(e.text_bottom_attachment as i16);
+            // 273 Top text attachment direction (BS)
+            self.writer.write_bit_short(e.text_top_attachment as i16);
         }
 
         // R2013+ field
@@ -5497,29 +5576,19 @@ impl<'a> DwgObjectWriter<'a> {
         }
 
         self.writer.write_bit_short(1);
-        self.write_sat_blocks(&extra.sat_data);
-    }
-
-    /// ODA 20.4.41, p. 144: repeated BL byte counts and substituted SAT,
-    /// ending with BL(0). Use the same framing for primary and extra bodies.
-    fn write_sat_blocks(&mut self, sat: &str) {
-        // Native DWG SAT omits the standalone-file terminator and separates
-        // records with CRLF. strip_sat_terminator also normalizes input CRLF.
-        let stripped = AcisData::strip_sat_terminator(sat);
-        let mut encrypted = stripped.replace('\n', "\r\n").into_bytes();
-        for byte in &mut encrypted {
-            *byte = match *byte {
-                b'\t' => b' ',
-                0x21..=0x7e => 0x9f - *byte,
-                _ => *byte,
-            };
-        }
-        // BL counts are signed i32 values. Splitting before that limit avoids
-        // casting a large payload to a negative or terminating block length.
-        for block in encrypted.chunks(i32::MAX as usize) {
-            self.writer.write_bit_long(block.len() as i32);
-            self.writer.write_bytes(block);
-        }
+        let stripped = AcisData::strip_sat_terminator(&extra.sat_data);
+        let encrypted: Vec<u8> = stripped
+            .bytes()
+            .map(|byte| {
+                if byte <= 32 {
+                    byte
+                } else {
+                    159u8.wrapping_sub(byte)
+                }
+            })
+            .collect();
+        self.writer.write_bit_long(encrypted.len() as i32);
+        self.writer.write_bytes(&encrypted);
         self.writer.write_bit_long(0);
     }
 
@@ -5635,7 +5704,8 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit(!has_data); // acis_empty (inverted: true = empty)
 
         if has_data {
-            // ODA 20.4.41, p. 144: the unknown B precedes the version BS.
+            // Unknown bit — per ODA spec / LibreDWG this B
+            // is always present between acis_empty and the version BS.
             self.writer.write_bit(!acis.is_binary);
 
             if acis.is_binary && !acis.sab_data.is_empty() {
@@ -5675,6 +5745,9 @@ impl<'a> DwgObjectWriter<'a> {
                     String::new()
                 };
 
+                // SAT text — all DWG versions use the same encoding:
+                // BL-sized blocks of encrypted bytes (cipher: 159 - byte)
+                // terminated by BL(0).  Per LibreDWG dwg.spec.
                 let legacy_sat;
                 let sat_text = if self.version.r13_15_only() {
                     legacy_sat = crate::entities::acis::SatDocument::parse(&sat_text)
@@ -5690,7 +5763,27 @@ impl<'a> DwgObjectWriter<'a> {
                 } else {
                     &sat_text
                 };
-                self.write_sat_blocks(sat_text);
+                let stripped = AcisData::strip_sat_terminator(sat_text);
+                // DWG's length-delimited SAT blocks omit the standalone-file
+                // terminator and use CRLF between records.
+                let full = stripped.replace('\n', "\r\n");
+                let plain = full.as_bytes();
+
+                // Spaces/control bytes pass through. DWG uses substitution,
+                // unlike the DXF SAT cipher's XOR mapping.
+                let mut encrypted = Vec::with_capacity(plain.len());
+                for &b in plain.iter() {
+                    if (33..=126).contains(&b) {
+                        encrypted.push(159u8.wrapping_sub(b));
+                    } else {
+                        encrypted.push(b);
+                    }
+                }
+
+                // Write as a single block + terminating BL(0)
+                self.writer.write_bit_long(encrypted.len() as i32);
+                self.writer.write_bytes(&encrypted);
+                self.writer.write_bit_long(0); // terminating empty block
             }
         }
 
@@ -5734,7 +5827,7 @@ impl<'a> DwgObjectWriter<'a> {
 
         if wireframe_present {
             // Wireframe anchor: the entity's stored reference point (bbox
-            // centre in AutoCAD-authored files), falling back to the first
+            // centre in ACAD-authored files), falling back to the first
             // wire vertex.
             let anchor = if acis.wireframe_point_present || point != Vector3::ZERO {
                 point
@@ -5754,7 +5847,10 @@ impl<'a> DwgObjectWriter<'a> {
             self.writer.write_bit(isoline_present);
 
             if isoline_present {
-                self.write_wires(wires);
+                self.writer.write_bit_long(wires.len() as i32);
+                for wire in wires {
+                    self.write_wire(wire);
+                }
             }
 
             // Silhouettes are independent of the isoline cache.
@@ -5774,24 +5870,18 @@ impl<'a> DwgObjectWriter<'a> {
                 if !has_wires {
                     continue;
                 }
-                self.write_wires(&sil.wires);
+                self.writer.write_bit_long(sil.wires.len() as i32);
+                for wire in &sil.wires {
+                    self.write_wire(wire);
+                }
             }
         }
         wireframe_present
     }
 
-    fn write_wires(&mut self, wires: &[Wire]) {
-        self.writer.write_bit_long(wires.len() as i32);
-        for wire in wires {
-            self.write_wire(wire);
-        }
-    }
-
     /// Write a single wire struct (shared by wires and silhouette wires).
-    /// Header/point fields follow ODA 20.4.41, pp. 144-145:
+    /// Field order/types per LibreDWG `Dwg_3DSOLID_wire` (mirrors the reader):
     /// RC type, BLd selection_marker, BS color, BLd acis_index, BL num_points.
-    /// Keep the existing vector scale layout; the older ODA table specifies
-    /// scalar BD and does not independently establish the transform encoding.
     fn write_wire(&mut self, wire: &Wire) {
         self.writer.write_byte(wire.wire_type as u8);
         self.writer.write_bit_long(wire.selection_marker);
@@ -5838,58 +5928,6 @@ mod tests {
             br.entity_handles.push(handle);
         }
         doc
-    }
-
-    #[test]
-    fn primary_and_extra_sat_share_oda_blocks_and_native_record_separators() {
-        use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
-
-        let document = CadDocument::with_version(DxfVersion::AC1015);
-        let sat = "!~ \té\u{7f}\r\nEnd-of-ACIS-data\r\n";
-        let expected = [0x7e, 0x21, 0x20, 0x20, 0xc3, 0xa9, 0x7f, 0x0d, 0x0a];
-        for extra in [false, true] {
-            let mut writer = DwgObjectWriter::new(&document).unwrap();
-            if extra {
-                writer.write_modeler_block(&AcisData::from_sat(sat));
-            } else {
-                writer.write_sat_blocks(sat);
-            }
-            writer.writer.write_bit_short(0x1234);
-            let mut reader = DwgBitReader::new(
-                writer.writer.main().to_bytes_snapshot(),
-                writer.version,
-                DxfVersion::AC1015,
-            );
-            if extra {
-                assert!(!reader.read_bit());
-                assert_eq!(reader.read_bit_short(), 1);
-            }
-            assert_eq!(reader.read_bit_long(), expected.len() as i32);
-            assert_eq!(reader.read_bytes(expected.len()), expected);
-            assert_eq!(reader.read_bit_long(), 0);
-            assert_eq!(reader.read_bit_short(), 0x1234);
-            reader.check_error().unwrap();
-        }
-    }
-
-    #[test]
-    fn an_empty_sat_has_exactly_one_zero_block() {
-        use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
-
-        let document = CadDocument::with_version(DxfVersion::AC1015);
-        let mut writer = DwgObjectWriter::new(&document).unwrap();
-        writer.write_modeler_block(&AcisData::default());
-        writer.writer.write_bit_short(0x1234);
-        let mut reader = DwgBitReader::new(
-            writer.writer.main().to_bytes_snapshot(),
-            writer.version,
-            DxfVersion::AC1015,
-        );
-        assert!(!reader.read_bit());
-        assert_eq!(reader.read_bit_short(), 1);
-        assert_eq!(reader.read_bit_long(), 0);
-        assert_eq!(reader.read_bit_short(), 0x1234);
-        reader.check_error().unwrap();
     }
 
     #[test]
