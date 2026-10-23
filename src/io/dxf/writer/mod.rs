@@ -18,6 +18,29 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+/// An angle in degrees for a DXF angle group, chosen so the reader's
+/// `to_radians` gives back exactly `radians`. A plain `to_degrees` can land
+/// one representable step off that value, and the angle then reads back
+/// changed by one ULP.
+pub(crate) fn degrees(radians: f64) -> f64 {
+    let degrees = radians.to_degrees();
+    if !degrees.is_finite() || degrees.to_radians() == radians {
+        return degrees;
+    }
+    let (mut down, mut up) = (degrees, degrees);
+    for _ in 0..4 {
+        up = up.next_up();
+        if up.to_radians() == radians {
+            return up;
+        }
+        down = down.next_down();
+        if down.to_radians() == radians {
+            return down;
+        }
+    }
+    degrees
+}
+
 /// DXF file writer
 pub struct DxfWriter<'a> {
     document: &'a CadDocument,
