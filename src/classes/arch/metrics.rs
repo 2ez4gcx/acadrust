@@ -259,8 +259,5 @@ pub(crate) fn write_member_length(
     size: MemberSize,
     length: f64,
 ) -> bool {
-    super::geometry::write_bit_doubles_at(
-        raw,
-        &[(size.length_bit, length), (body + 934, length)],
-    )
+    super::geometry::write_bit_doubles_at(raw, &[(size.length_bit, length), (body + 934, length)])
 }

@@ -4308,8 +4308,13 @@ impl DwgDocumentBuilder {
                     e.dwg_unknown_bit4 = data.unknown_bit4;
                     e.dwg_unknown_bit5 = data.unknown_bit5;
                     e.dwg_unknown_short1 = data.unknown_short1;
-                    e.hookline_enabled =
-                        self.obj_reader.version().r13_14_only() && (data.arrowhead_type & 8) != 0;
+                    // R13–R14 stores the hook in bit 3 of the arrowhead field.
+                    // Later versions derive it from the leader geometry.
+                    e.hookline_enabled = if self.obj_reader.version().r13_14_only() {
+                        (data.arrowhead_type & 8) != 0
+                    } else {
+                        e.derived_hookline_enabled()
+                    };
                     let _ = document.add_entity(EntityType::Leader(e));
                 }
                 OBJ_TOLERANCE => {

@@ -103,7 +103,14 @@ fn zero_coordinate_wall_translation_preserves_native_record_and_dwg_handles() {
 
 #[test]
 fn translating_by_an_existing_coordinate_does_not_cascade() {
-    let document = wall(v(240.0, 0.0, 0.0), v(240.0, 6000.0, 0.0), 240.0, 3000.0, None).unwrap();
+    let document = wall(
+        v(240.0, 0.0, 0.0),
+        v(240.0, 6000.0, 0.0),
+        240.0,
+        3000.0,
+        None,
+    )
+    .unwrap();
     let (mut data, mut graphics) = first(&document, ArchKind::Wall);
     let before = data.profiles.clone();
     assert!(data.translate(&mut graphics, v(240.0, 0.0, 0.0)));
@@ -187,12 +194,31 @@ fn constructor_fields_encoded_as_zero_or_one_remain_editable() {
 
 #[test]
 fn wall_baseline_turns_horizontal_and_diagonal() {
-    let document = wall(v(25000.0, 15000.0, 0.0), v(25000.0, 21000.0, 0.0), 300.0, 3200.0, None).unwrap();
+    let document = wall(
+        v(25000.0, 15000.0, 0.0),
+        v(25000.0, 21000.0, 0.0),
+        300.0,
+        3200.0,
+        None,
+    )
+    .unwrap();
     let (mut data, mut graphics) = first(&document, ArchKind::Wall);
-    let horizontal = (v(1000.0, 2000.0, 0.0), v(9000.0, 2000.0, 0.0), 240.0, 3000.0);
+    let horizontal = (
+        v(1000.0, 2000.0, 0.0),
+        v(9000.0, 2000.0, 0.0),
+        240.0,
+        3000.0,
+    );
     let diagonal = (v(-120.0, 50.0, 0.0), v(2880.0, 4050.0, 0.0), 175.0, 2800.0);
     for (start, end, width, height) in [horizontal, diagonal] {
-        assert!(set_wall(&mut data, &mut graphics, start, end, width, height));
+        assert!(set_wall(
+            &mut data,
+            &mut graphics,
+            start,
+            end,
+            width,
+            height
+        ));
         let geometry = data.straight_wall_geometry().unwrap();
         assert!((geometry.start - start).length() < 1e-6);
         assert!((geometry.end - end).length() < 1e-6);
@@ -224,7 +250,12 @@ fn wall_baseline_turns_horizontal_and_diagonal() {
     assert!((geometry.end - diagonal.1).length() < 1e-6);
 }
 
-fn ribbon_matches_baseline(data: &ArchEntityData, start: Vector3, end: Vector3, width: f64) -> bool {
+fn ribbon_matches_baseline(
+    data: &ArchEntityData,
+    start: Vector3,
+    end: Vector3,
+    width: f64,
+) -> bool {
     let edge = end - start;
     let length = edge.length();
     let direction = edge * (1.0 / length);
@@ -235,7 +266,8 @@ fn ribbon_matches_baseline(data: &ArchEntityData, start: Vector3, end: Vector3, 
                 let relative = *point - start;
                 let along = relative.dot(&direction);
                 let across = relative.dot(&left);
-                (-1e-6..=length + 1e-6).contains(&along) && (across.abs() - width * 0.5).abs() < 1e-4
+                (-1e-6..=length + 1e-6).contains(&along)
+                    && (across.abs() - width * 0.5).abs() < 1e-4
             })
     })
 }

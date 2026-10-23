@@ -95,20 +95,76 @@ struct ArchLayer {
 }
 
 const ARCH_LAYERS: &[ArchLayer] = &[
-    ArchLayer { name: "A-Wall", color: 113, line_weight: 50 },
-    ArchLayer { name: "A-Door", color: 31, line_weight: 25 },
-    ArchLayer { name: "A-Glaz", color: 151, line_weight: 25 },
-    ArchLayer { name: "A-Wall-Open", color: 31, line_weight: 25 },
-    ArchLayer { name: "A-Flor-Strs", color: 31, line_weight: 25 },
-    ArchLayer { name: "A-Flor-Hral", color: 11, line_weight: 25 },
-    ArchLayer { name: "A-Glaz-Assm", color: 71, line_weight: 25 },
-    ArchLayer { name: "A-Glaz-Curt", color: 52, line_weight: 35 },
-    ArchLayer { name: "A-Area-Spce", color: 32, line_weight: 35 },
-    ArchLayer { name: "A-Slab", color: 192, line_weight: 35 },
-    ArchLayer { name: "A-Roof", color: 132, line_weight: 35 },
-    ArchLayer { name: "A-Roof-Slab", color: 12, line_weight: 35 },
-    ArchLayer { name: "S-Beam", color: 12, line_weight: 50 },
-    ArchLayer { name: "S-Cols", color: 52, line_weight: 35 },
+    ArchLayer {
+        name: "A-Wall",
+        color: 113,
+        line_weight: 50,
+    },
+    ArchLayer {
+        name: "A-Door",
+        color: 31,
+        line_weight: 25,
+    },
+    ArchLayer {
+        name: "A-Glaz",
+        color: 151,
+        line_weight: 25,
+    },
+    ArchLayer {
+        name: "A-Wall-Open",
+        color: 31,
+        line_weight: 25,
+    },
+    ArchLayer {
+        name: "A-Flor-Strs",
+        color: 31,
+        line_weight: 25,
+    },
+    ArchLayer {
+        name: "A-Flor-Hral",
+        color: 11,
+        line_weight: 25,
+    },
+    ArchLayer {
+        name: "A-Glaz-Assm",
+        color: 71,
+        line_weight: 25,
+    },
+    ArchLayer {
+        name: "A-Glaz-Curt",
+        color: 52,
+        line_weight: 35,
+    },
+    ArchLayer {
+        name: "A-Area-Spce",
+        color: 32,
+        line_weight: 35,
+    },
+    ArchLayer {
+        name: "A-Slab",
+        color: 192,
+        line_weight: 35,
+    },
+    ArchLayer {
+        name: "A-Roof",
+        color: 132,
+        line_weight: 35,
+    },
+    ArchLayer {
+        name: "A-Roof-Slab",
+        color: 12,
+        line_weight: 35,
+    },
+    ArchLayer {
+        name: "S-Beam",
+        color: 12,
+        line_weight: 50,
+    },
+    ArchLayer {
+        name: "S-Cols",
+        color: 52,
+        line_weight: 35,
+    },
 ];
 
 fn default_layer(kind: ArchKind) -> Result<&'static ArchLayer, DxfError> {
@@ -145,15 +201,15 @@ fn ensure_entity_layer(
         }
     };
     if let Some(existing) = document.layers.get(&name) {
-        document.header.current_layer_name.clone_from(&existing.name);
+        document
+            .header
+            .current_layer_name
+            .clone_from(&existing.name);
         document.header.current_layer_handle = existing.handle;
         return Ok((existing.name.clone(), existing.handle));
     }
     let mut layer = Layer::new(&name);
-    if let Some(known) = ARCH_LAYERS
-        .iter()
-        .find(|layer| layer.name == name)
-    {
+    if let Some(known) = ARCH_LAYERS.iter().find(|layer| layer.name == name) {
         layer.color = Color::from_index(known.color);
         layer.line_weight = LineWeight::from_value(known.line_weight);
     }
@@ -176,9 +232,7 @@ fn finite(point: Vector3) -> bool {
 }
 fn validate_size(width: f64, height: f64) -> Result<(), DxfError> {
     if !width.is_finite() || width <= 0.0 || !height.is_finite() || height <= 0.0 {
-        Err(invalid(
-            "Arch dimensions must be finite and positive",
-        ))
+        Err(invalid("Arch dimensions must be finite and positive"))
     } else {
         Ok(())
     }
@@ -389,9 +443,7 @@ fn add_style(
     object.raw_dwg_data = Some(raw);
     object.raw_dwg_handle_bits = handle_bits;
     object.raw_dwg_version = Some(DxfVersion::AC1032);
-    document
-        .objects
-        .insert(handle, ObjectType::Arch(object));
+    document.objects.insert(handle, ObjectType::Arch(object));
     Ok(handle)
 }
 

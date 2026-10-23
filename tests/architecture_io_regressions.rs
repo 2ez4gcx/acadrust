@@ -122,7 +122,11 @@ fn object_drawing() -> (CadDocument, Handle, Handle) {
     doc.version = DxfVersion::AC1032;
     doc.classes
         .add_or_update(DxfClass::new("AEC_WALL_STYLE", "AecDbWallStyle"));
-    let class_number = doc.classes.get_by_name("AEC_WALL_STYLE").unwrap().class_number;
+    let class_number = doc
+        .classes
+        .get_by_name("AEC_WALL_STYLE")
+        .unwrap()
+        .class_number;
     let handle = doc.allocate_handle();
     let xdictionary = doc.allocate_handle();
     let root = doc.header.named_objects_dict_handle;
@@ -178,7 +182,10 @@ fn assert_object_body(doc: &CadDocument, handle: Handle, owner: Handle) {
     assert_eq!(reader.read_raw_long(), 0x12345678);
     assert_eq!(reader.read_bit_double(), 123.75);
     assert_eq!(reader.read_variable_text(), "opaque AEC object state");
-    assert_eq!(reader.read_handle(), doc.header.named_objects_dict_handle.value());
+    assert_eq!(
+        reader.read_handle(),
+        doc.header.named_objects_dict_handle.value()
+    );
     let (target, kind) = reader.read_typed_handle();
     assert_eq!(target, doc.header.named_objects_dict_handle.value());
     assert_eq!(kind, DwgReferenceType::HardPointer);
@@ -294,9 +301,7 @@ fn dxf_export_rejects_dwg_only_aec_objects_before_writing() {
     let error = DxfWriter::new(&doc)
         .write_to_writer(&mut output)
         .unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("Arch object AEC_WALL_STYLE"));
+    assert!(error.to_string().contains("Arch object AEC_WALL_STYLE"));
     assert!(output.is_empty());
 }
 

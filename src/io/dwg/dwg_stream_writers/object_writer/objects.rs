@@ -2335,8 +2335,7 @@ impl<'a> DwgObjectWriter<'a> {
         let legacy_mleader_base = obj.uses_legacy_mleader_context_base
             && matches!(obj.kind, ObjectContextKind::MLeader(_));
         if self.version.r2010_plus() && !legacy_mleader_base {
-            self.writer
-                .write_bit(obj.has_file_to_extension_dictionary);
+            self.writer.write_bit(obj.has_file_to_extension_dictionary);
         }
         self.writer.write_bit(obj.is_default);
 

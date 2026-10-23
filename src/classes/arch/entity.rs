@@ -246,8 +246,7 @@ fn translate_plan_frame(
         super::geometry::write_bit_doubles_at(
             raw,
             &[(frame.positions[0], x), (frame.positions[1], y)],
-        )
-            && rewrite_preview(next, graphics, |point| point + delta)
+        ) && rewrite_preview(next, graphics, |point| point + delta)
     })
 }
 

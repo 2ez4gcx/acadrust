@@ -8,9 +8,15 @@ fn window_numbers(path: &str) -> Vec<(i64, f64)> {
     use acadrust::types::DxfVersion;
     let doc = DwgReader::from_file(path).unwrap().read().unwrap();
     for entity in doc.entities() {
-        let EntityType::Extended(entity) = entity else { continue };
-        let ExtendedEntityData::Arch(data) = &entity.data else { continue };
-        if data.dxf_name != "AEC_WINDOW" { continue; }
+        let EntityType::Extended(entity) = entity else {
+            continue;
+        };
+        let ExtendedEntityData::Arch(data) = &entity.data else {
+            continue;
+        };
+        if data.dxf_name != "AEC_WINDOW" {
+            continue;
+        }
         let raw = data.raw_dwg_data.as_deref().unwrap();
         let base = DwgBitReader::new(raw.to_vec(), DwgVersion::AC24, DxfVersion::AC1032);
         let limit = raw.len() as i64 * 8 - 80;
@@ -50,9 +56,18 @@ fn diff_windows() {
     }
     bits.sort();
     for bit in bits {
-        let a = original.iter().find(|(item, _)| *item == bit).map(|(_, value)| *value);
-        let b = ours.iter().find(|(item, _)| *item == bit).map(|(_, value)| *value);
-        let c = acad.iter().find(|(item, _)| *item == bit).map(|(_, value)| *value);
+        let a = original
+            .iter()
+            .find(|(item, _)| *item == bit)
+            .map(|(_, value)| *value);
+        let b = ours
+            .iter()
+            .find(|(item, _)| *item == bit)
+            .map(|(_, value)| *value);
+        let c = acad
+            .iter()
+            .find(|(item, _)| *item == bit)
+            .map(|(_, value)| *value);
         if a != b || b != c {
             println!("  @{bit} {a:?} -> {b:?} -> {c:?}");
         }
@@ -88,8 +103,12 @@ fn main() {
         let doc = DwgReader::from_file(path).unwrap().read().unwrap();
         println!("\n{path}");
         let wall = doc.entities().find_map(|entity| {
-            let EntityType::Extended(entity) = entity else { return None };
-            let ExtendedEntityData::Arch(data) = &entity.data else { return None };
+            let EntityType::Extended(entity) = entity else {
+                return None;
+            };
+            let ExtendedEntityData::Arch(data) = &entity.data else {
+                return None;
+            };
             (data.kind == acadrust::classes::arch::ArchKind::Wall).then_some(entity.common.handle)
         });
         if let Some(wall) = wall {

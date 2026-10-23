@@ -407,9 +407,7 @@ impl Entity for ExtendedEntity {
                 vec![data.extents_min, data.extents_max]
             }
             ExtendedEntityData::PointCloudEx(data) => point_cloud_ex_corners(data).to_vec(),
-            ExtendedEntityData::Arch(data) => {
-                data.profiles.iter().flatten().copied().collect()
-            }
+            ExtendedEntityData::Arch(data) => data.profiles.iter().flatten().copied().collect(),
             _ => Vec::new(),
         };
         BoundingBox3D::from_points(&points).unwrap_or_default()

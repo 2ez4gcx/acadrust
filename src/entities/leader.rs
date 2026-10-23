@@ -310,6 +310,36 @@ impl Leader {
         self.hookline_enabled = enabled;
     }
 
+    /// Whether R2000+ AutoCAD draws a hook that is not stored in the vertices.
+    ///
+    /// The record has no hook flag after R14. A straight text leader gets a
+    /// hook when the last segment's smaller angle to `horizontal_direction`
+    /// is greater than 15°. A spline, a non-text annotation, or fewer than
+    /// two vertices has no hook. The hook segment itself is not one of the
+    /// stored vertices.
+    pub(crate) fn derived_hookline_enabled(&self) -> bool {
+        if self.creation_type != LeaderCreationType::WithText
+            || self.path_type != LeaderPathType::StraightLine
+            || self.vertices.len() < 2
+        {
+            return false;
+        }
+        let last = self.vertices.len() - 1;
+        let segment = self.vertices[last] - self.vertices[last - 1];
+        let axis = self.horizontal_direction;
+        let denom = segment.length() * axis.length();
+        if denom <= 1e-12 {
+            return false;
+        }
+        let signed = (segment.dot(&axis) / denom).clamp(-1.0, 1.0);
+        let mut angle = signed.acos();
+        if angle > std::f64::consts::FRAC_PI_2 {
+            angle = std::f64::consts::PI - angle;
+        }
+        // Exactly 15° does not hook. The slack covers acos rounding there.
+        angle.to_degrees() > 15.0 + 1e-8
+    }
+
     /// Set the dimension style
     pub fn set_dimension_style(&mut self, style: impl Into<String>) {
         self.dimension_style = style.into();
@@ -588,6 +618,68 @@ mod tests {
             LeaderCreationType::WithBlock
         );
         assert_eq!(LeaderCreationType::WithBlock.to_value(), 2);
+    }
+
+    fn text_leader(end: Vector3) -> Leader {
+        Leader::two_point(Vector3::new(0.0, 0.0, 0.0), end)
+    }
+
+    fn at_degrees(degrees: f64) -> Leader {
+        let radians = degrees.to_radians();
+        text_leader(Vector3::new(
+            100.0 * radians.cos(),
+            100.0 * radians.sin(),
+            0.0,
+        ))
+    }
+
+    #[test]
+    fn r2000_hook_follows_the_15_degree_axis_rule() {
+        for degrees in [0.0, 10.0, 14.0, 15.0, 165.0, 166.0, 170.0, 180.0, -15.0] {
+            assert!(
+                !at_degrees(degrees).derived_hookline_enabled(),
+                "{degrees}° should not hook"
+            );
+        }
+        for degrees in [15.1, 16.0, 20.0, 45.0, 90.0, 160.0, 164.0, -15.1, -16.0] {
+            assert!(
+                at_degrees(degrees).derived_hookline_enabled(),
+                "{degrees}° should hook"
+            );
+        }
+    }
+
+    #[test]
+    fn r2000_hook_uses_the_leaders_horizontal_direction() {
+        let mut along_axis = text_leader(Vector3::new(0.0, 100.0, 0.0));
+        along_axis.horizontal_direction = Vector3::new(0.0, 1.0, 0.0);
+        assert!(!along_axis.derived_hookline_enabled());
+
+        let mut across_axis = text_leader(Vector3::new(100.0, 0.0, 0.0));
+        across_axis.horizontal_direction = Vector3::new(0.0, 1.0, 0.0);
+        assert!(across_axis.derived_hookline_enabled());
+    }
+
+    #[test]
+    fn r2000_hook_requires_a_straight_text_leader() {
+        let mut spline = at_degrees(45.0);
+        spline.path_type = LeaderPathType::Spline;
+        assert!(!spline.derived_hookline_enabled());
+
+        let mut block = at_degrees(45.0);
+        block.creation_type = LeaderCreationType::WithBlock;
+        assert!(!block.derived_hookline_enabled());
+
+        let one_point = Leader::from_vertices(vec![Vector3::new(0.0, 0.0, 0.0)]);
+        assert!(!one_point.derived_hookline_enabled());
+
+        let mut landing = Leader::with_landing(
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(10.0, 10.0, 0.0),
+            20.0,
+        );
+        landing.hookline_enabled = false;
+        assert!(!landing.derived_hookline_enabled());
     }
 
     #[test]

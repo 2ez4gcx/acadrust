@@ -527,7 +527,7 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_double(linetype_scale);
 
         // ── R13-R14 only: invisibility + early return ──
-        // DXF group 60 convention (all DWG versions): 0 = visible, non-zero = invisible
+        // Bit 0 is entity visibility. The bool does not carry the other bits.
         if self.version.r13_14_only() {
             self.writer.write_bit_short(if invisible { 1 } else { 0 });
             return;

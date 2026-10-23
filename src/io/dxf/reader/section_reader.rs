@@ -857,8 +857,9 @@ fn class_dxf_hatch_context_boundary(
                 center: fields.point2(section, 10),
                 major_axis_endpoint: fields.point2(section, 11),
                 minor_axis_ratio: fields.f64(section, 40),
-                start_angle: fields.f64(section, 50),
-                end_angle: fields.f64(section, 51),
+                // Groups 50/51 are degrees, same as a circular edge.
+                start_angle: fields.f64(section, 50).to_radians(),
+                end_angle: fields.f64(section, 51).to_radians(),
                 counter_clockwise: fields.bool(section, 73),
             })),
             4 => {
@@ -15912,8 +15913,15 @@ impl<'a> SectionReader<'a> {
                     11 => edge.major_axis_endpoint.x = p.as_double().unwrap_or(0.0),
                     21 => edge.major_axis_endpoint.y = p.as_double().unwrap_or(0.0),
                     40 => edge.minor_axis_ratio = p.as_double().unwrap_or(1.0),
-                    50 => edge.start_angle = p.as_double().unwrap_or(0.0),
-                    51 => edge.end_angle = p.as_double().unwrap_or(std::f64::consts::TAU),
+                    // Groups 50/51 are degrees. A missing or unparseable 51
+                    // keeps the full-ellipse default, which is already radians.
+                    50 => edge.start_angle = p.as_double().unwrap_or(0.0).to_radians(),
+                    51 => {
+                        edge.end_angle = p
+                            .as_double()
+                            .map(f64::to_radians)
+                            .unwrap_or(std::f64::consts::TAU)
+                    }
                     73 => edge.counter_clockwise = p.as_i16().unwrap_or(1) != 0,
                     _ => {
                         self.reader.push_back(p);
@@ -17590,6 +17598,9 @@ impl<'a> SectionReader<'a> {
         // without text, which the reference application reports as a bad
         // annotation id.
         leader.creation_type = crate::entities::leader::LeaderCreationType::NoAnnotation;
+        // Group 74 defaults to 1 (same direction as the horizontal vector).
+        // AutoCAD omits the group when it has that default.
+        leader.hookline_direction = crate::entities::leader::HooklineDirection::Same;
         let mut normal = PointReader::new();
         let mut horiz_dir = PointReader::new();
         let mut block_offset = PointReader::new();

@@ -551,7 +551,10 @@ fn sample_aec_records_share_one_envelope() {
                 path.display(),
                 data.dxf_name
             );
-            let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
             let straight_fixture = matches!(
                 file_name,
                 "WALL_VERTICAL.dwg"
@@ -604,8 +607,14 @@ fn sample_aec_records_share_one_envelope() {
 fn constructors_use_autocad_architecture_layers_unless_one_is_requested() {
     let cases = [
         (
-            acadrust::classes::arch::wall(Vector3::ZERO, Vector3::new(1000.0, 0.0, 0.0), 240.0, 3000.0, None)
-                .unwrap(),
+            acadrust::classes::arch::wall(
+                Vector3::ZERO,
+                Vector3::new(1000.0, 0.0, 0.0),
+                240.0,
+                3000.0,
+                None,
+            )
+            .unwrap(),
             "AEC_WALL",
             "A-Wall",
             113,
@@ -700,7 +709,8 @@ fn constructed_entities_survive_dwg_serialization_without_fixture_state() {
     let documents = [
         (
             "AEC_WALL",
-            acadrust::classes::arch::wall(expected_start, expected_end, 175.0, 2800.0, None).unwrap(),
+            acadrust::classes::arch::wall(expected_start, expected_end, 175.0, 2800.0, None)
+                .unwrap(),
         ),
         (
             "AEC_DOOR",
@@ -868,9 +878,7 @@ fn constructed_aec_styles_match_native_filefiler_body_ends() {
             .objects
             .values()
             .find_map(|object| match object {
-                acadrust::objects::ObjectType::Arch(object)
-                    if object.dxf_name == class_name =>
-                {
+                acadrust::objects::ObjectType::Arch(object) if object.dxf_name == class_name => {
                     Some(object)
                 }
                 _ => None,
@@ -933,11 +941,17 @@ fn constructor_parameters_are_validated_before_encoding() {
         assert!(acadrust::classes::arch::window(bad, 1500.0, None).is_err());
         assert!(acadrust::classes::arch::window(1200.0, bad, None).is_err());
         assert!(
-            acadrust::classes::arch::wall(Vector3::ZERO, Vector3::UNIT_X, bad, 3000.0, None).is_err()
+            acadrust::classes::arch::wall(Vector3::ZERO, Vector3::UNIT_X, bad, 3000.0, None)
+                .is_err()
         );
-        assert!(acadrust::classes::arch::wall(Vector3::ZERO, Vector3::UNIT_X, 240.0, bad, None).is_err());
+        assert!(
+            acadrust::classes::arch::wall(Vector3::ZERO, Vector3::UNIT_X, 240.0, bad, None)
+                .is_err()
+        );
     }
-    assert!(acadrust::classes::arch::wall(Vector3::ZERO, Vector3::ZERO, 240.0, 3000.0, None).is_err());
+    assert!(
+        acadrust::classes::arch::wall(Vector3::ZERO, Vector3::ZERO, 240.0, 3000.0, None).is_err()
+    );
     assert!(acadrust::classes::arch::wall(
         Vector3::ZERO,
         Vector3::new(1.0, 0.0, 1.0),

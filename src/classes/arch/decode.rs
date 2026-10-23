@@ -123,7 +123,9 @@ fn open_object(object: &ArchObject) -> Option<DwgMergedReader> {
     let raw = object.raw_dwg_data.as_deref()?;
     let version = object.raw_dwg_version.unwrap_or(DxfVersion::AC1032);
     let objects = DwgObjectReader::new(Vec::new(), version, Default::default()).ok()?;
-    let (type_code, mut reader) = objects.read_raw_record(raw, object.raw_dwg_handle_bits).ok()?;
+    let (type_code, mut reader) = objects
+        .read_raw_record(raw, object.raw_dwg_handle_bits)
+        .ok()?;
     reader.set_ref_handle(object.handle.value());
     objects.read_common_non_entity_data(&mut reader, type_code);
     reader.check_error().ok()?;

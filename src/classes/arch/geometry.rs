@@ -370,7 +370,12 @@ pub(crate) fn write_bit_double_at(data: &mut Vec<u8>, bit: i64, value: f64) -> O
         return Some(0);
     }
     if value == 0.0 || value == 1.0 {
-        write_bits(data, bit as usize, if value == 0.0 { 0b10 } else { 0b01 }, 2)?;
+        write_bits(
+            data,
+            bit as usize,
+            if value == 0.0 { 0b10 } else { 0b01 },
+            2,
+        )?;
         return Some(0);
     }
     write_bits(data, bit as usize, 0b00, 2)?;

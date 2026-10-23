@@ -1,8 +1,8 @@
 //! Common-header encoding for newly constructed Arch records.
 
 use super::DwgObjectWriter;
-use crate::entities::EntityCommon;
 use crate::classes::arch::ArchObject;
+use crate::entities::EntityCommon;
 use crate::io::dwg::dwg_stream_readers::object_reader::{
     entities::read_proxy_payload, DwgObjectReader,
 };
