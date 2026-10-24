@@ -35,7 +35,7 @@ fn set_wall_rewrites_start_direction_and_size() {
         let ExtendedEntityData::Arch(data) = &mut entity.data else {
             continue;
         };
-        built = set_wall(data, &mut entity.common.graphic_data, start, end, 8.0, 96.0);
+        built = set_wall(data, &mut entity.common.graphic_data, start, end, 8.0, 96.0).is_ok();
         let profile = data.profiles.first().cloned().unwrap_or_default();
         assert!(
             profile
@@ -105,7 +105,8 @@ fn unsupported_sample_translations_leave_native_data_unchanged() {
             }
             let before = (data.clone(), entity.common.graphic_data.clone());
             assert!(
-                !data.translate(&mut entity.common.graphic_data, delta),
+                data.translate(&mut entity.common.graphic_data, delta)
+                    .is_err(),
                 "{class_name} unexpectedly accepted a proxy-only translation"
             );
             assert_eq!(
@@ -142,12 +143,7 @@ fn unsupported_space_bounds_leave_native_data_unchanged() {
             continue;
         }
         let before = (data.clone(), entity.common.graphic_data.clone());
-        assert!(!set_profile_bounds(
-            data,
-            &mut entity.common.graphic_data,
-            min,
-            max
-        ));
+        assert!(set_profile_bounds(data, &mut entity.common.graphic_data, min, max).is_err());
         assert_eq!(
             (&*data, &entity.common.graphic_data),
             (&before.0, &before.1)
@@ -386,9 +382,7 @@ fn continuous_irregular_wall_is_one_chain_and_can_move() {
         .iter()
         .map(|point| *point + delta)
         .collect();
-    assert!(set_continuous_wall(
-        &mut doc, &chains[0], &moved, 240.0, 3000.0
-    ));
+    assert!(set_continuous_wall(&mut doc, &chains[0], &moved, 240.0, 3000.0).is_ok());
     let rewritten = continuous_walls(&doc);
     assert_eq!(rewritten.len(), 1);
     assert!((rewritten[0].points[0] - moved[0]).length() < 1.0);
@@ -994,12 +988,7 @@ fn deciphered_sizes_match_the_samples_and_can_be_rewritten() {
         assert!((size.width - 1010.0).abs() < 1.0, "{}", size.width);
         assert!((size.height - 2000.0).abs() < 1.0, "{}", size.height);
         let mut graphics = None;
-        assert!(acadrust::classes::arch::set_door(
-            &mut data,
-            &mut graphics,
-            900.0,
-            2100.0
-        ));
+        assert!(acadrust::classes::arch::set_door(&mut data, &mut graphics, 900.0, 2100.0).is_ok());
         let updated = acadrust::classes::arch::door_size(&data).unwrap();
         assert!((updated.width - 900.0).abs() < 1.0);
         assert!((updated.height - 2100.0).abs() < 1.0);
@@ -1097,7 +1086,8 @@ fn vertical_sample_wall_accepts_a_new_baseline() {
             end,
             300.0,
             3200.0,
-        );
+        )
+        .is_ok();
         let profile = data.profiles.first().cloned().unwrap_or_default();
         assert!(
             profile
@@ -1161,7 +1151,7 @@ fn unsupported_sample_bounds_leave_native_data_unchanged() {
             }
             let before = (data.clone(), entity.common.graphic_data.clone());
             assert!(
-                !set_profile_bounds(data, &mut entity.common.graphic_data, min, max),
+                set_profile_bounds(data, &mut entity.common.graphic_data, min, max).is_err(),
                 "{file_name} {class_name} unexpectedly accepted proxy-only bounds"
             );
             assert_eq!(

@@ -423,57 +423,43 @@ impl DwgBitWriter {
 
     /// Write a bit-coded double with a default value (DD type).
     ///
-    /// Differential encoding that compares the value byte-by-byte with
-    /// a default value, writing only the differing bytes.
+    /// `value` is the number stored in the stream. `default` is the number the
+    /// reader already knows. Only the bytes that differ from `default` are written.
     ///
-    /// The first parameter `def` is the value to STORE in the stream.
-    /// The second parameter `value` is the REFERENCE (default) value
-    /// that the reader already knows. This matches the reference
-    /// parameter convention: `WriteBitDoubleWithDefault(double def, double value)`.
-    ///
-    /// | Case                            | 2-bit code | Data            |
-    /// |---------------------------------|-----------|-----------------|
-    /// | def == value                    | 00 (0)    | nothing         |
-    /// | last 4 bytes match (4,5,6,7)    | 01 (1)    | 4 bytes (0..4)  |
-    /// | last 2 bytes match (6,7)        | 10 (2)    | 6 bytes         |
-    /// | otherwise                       | 11 (3)    | 8 bytes (full)  |
-    pub fn write_bit_double_with_default(&mut self, def: f64, value: f64) {
-        if def == value {
-            self.write_2bits(0); // Use default — no data
+    /// | Case                         | 2-bit code | Data                 |
+    /// |------------------------------|------------|----------------------|
+    /// | `value == default`           | 00         | nothing              |
+    /// | last 4 bytes match           | 01         | value bytes 0..4     |
+    /// | last 2 bytes match           | 10         | value bytes 4..6, 0..4 |
+    /// | otherwise                    | 11         | full little-endian f64 |
+    pub fn write_bit_double_with_default(&mut self, value: f64, default: f64) {
+        if value == default {
+            self.write_2bits(0);
             return;
         }
 
-        let def_bytes = def.to_le_bytes();
-        let val_bytes = value.to_le_bytes();
-
-        // Count matching bytes from the end inward (C# "symmetry" loop)
-        let mut matching_from_end = 0i32;
-        let mut last = 7i32;
-        while last >= 0 && def_bytes[last as usize] == val_bytes[last as usize] {
-            matching_from_end += 1;
-            last -= 1;
-        }
+        let value_bytes = value.to_le_bytes();
+        let default_bytes = default.to_le_bytes();
+        let matching_from_end = value_bytes
+            .iter()
+            .rev()
+            .zip(default_bytes.iter().rev())
+            .take_while(|(stored, known)| stored == known)
+            .count();
 
         if matching_from_end >= 4 {
-            // 01: bytes 4,5,6,7 match — write def bytes 0,1,2,3
             self.write_2bits(1);
-            self.write_byte(def_bytes[0]);
-            self.write_byte(def_bytes[1]);
-            self.write_byte(def_bytes[2]);
-            self.write_byte(def_bytes[3]);
+            for byte in &value_bytes[..4] {
+                self.write_byte(*byte);
+            }
         } else if matching_from_end >= 2 {
-            // 10: bytes 6,7 match — write def bytes 4,5 then 0,1,2,3
             self.write_2bits(2);
-            self.write_byte(def_bytes[4]);
-            self.write_byte(def_bytes[5]);
-            self.write_byte(def_bytes[0]);
-            self.write_byte(def_bytes[1]);
-            self.write_byte(def_bytes[2]);
-            self.write_byte(def_bytes[3]);
+            for index in [4, 5, 0, 1, 2, 3] {
+                self.write_byte(value_bytes[index]);
+            }
         } else {
-            // 11: no match — write full double
             self.write_2bits(3);
-            self.write_raw_double(def);
+            self.write_raw_double(value);
         }
     }
 
@@ -508,16 +494,20 @@ impl DwgBitWriter {
     }
 
     /// Write two bit-doubles with defaults (2DD type).
-    pub fn write_2bit_double_with_default(&mut self, def: Vector2, value: Vector2) {
-        self.write_bit_double_with_default(def.x, value.x);
-        self.write_bit_double_with_default(def.y, value.y);
+    ///
+    /// `value` is stored. `default` is what the reader already knows.
+    pub fn write_2bit_double_with_default(&mut self, value: Vector2, default: Vector2) {
+        self.write_bit_double_with_default(value.x, default.x);
+        self.write_bit_double_with_default(value.y, default.y);
     }
 
     /// Write three bit-doubles with defaults (3DD type).
-    pub fn write_3bit_double_with_default(&mut self, def: Vector3, value: Vector3) {
-        self.write_bit_double_with_default(def.x, value.x);
-        self.write_bit_double_with_default(def.y, value.y);
-        self.write_bit_double_with_default(def.z, value.z);
+    ///
+    /// `value` is stored. `default` is what the reader already knows.
+    pub fn write_3bit_double_with_default(&mut self, value: Vector3, default: Vector3) {
+        self.write_bit_double_with_default(value.x, default.x);
+        self.write_bit_double_with_default(value.y, default.y);
+        self.write_bit_double_with_default(value.z, default.z);
     }
 
     // ════════════════════════════════════════════════════════════════════════

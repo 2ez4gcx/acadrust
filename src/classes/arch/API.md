@@ -88,10 +88,10 @@ display but are not a complete native geometry model. `decode_profiles` and
 `polyline_from_type6` decode these graphics without modifying an entity.
 
 Native parameter readers return `None` for unsupported or inconsistent record
-layouts. The corresponding setters return `false` without changing the entity
-or its graphics. Supported edits update the native parameters and cached
-graphics together. NaN, infinity, nonpositive sizes, and unsupported transforms
-are rejected.
+layouts. The corresponding setters return [`ArchEditError`](crate::classes::arch::ArchEditError)
+and leave the entity and its graphics unchanged. Supported edits update the
+native parameters and cached graphics together. NaN, infinity, nonpositive
+sizes, and unsupported transforms are rejected.
 
 | Reader | Setter | Native parameters |
 |---|---|---|
@@ -107,8 +107,9 @@ layouts. A straight wall can be horizontal, vertical, or at any other angle in
 the XY plane. A compact 0 or 1 in its direction grows to a full number when the
 new direction needs one. Other compact fields are still rejected when a change
 would require resizing an opaque bit stream.
-Stair edits and structural-member cross-section changes return `false` because
-their dependent native parameters and styles have not been fully decoded.
+Stair edits and structural-member cross-section changes return
+[`ArchEditError`](crate::classes::arch::ArchEditError) because their dependent
+native parameters and styles have not been fully decoded.
 
 ```rust
 use acadrust::classes::arch::{door_size, set_door};
@@ -116,7 +117,7 @@ use acadrust::classes::arch::{door_size, set_door};
 // `data` is the Arch payload of an ExtendedEntity.
 // `graphics` is `&mut entity.common.graphic_data`.
 if let Some(size) = door_size(data) {
-    assert!(set_door(data, graphics, 900.0, size.height));
+    set_door(data, graphics, 900.0, size.height).expect("door");
 }
 ```
 
@@ -124,7 +125,7 @@ if let Some(size) = door_size(data) {
 translations of supported straight walls. Other transforms require a typed
 native setter. `set_profile_bounds` supports axis-aligned straight walls;
 `reshape_rectangle` updates a wall baseline and width. Bounds setters for other
-opaque native classes return `false`.
+opaque native classes return [`ArchEditError::UnsupportedLayout`](crate::classes::arch::ArchEditError::UnsupportedLayout).
 
 `continuous_walls` groups connected straight wall segments.
 `continuous_wall_outline` builds their mitered display ribbon.

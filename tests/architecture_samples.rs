@@ -48,7 +48,9 @@ fn masonry_shell_walls_round_trip_after_move() {
         assert!(data.profiles[0].len() >= 2);
         if moved.is_none() {
             let before = data.profiles[0][0];
-            assert!(data.translate(&mut entity.common.graphic_data, delta));
+            assert!(data
+                .translate(&mut entity.common.graphic_data, delta)
+                .is_ok());
             moved = Some((entity.common.handle, before + delta, data.profiles[0][0]));
         }
     }
@@ -96,13 +98,7 @@ fn masonry_shell_wall_rejects_preview_only_reshape() {
         };
         let before = data.clone();
         let graphics_before = entity.common.graphic_data.clone();
-        assert!(!reshape_rectangle(
-            data,
-            &mut entity.common.graphic_data,
-            start,
-            end,
-            8.0
-        ));
+        assert!(reshape_rectangle(data, &mut entity.common.graphic_data, start, end, 8.0).is_err());
         assert_eq!(*data, before);
         assert_eq!(entity.common.graphic_data, graphics_before);
         checked = true;

@@ -1591,16 +1591,12 @@ impl CadDocument {
     }
 
     /// Rename a layer and every name-based reference to it.
-    pub fn rename_layer(
-        &mut self,
-        old_name: &str,
-        new_name: &str,
-    ) -> std::result::Result<Handle, String> {
+    pub fn rename_layer(&mut self, old_name: &str, new_name: &str) -> crate::error::Result<Handle> {
         if old_name == new_name || !valid_symbol_table_name(new_name) {
-            return Err("Invalid layer rename".to_string());
+            return Err("Invalid layer rename".into());
         }
         let Some(source) = self.layers.get(old_name) else {
-            return Err(format!("Layer '{old_name}' does not exist"));
+            return Err(format!("Layer '{old_name}' does not exist").into());
         };
         let source_name = source.name.clone();
         let source_handle = source.handle;
@@ -1609,7 +1605,7 @@ impl CadDocument {
             || source_key == normalize_name("Defpoints")
             || source_name.contains('|')
         {
-            return Err(format!("Layer '{source_name}' cannot be renamed"));
+            return Err(format!("Layer '{source_name}' cannot be renamed").into());
         }
         let app_handles: HashMap<String, u64> = self
             .app_ids
@@ -1640,10 +1636,16 @@ impl CadDocument {
             .is_some_and(|layer| !layer.handle.is_valid());
         let layer_handle = if needs_handle {
             let handle = self.allocate_handle();
-            self.layers.get_mut(new_name).unwrap().handle = handle;
+            self.layers
+                .get_mut(new_name)
+                .expect("renamed layer is present")
+                .handle = handle;
             handle
         } else {
-            self.layers.get(new_name).unwrap().handle
+            self.layers
+                .get(new_name)
+                .expect("renamed layer is present")
+                .handle
         };
         self.rename_layer_state_references(&source_key, new_name);
         for handle in affected {
@@ -3837,9 +3839,7 @@ impl CadDocument {
 
         // Link block record → layout
         block_record.layout = layout_handle;
-        self.block_records
-            .add(block_record)
-            .map_err(|e| crate::error::DxfError::Custom(e))?;
+        self.block_records.add(block_record)?;
 
         // Create the overall paper space viewport (ID=1) for this layout.
         // Every paper space layout requires this entity.
@@ -4064,9 +4064,7 @@ impl CadDocument {
                     ObjectType::Layout(layout) if !layout.owner.is_null() => Some(layout.owner),
                     _ => None,
                 })
-                .filter(|owner| {
-                    matches!(self.objects.get(owner), Some(ObjectType::Dictionary(_)))
-                })
+                .filter(|owner| matches!(self.objects.get(owner), Some(ObjectType::Dictionary(_))))
                 .collect();
             candidates.sort_unstable();
             candidates.dedup();
@@ -4923,11 +4921,7 @@ impl CadDocument {
             let EntityType::LwPolyline(polyline) = entity else {
                 continue;
             };
-            if polyline
-                .vertices
-                .iter()
-                .any(|vertex| vertex.vertex_id != 0)
-            {
+            if polyline.vertices.iter().any(|vertex| vertex.vertex_id != 0) {
                 continue;
             }
             let Some(edge_list) = edges.get(&polyline.common.handle.value()) else {

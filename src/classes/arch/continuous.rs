@@ -99,11 +99,12 @@ pub fn set_continuous_wall(
     points: &[Vector3],
     width: f64,
     height: f64,
-) -> bool {
+) -> Result<(), super::entity::ArchEditError> {
+    if !positive(width) || !positive(height) {
+        return Err(super::entity::ArchEditError::InvalidValue);
+    }
     if points.len() != chain.handles.len() + 1
         || points.len() < 2
-        || !positive(width)
-        || !positive(height)
         || points
             .iter()
             .any(|point| !point_is_finite(*point) || point.z.abs() > 1e-12)
@@ -111,33 +112,31 @@ pub fn set_continuous_wall(
             .windows(2)
             .any(|pair| !positive((pair[1] - pair[0]).length()))
     {
-        return false;
+        return Err(super::entity::ArchEditError::InvalidValue);
     }
     let mut changed = Vec::with_capacity(chain.handles.len());
     for (index, handle) in chain.handles.iter().enumerate() {
         if chain.handles[..index].contains(handle) {
-            return false;
+            return Err(super::entity::ArchEditError::Rejected);
         }
         let Some(entity) = document.get_entity(*handle) else {
-            return false;
+            return Err(super::entity::ArchEditError::UnsupportedLayout);
         };
         let mut entity = entity.clone();
         let EntityType::Extended(extended) = &mut entity else {
-            return false;
+            return Err(super::entity::ArchEditError::UnsupportedLayout);
         };
         let ExtendedEntityData::Arch(data) = &mut extended.data else {
-            return false;
+            return Err(super::entity::ArchEditError::UnsupportedLayout);
         };
-        if !set_wall(
+        set_wall(
             data,
             &mut extended.common.graphic_data,
             points[index],
             points[index + 1],
             width,
             height,
-        ) {
-            return false;
-        }
+        )?;
         changed.push((*handle, entity));
     }
     for (handle, entity) in changed {
@@ -145,7 +144,7 @@ pub fn set_continuous_wall(
             .get_entity_mut(handle)
             .expect("preflight checked every handle") = entity;
     }
-    true
+    Ok(())
 }
 
 /// Closed mitered outline of a center-justified wall chain.

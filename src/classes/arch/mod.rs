@@ -4,7 +4,8 @@
 //! the style and display objects that belong to them are registered AEC
 //! classes. Opaque native bodies are preserved on same-version DWG saves.
 //! Supported typed edits update decoded native parameters and cached graphics
-//! together; unsupported layouts return failure without modifying the entity.
+//! together. Unsupported layouts return [`ArchEditError`] and leave the entity
+//! unchanged.
 //!
 //! The calling guide is `src/classes/arch/API.md`.
 
@@ -25,8 +26,8 @@ pub use continuous::{
 pub use create::{door, wall, window};
 pub use decode::{AecPlacement, DecodedAec};
 pub use entity::{
-    centered_wall_profile, reshape_rectangle, set_profile_bounds, set_wall, ArchEntityData,
-    ArchKind, StraightWallGeometry,
+    centered_wall_profile, reshape_rectangle, set_profile_bounds, set_wall, ArchEditError,
+    ArchEntityData, ArchKind, StraightWallGeometry,
 };
 pub use fields::{NumberRole, PreviewRecord, StoredNumber};
 pub use geometry::{decode_profiles, map_profile_points, polyline_from_type6};

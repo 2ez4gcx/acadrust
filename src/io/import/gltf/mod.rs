@@ -106,9 +106,9 @@ impl GltfImporter {
         }
 
         let mut cursor = std::io::Cursor::new(&self.data);
-        let _magic = cursor.read_u32::<LittleEndian>().unwrap();
-        let version = cursor.read_u32::<LittleEndian>().unwrap();
-        let _length = cursor.read_u32::<LittleEndian>().unwrap();
+        let _magic = read_glb_u32(&mut cursor)?;
+        let version = read_glb_u32(&mut cursor)?;
+        let _length = read_glb_u32(&mut cursor)?;
 
         if version != 2 {
             return Err(DxfError::ImportError(format!(
@@ -121,8 +121,8 @@ impl GltfImporter {
         let mut bin_data: Vec<Vec<u8>> = Vec::new();
 
         while (cursor.position() as usize) + 8 <= self.data.len() {
-            let chunk_length = cursor.read_u32::<LittleEndian>().unwrap() as usize;
-            let chunk_type = cursor.read_u32::<LittleEndian>().unwrap();
+            let chunk_length = read_glb_u32(&mut cursor)? as usize;
+            let chunk_type = read_glb_u32(&mut cursor)?;
             let pos = cursor.position() as usize;
 
             if pos + chunk_length > self.data.len() {
@@ -615,6 +615,12 @@ fn build_gltf_mesh(
         mesh.compute_edges();
         mesh
     }
+}
+
+fn read_glb_u32(cursor: &mut impl Read) -> Result<u32> {
+    cursor
+        .read_u32::<LittleEndian>()
+        .map_err(|error| DxfError::ImportError(format!("truncated GLB container: {error}")))
 }
 
 /// Simple base64 decoder (standard alphabet, no padding required).

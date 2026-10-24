@@ -58,10 +58,9 @@ impl ArchEntityData {
     pub fn decode(&self) -> DecodedAec {
         let mut decoded = identity(self.dxf_name.clone(), self.cpp_class_name.clone(), true);
         decoded.profiles.clone_from(&self.profiles);
-        let Some(reader) = open_entity(self) else {
-            return decoded;
-        };
-        finish(&mut decoded, reader, true);
+        if let Ok(reader) = open_entity(self) {
+            finish(&mut decoded, reader, true);
+        }
         decoded
     }
 }
@@ -73,10 +72,9 @@ impl ArchObject {
     /// entities and then omit the placement frame.
     pub fn decode(&self) -> DecodedAec {
         let mut decoded = identity(self.dxf_name.clone(), self.cpp_class_name.clone(), false);
-        let Some(reader) = open_object(self) else {
-            return decoded;
-        };
-        finish(&mut decoded, reader, false);
+        if let Ok(reader) = open_object(self) {
+            finish(&mut decoded, reader, false);
+        }
         decoded
     }
 }
@@ -108,28 +106,30 @@ fn finish(decoded: &mut DecodedAec, mut reader: DwgMergedReader, entity: bool) {
     }
 }
 
-fn open_entity(data: &ArchEntityData) -> Option<DwgMergedReader> {
-    let raw = data.raw_dwg_data.as_deref()?;
+fn open_entity(data: &ArchEntityData) -> crate::error::Result<DwgMergedReader> {
+    let raw = data.raw_dwg_data.as_deref().ok_or_else(|| {
+        crate::error::DxfError::Parse("architecture entity has no DWG body".into())
+    })?;
     let version = data.dwg_source_version.unwrap_or(DxfVersion::AC1032);
-    let objects = DwgObjectReader::new(Vec::new(), version, Default::default()).ok()?;
-    let (type_code, mut reader) = objects.read_raw_record(raw, data.dwg_handle_bits).ok()?;
+    let objects = DwgObjectReader::new(Vec::new(), version, Default::default())?;
+    let (type_code, mut reader) = objects.read_raw_record(raw, data.dwg_handle_bits)?;
     let common = objects.read_common_entity_data(&mut reader, type_code);
     reader.set_ref_handle(common.common.handle);
-    reader.check_error().ok()?;
-    Some(reader)
+    reader.check_error()?;
+    Ok(reader)
 }
 
-fn open_object(object: &ArchObject) -> Option<DwgMergedReader> {
-    let raw = object.raw_dwg_data.as_deref()?;
+fn open_object(object: &ArchObject) -> crate::error::Result<DwgMergedReader> {
+    let raw = object.raw_dwg_data.as_deref().ok_or_else(|| {
+        crate::error::DxfError::Parse("architecture object has no DWG body".into())
+    })?;
     let version = object.raw_dwg_version.unwrap_or(DxfVersion::AC1032);
-    let objects = DwgObjectReader::new(Vec::new(), version, Default::default()).ok()?;
-    let (type_code, mut reader) = objects
-        .read_raw_record(raw, object.raw_dwg_handle_bits)
-        .ok()?;
+    let objects = DwgObjectReader::new(Vec::new(), version, Default::default())?;
+    let (type_code, mut reader) = objects.read_raw_record(raw, object.raw_dwg_handle_bits)?;
     reader.set_ref_handle(object.handle.value());
     objects.read_common_non_entity_data(&mut reader, type_code);
-    reader.check_error().ok()?;
-    Some(reader)
+    reader.check_error()?;
+    Ok(reader)
 }
 
 fn read_strings(reader: &DwgMergedReader) -> Vec<String> {

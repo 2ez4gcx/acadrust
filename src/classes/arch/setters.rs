@@ -1,6 +1,6 @@
 //! Transactional edits of decoded native Arch dimensions.
 
-use super::entity::{rewrite_preview, transaction, ArchEntityData, ArchKind};
+use super::entity::{rewrite_preview, transaction, ArchEditError, ArchEntityData, ArchKind};
 use super::geometry::{point_is_finite, positive};
 use super::metrics::{member_frame, near, plan_frame, PlanFrame};
 use crate::types::Vector3;
@@ -14,7 +14,7 @@ pub fn set_door(
     graphic_data: &mut Option<Vec<u8>>,
     width: f64,
     height: f64,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_opening_dimensions(data, graphic_data, ArchKind::Door, width, height)
 }
 
@@ -24,7 +24,7 @@ pub fn set_window(
     graphic_data: &mut Option<Vec<u8>>,
     width: f64,
     height: f64,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_opening_dimensions(data, graphic_data, ArchKind::Window, width, height)
 }
 
@@ -34,7 +34,7 @@ pub fn set_opening(
     graphic_data: &mut Option<Vec<u8>>,
     width: f64,
     height: f64,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_opening_dimensions(data, graphic_data, ArchKind::Opening, width, height)
 }
 
@@ -44,21 +44,24 @@ pub fn set_window_assembly(
     graphic_data: &mut Option<Vec<u8>>,
     min: Vector3,
     max: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_kind_bounds(data, graphic_data, ArchKind::WindowAssembly, min, max)
 }
 
 /// Unsupported: linked stair rise, tread, and offset parameters are not decoded.
-/// Returns false without changing the entity or its graphics.
+/// The entity and its graphics stay unchanged.
 pub fn set_stair(
     data: &mut ArchEntityData,
     graphic_data: &mut Option<Vec<u8>>,
     run: f64,
     width: f64,
     height: f64,
-) -> bool {
-    let _ = (data, graphic_data, run, width, height);
-    false
+) -> Result<(), ArchEditError> {
+    let _ = (data, graphic_data);
+    if !positive(run) || !positive(width) || !positive(height) {
+        return Err(ArchEditError::InvalidValue);
+    }
+    Err(ArchEditError::UnsupportedLayout)
 }
 
 /// Unsupported: native railing placement has not been decoded.
@@ -67,7 +70,7 @@ pub fn set_railing(
     graphic_data: &mut Option<Vec<u8>>,
     min: Vector3,
     max: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_kind_bounds(data, graphic_data, ArchKind::Railing, min, max)
 }
 
@@ -77,7 +80,7 @@ pub fn set_slab(
     graphic_data: &mut Option<Vec<u8>>,
     min: Vector3,
     max: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_kind_bounds(data, graphic_data, ArchKind::Slab, min, max)
 }
 
@@ -87,7 +90,7 @@ pub fn set_roof(
     graphic_data: &mut Option<Vec<u8>>,
     min: Vector3,
     max: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_kind_bounds(data, graphic_data, ArchKind::Roof, min, max)
 }
 
@@ -97,7 +100,7 @@ pub fn set_roof_slab(
     graphic_data: &mut Option<Vec<u8>>,
     min: Vector3,
     max: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_kind_bounds(data, graphic_data, ArchKind::RoofSlab, min, max)
 }
 
@@ -107,7 +110,7 @@ pub fn set_space(
     graphic_data: &mut Option<Vec<u8>>,
     min: Vector3,
     max: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_kind_bounds(data, graphic_data, ArchKind::Space, min, max)
 }
 
@@ -117,7 +120,7 @@ pub fn set_curtain_wall(
     graphic_data: &mut Option<Vec<u8>>,
     min: Vector3,
     max: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_kind_bounds(data, graphic_data, ArchKind::CurtainWall, min, max)
 }
 
@@ -127,33 +130,36 @@ pub fn set_column_grid(
     graphic_data: &mut Option<Vec<u8>>,
     min: Vector3,
     max: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_kind_bounds(data, graphic_data, ArchKind::ColumnGrid, min, max)
 }
 
 /// Set a rectangular member's length along its decoded native placement axis.
-/// Cross-section changes are unsupported and return false without modification.
+/// Cross-section changes are unsupported and leave the entity unchanged.
 pub fn set_member(
     data: &mut ArchEntityData,
     graphic_data: &mut Option<Vec<u8>>,
     length: f64,
     breadth: f64,
     depth: f64,
-) -> bool {
+) -> Result<(), ArchEditError> {
     let Some(size) = super::metrics::member_size(data) else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
-    if !positive(length) || !near(breadth, size.breadth) || !near(depth, size.depth) {
-        return false;
+    if !positive(length) {
+        return Err(ArchEditError::InvalidValue);
+    }
+    if !near(breadth, size.breadth) || !near(depth, size.depth) {
+        return Err(ArchEditError::Rejected);
     }
     let Some(frame) = member_frame(data) else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
     let Some((min, max)) = member_bounds(data, frame) else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
     let Some(body) = super::geometry::native_body_bit(data) else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
     if !near(min[0], 0.0)
         || !near(max[0], size.length)
@@ -164,14 +170,14 @@ pub fn set_member(
             || near(min[2], -size.depth) && near(max[2], 0.0))
         || !rectangular_member_preview(data, frame, min, max)
     {
-        return false;
+        return Err(ArchEditError::Rejected);
     }
     transaction(data, graphic_data, |next, graphics| {
         let Some(raw) = next.raw_dwg_data.as_mut() else {
-            return false;
+            return Err(ArchEditError::UnsupportedLayout);
         };
         if !super::metrics::write_member_length(raw, body, size, length) {
-            return false;
+            return Err(ArchEditError::Rejected);
         }
         rewrite_preview(next, graphics, |point| {
             let relative = point - frame.origin;
@@ -186,7 +192,7 @@ pub fn set_mass_element(
     graphic_data: &mut Option<Vec<u8>>,
     min: Vector3,
     max: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_kind_bounds(data, graphic_data, ArchKind::MassElement, min, max)
 }
 
@@ -196,7 +202,7 @@ pub fn set_display_theme(
     graphic_data: &mut Option<Vec<u8>>,
     min: Vector3,
     max: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_kind_bounds(data, graphic_data, ArchKind::DisplayTheme, min, max)
 }
 
@@ -206,7 +212,7 @@ pub fn set_ceiling_grid(
     graphic_data: &mut Option<Vec<u8>>,
     min: Vector3,
     max: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     set_kind_bounds(data, graphic_data, ArchKind::CeilingGrid, min, max)
 }
 
@@ -216,9 +222,12 @@ fn set_opening_dimensions(
     kind: ArchKind,
     width: f64,
     height: f64,
-) -> bool {
-    if data.kind != kind || !positive(width) || !positive(height) {
-        return false;
+) -> Result<(), ArchEditError> {
+    if data.kind != kind {
+        return Err(ArchEditError::UnsupportedLayout);
+    }
+    if !positive(width) || !positive(height) {
+        return Err(ArchEditError::InvalidValue);
     }
     let size = match kind {
         ArchKind::Door => super::metrics::door_size(data),
@@ -226,17 +235,19 @@ fn set_opening_dimensions(
         ArchKind::Opening => super::metrics::opening_size(data),
         _ => None,
     };
-    let Some(size) = size else { return false };
+    let Some(size) = size else {
+        return Err(ArchEditError::UnsupportedLayout);
+    };
     let Some(frame) = plan_frame(data) else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
     let Some(bounds) = local_bounds(data, frame) else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
     let along_span = bounds[1] - bounds[0];
     let across_span = bounds[3] - bounds[2];
     if !positive(along_span) || !positive(across_span) || !near(bounds[0], 0.0) {
-        return false;
+        return Err(ArchEditError::Rejected);
     }
     let simple_rectangle = rectangular_opening_preview(data, frame, size.width);
     let (along_scale, across_scale) = if simple_rectangle {
@@ -246,21 +257,21 @@ fn set_opening_dimensions(
             || !near(across_span, size.width + 120.0)
             || !near(bounds[2], 0.0)
         {
-            return false;
+            return Err(ArchEditError::Rejected);
         }
         ((width + 100.0) / along_span, (width + 120.0) / across_span)
     } else {
         if !near(along_span, size.width) {
-            return false;
+            return Err(ArchEditError::Rejected);
         }
         (width / size.width, 1.0)
     };
     transaction(data, graphic_data, |next, graphics| {
         let Some(raw) = next.raw_dwg_data.as_mut() else {
-            return false;
+            return Err(ArchEditError::UnsupportedLayout);
         };
         if !super::metrics::write_opening_size(raw, size, width, height) {
-            return false;
+            return Err(ArchEditError::Rejected);
         }
         rewrite_preview(next, graphics, |point| {
             let relative = point - frame.origin;
@@ -301,9 +312,15 @@ fn set_kind_bounds(
     kind: ArchKind,
     min: Vector3,
     max: Vector3,
-) -> bool {
-    let _ = (data, graphic_data, kind, min, max);
-    false
+) -> Result<(), ArchEditError> {
+    let _ = graphic_data;
+    if data.kind != kind {
+        return Err(ArchEditError::UnsupportedLayout);
+    }
+    if !point_is_finite(min) || !point_is_finite(max) {
+        return Err(ArchEditError::InvalidValue);
+    }
+    Err(ArchEditError::UnsupportedLayout)
 }
 
 fn member_bounds(

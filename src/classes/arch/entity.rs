@@ -10,6 +10,21 @@ use crate::classes::arch::geometry::{
     read_bit_double_at, read_encoded_double, write_bit_doubles_at,
 };
 use crate::types::{DxfVersion, Vector3};
+use thiserror::Error;
+
+/// Why an architecture edit left the entity unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ArchEditError {
+    /// The class, version, or native field layout is not one this edit supports.
+    #[error("unsupported architecture layout")]
+    UnsupportedLayout,
+    /// A size, point, or transform is non-finite, non-positive, or non-planar.
+    #[error("invalid architecture value")]
+    InvalidValue,
+    /// The native body or cached graphics do not match the decoded edit.
+    #[error("architecture edit was rejected")]
+    Rejected,
+}
 
 /// One straight run of a wall: baseline start, baseline end, full thickness, and base height.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -159,7 +174,11 @@ impl ArchEntityData {
 
     /// Translate a wall whose native baseline layout is understood.
     /// Unsupported native layouts and non-planar moves leave the entity unchanged.
-    pub fn translate(&mut self, graphic_data: &mut Option<Vec<u8>>, delta: Vector3) -> bool {
+    pub fn translate(
+        &mut self,
+        graphic_data: &mut Option<Vec<u8>>,
+        delta: Vector3,
+    ) -> Result<(), ArchEditError> {
         self.transform_points(graphic_data, |point| point + delta)
     }
 
@@ -169,19 +188,19 @@ impl ArchEntityData {
         &mut self,
         graphic_data: &mut Option<Vec<u8>>,
         map: impl FnMut(Vector3) -> Vector3,
-    ) -> bool {
+    ) -> Result<(), ArchEditError> {
         let mut map = map;
         let Some(first) = self.profiles.iter().flatten().next().copied() else {
-            return false;
+            return Err(ArchEditError::UnsupportedLayout);
         };
         let delta = map(first) - first;
         if !point_is_finite(delta) || delta.z.abs() > 1e-12 {
-            return false;
+            return Err(ArchEditError::InvalidValue);
         }
         for point in self.profiles.iter().flatten().copied().skip(1) {
             let mapped = map(point);
             if !point_is_finite(mapped) || (mapped - point - delta).length() > 1e-6 {
-                return false;
+                return Err(ArchEditError::Rejected);
             }
         }
         let Some(wall) = self.straight_wall_geometry() else {
@@ -199,12 +218,16 @@ impl ArchEntityData {
 
     /// Translate a supported wall using a translated copy of its first profile.
     /// Arbitrary outlines cannot be applied to an opaque native AEC body.
-    pub fn reshape(&mut self, graphic_data: &mut Option<Vec<u8>>, points: &[Vector3]) -> bool {
+    pub fn reshape(
+        &mut self,
+        graphic_data: &mut Option<Vec<u8>>,
+        points: &[Vector3],
+    ) -> Result<(), ArchEditError> {
         let Some(current) = self.profiles.first() else {
-            return false;
+            return Err(ArchEditError::UnsupportedLayout);
         };
         if current.len() != points.len() || points.is_empty() {
-            return false;
+            return Err(ArchEditError::Rejected);
         }
         let pairs: Vec<(Vector3, Vector3)> = current
             .iter()
@@ -227,43 +250,44 @@ fn translate_plan_frame(
     data: &mut ArchEntityData,
     graphic_data: &mut Option<Vec<u8>>,
     delta: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     let Some(frame) = super::geometry::native_plan_frame(data, 569) else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
     if frame.values[2].abs() > 1e-9 {
-        return false;
+        return Err(ArchEditError::Rejected);
     }
     let x = frame.values[0] + delta.x;
     let y = frame.values[1] + delta.y;
     if !x.is_finite() || !y.is_finite() {
-        return false;
+        return Err(ArchEditError::InvalidValue);
     }
     transaction(data, graphic_data, |next, graphics| {
         let Some(raw) = next.raw_dwg_data.as_mut() else {
-            return false;
+            return Err(ArchEditError::UnsupportedLayout);
         };
-        super::geometry::write_bit_doubles_at(
+        if !super::geometry::write_bit_doubles_at(
             raw,
             &[(frame.positions[0], x), (frame.positions[1], y)],
-        ) && rewrite_preview(next, graphics, |point| point + delta)
+        ) {
+            return Err(ArchEditError::Rejected);
+        }
+        rewrite_preview(next, graphics, |point| point + delta)
     })
 }
 
 pub(crate) fn transaction(
     data: &mut ArchEntityData,
     graphic_data: &mut Option<Vec<u8>>,
-    edit: impl FnOnce(&mut ArchEntityData, &mut Option<Vec<u8>>) -> bool,
-) -> bool {
+    edit: impl FnOnce(&mut ArchEntityData, &mut Option<Vec<u8>>) -> Result<(), ArchEditError>,
+) -> Result<(), ArchEditError> {
     let mut next = data.clone();
     let mut graphics = graphic_data.clone();
-    if !edit(&mut next, &mut graphics) {
-        return false;
-    }
+    edit(&mut next, &mut graphics)?;
     next.decode_fields();
     *data = next;
     *graphic_data = graphics;
-    true
+    Ok(())
 }
 
 /// Update only parsed type-6 records in the complete, validated cached metafile.
@@ -272,10 +296,10 @@ pub(crate) fn rewrite_preview(
     data: &mut ArchEntityData,
     graphic_data: &mut Option<Vec<u8>>,
     mut map: impl FnMut(Vector3) -> Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     use crate::entities::{ProxyGraphicRecord, ProxyGraphics};
     let Some(record) = native_record_layout(data) else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
     let original = record.preview.as_slice();
     if graphic_data
@@ -283,10 +307,10 @@ pub(crate) fn rewrite_preview(
         .is_some_and(|graphics| graphics != original)
         || decode_profiles(Some(original)) != data.profiles
     {
-        return false;
+        return Err(ArchEditError::Rejected);
     }
     let Some(mut graphics) = ProxyGraphics::decode(original) else {
-        return false;
+        return Err(ArchEditError::Rejected);
     };
     for record in &mut graphics.records {
         let ProxyGraphicRecord::Unknown {
@@ -297,12 +321,12 @@ pub(crate) fn rewrite_preview(
             continue;
         };
         let Some(points) = super::geometry::polyline_from_type6(payload) else {
-            return false;
+            return Err(ArchEditError::Rejected);
         };
         for (index, point) in points.into_iter().enumerate() {
             let point = map(point);
             if !point_is_finite(point) {
-                return false;
+                return Err(ArchEditError::InvalidValue);
             }
             let offset = 4 + index * 24;
             payload[offset..offset + 8].copy_from_slice(&point.x.to_le_bytes());
@@ -311,23 +335,23 @@ pub(crate) fn rewrite_preview(
         }
     }
     let Some(encoded) = graphics.encode() else {
-        return false;
+        return Err(ArchEditError::Rejected);
     };
     if encoded.len() != original.len() {
-        return false;
+        return Err(ArchEditError::Rejected);
     }
     let Some(raw) = data.raw_dwg_data.as_mut() else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
     if !super::geometry::write_bytes_at_bit(raw, record.preview_bit, &encoded) {
-        return false;
+        return Err(ArchEditError::Rejected);
     }
     data.profiles = decode_profiles(Some(&encoded));
     data.preview = super::fields::decode_preview(Some(&encoded));
     if graphic_data.is_some() {
         *graphic_data = Some(encoded)
     }
-    true
+    Ok(())
 }
 
 /// Build a rectangular wall footprint from a baseline and a width.
@@ -363,15 +387,15 @@ pub fn set_wall(
     end: Vector3,
     width: f64,
     height: f64,
-) -> bool {
+) -> Result<(), ArchEditError> {
     if data.kind != ArchKind::Wall || data.straight_wall_geometry().is_none() {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     }
     let Some(current) = data.profiles.first() else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
     if data.profiles.len() != 1 || current.len() != 5 || current.first() != current.last() {
-        return false;
+        return Err(ArchEditError::Rejected);
     }
     let edge = end - start;
     let length = edge.length();
@@ -383,19 +407,19 @@ pub fn set_wall(
         || start.z.abs() > 1e-12
         || end.z.abs() > 1e-12
     {
-        return false;
+        return Err(ArchEditError::InvalidValue);
     }
     let Some(fields) = find_straight_wall_fields(data) else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
     let Some(points) = centered_wall_profile(start, end, width) else {
-        return false;
+        return Err(ArchEditError::InvalidValue);
     };
     let along = edge * (1.0 / length);
     let current = current.clone();
     transaction(data, graphic_data, |next, graphics| {
         let Some(raw) = next.raw_dwg_data.as_mut() else {
-            return false;
+            return Err(ArchEditError::UnsupportedLayout);
         };
         if !write_bit_doubles_at(
             raw,
@@ -411,7 +435,7 @@ pub fn set_wall(
                 (fields.length, length),
             ],
         ) {
-            return false;
+            return Err(ArchEditError::Rejected);
         }
         rewrite_preview(next, graphics, |point| {
             current
@@ -430,7 +454,7 @@ pub fn set_profile_bounds(
     graphic_data: &mut Option<Vec<u8>>,
     min: Vector3,
     max: Vector3,
-) -> bool {
+) -> Result<(), ArchEditError> {
     if !point_is_finite(min)
         || !point_is_finite(max)
         || !(max.x > min.x)
@@ -438,10 +462,10 @@ pub fn set_profile_bounds(
         || min.z.abs() > 1e-12
         || max.z.abs() > 1e-12
     {
-        return false;
+        return Err(ArchEditError::InvalidValue);
     }
     let Some(wall) = data.straight_wall_geometry() else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
     let direction = wall.end - wall.start;
     let (mut start, mut end, width) = if direction.x.abs() < 1e-6 {
@@ -459,7 +483,7 @@ pub fn set_profile_bounds(
             max.y - min.y,
         )
     } else {
-        return false;
+        return Err(ArchEditError::Rejected);
     };
     if (end - start).dot(&direction) < 0.0 {
         std::mem::swap(&mut start, &mut end)
@@ -500,12 +524,12 @@ pub fn reshape_rectangle(
     start: Vector3,
     end: Vector3,
     width: f64,
-) -> bool {
+) -> Result<(), ArchEditError> {
     let Some(wall) = data.straight_wall_geometry() else {
-        return false;
+        return Err(ArchEditError::UnsupportedLayout);
     };
     let Some(points) = rectangle_profile(start, end, width) else {
-        return false;
+        return Err(ArchEditError::InvalidValue);
     };
     let offset = (points[3] - points[0]) * 0.5;
     set_wall(

@@ -162,7 +162,8 @@ fn rewrite_vertical_wall(samples: &Path, out_dir: &Path) -> Result<()> {
             Vector3::new(25000.0, 15000.0, 0.0),
             300.0,
             3200.0,
-        );
+        )
+        .is_ok();
         break;
     }
     save(&doc, out_dir, "wall.dwg", wrote)
@@ -182,7 +183,7 @@ fn rewrite_door(samples: &Path, out_dir: &Path) -> Result<()> {
             continue;
         }
         let height = door_size(data).ok_or("unsupported door layout")?.height;
-        wrote = set_door(data, &mut entity.common.graphic_data, 900.0, height);
+        wrote = set_door(data, &mut entity.common.graphic_data, 900.0, height).is_ok();
         break;
     }
     save(&doc, out_dir, "door.dwg", wrote)
@@ -202,7 +203,7 @@ fn rewrite_window(samples: &Path, out_dir: &Path) -> Result<()> {
             continue;
         }
         let height = window_size(data).ok_or("unsupported window layout")?.height;
-        wrote = set_window(data, &mut entity.common.graphic_data, 1200.0, height);
+        wrote = set_window(data, &mut entity.common.graphic_data, 1200.0, height).is_ok();
         break;
     }
     save(&doc, out_dir, "window.dwg", wrote)
@@ -224,7 +225,7 @@ fn rewrite_opening(samples: &Path, out_dir: &Path) -> Result<()> {
         let height = opening_size(data)
             .ok_or("unsupported opening layout")?
             .height;
-        wrote = set_opening(data, &mut entity.common.graphic_data, 1500.0, height);
+        wrote = set_opening(data, &mut entity.common.graphic_data, 1500.0, height).is_ok();
         break;
     }
     save(&doc, out_dir, "opening.dwg", wrote)
@@ -242,7 +243,8 @@ fn rewrite_continuous(samples: &Path, out_dir: &Path) -> Result<()> {
         &moved,
         chain.width,
         chain.height,
-    );
+    )
+    .is_ok();
     save(&doc, out_dir, "continuous-wall.dwg", wrote)
 }
 

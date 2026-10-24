@@ -3,7 +3,7 @@
 use crate::entities::{Arc, Ellipse};
 use crate::entities::{AttributeEntity, Entity, EntityCommon, EntityType};
 use crate::types::{
-    BoundingBox3D, Color, Handle, LineWeight, Matrix3, Matrix4, Transform, Transparency, Vector3,
+    BoundingBox3D, Color, Handle, LineWeight, Matrix3, Matrix4, Transform, Vector3,
 };
 
 /// Minimum absolute value accepted for scale factors (avoids degenerate geometry).
@@ -786,52 +786,12 @@ impl Insert {
 }
 
 impl Entity for Insert {
-    fn handle(&self) -> Handle {
-        self.common.handle
+    fn common(&self) -> &super::EntityCommon {
+        &self.common
     }
 
-    fn set_handle(&mut self, handle: Handle) {
-        self.common.handle = handle;
-    }
-
-    fn layer(&self) -> &str {
-        &self.common.layer
-    }
-
-    fn set_layer(&mut self, layer: String) {
-        self.common.layer = layer;
-    }
-
-    fn color(&self) -> Color {
-        self.common.color
-    }
-
-    fn set_color(&mut self, color: Color) {
-        self.common.color = color;
-    }
-
-    fn line_weight(&self) -> LineWeight {
-        self.common.line_weight
-    }
-
-    fn set_line_weight(&mut self, weight: LineWeight) {
-        self.common.line_weight = weight;
-    }
-
-    fn transparency(&self) -> Transparency {
-        self.common.transparency
-    }
-
-    fn set_transparency(&mut self, transparency: Transparency) {
-        self.common.transparency = transparency;
-    }
-
-    fn is_invisible(&self) -> bool {
-        self.common.invisible
-    }
-
-    fn set_invisible(&mut self, invisible: bool) {
-        self.common.invisible = invisible;
+    fn common_mut(&mut self) -> &mut super::EntityCommon {
+        &mut self.common
     }
 
     fn bounding_box(&self) -> BoundingBox3D {
@@ -869,6 +829,7 @@ impl Entity for Insert {
 mod tests {
     use super::*;
     use crate::entities::{AttributeDefinition, Block, BlockEnd, Circle, Line};
+    use crate::types::Transparency;
     use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
     #[test]

@@ -528,34 +528,36 @@ impl DwgBitReader {
 
     /// Read a raw short (RS type) — 2 bytes, little-endian.
     pub fn read_raw_short(&mut self) -> i16 {
-        let b0 = self.read_byte() as u16;
-        let b1 = self.read_byte() as u16;
-        (b0 | (b1 << 8)) as i16
+        i16::from_le_bytes([self.read_byte(), self.read_byte()])
     }
 
     /// Read a raw unsigned short.
     pub fn read_raw_ushort(&mut self) -> u16 {
-        let b0 = self.read_byte() as u16;
-        let b1 = self.read_byte() as u16;
-        b0 | (b1 << 8)
+        u16::from_le_bytes([self.read_byte(), self.read_byte()])
     }
 
-    /// Read a raw long (RL type) — 4 bytes, little-endian, returns as i64 (matching the reference ReadRawLong → long).
+    /// Read a raw long (RL type).
+    ///
+    /// The DWG field is a signed 32-bit integer. The return type is `i64` so
+    /// callers can use it next to handles without an extra cast. The sign of
+    /// the 32-bit value is preserved.
     pub fn read_raw_long(&mut self) -> i64 {
-        let b0 = self.read_byte() as u32;
-        let b1 = self.read_byte() as u32;
-        let b2 = self.read_byte() as u32;
-        let b3 = self.read_byte() as u32;
-        (b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)) as i32 as i64
+        i64::from(i32::from_le_bytes([
+            self.read_byte(),
+            self.read_byte(),
+            self.read_byte(),
+            self.read_byte(),
+        ]))
     }
 
-    /// Read a raw unsigned long (RD is actually 4 bytes in the reference ReadRawULong).
+    /// Read a raw unsigned long. The DWG field is 4 bytes.
     pub fn read_raw_ulong(&mut self) -> u64 {
-        let b0 = self.read_byte() as u64;
-        let b1 = self.read_byte() as u64;
-        let b2 = self.read_byte() as u64;
-        let b3 = self.read_byte() as u64;
-        b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+        u64::from(u32::from_le_bytes([
+            self.read_byte(),
+            self.read_byte(),
+            self.read_byte(),
+            self.read_byte(),
+        ]))
     }
 
     /// Read a raw double (RD type) — 8 bytes, little-endian IEEE 754.
@@ -1460,7 +1462,7 @@ mod tests {
         let mut w = make_writer(DxfVersion::AC1015);
         let reference = 3.14;
         // Case 00: stored == reference → 2 bits
-        // Writer: write_bit_double_with_default(stored=3.14, reference=3.14)
+        // Writer stores 3.14 against the reference default.
         w.write_bit_double_with_default(3.14, reference);
         // Case 11: stored=100.5 is very different from reference=3.14 → full RD
         w.write_bit_double_with_default(100.5, reference);

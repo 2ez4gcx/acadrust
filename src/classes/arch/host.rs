@@ -70,8 +70,8 @@ fn anchor_points_at(object: &crate::classes::arch::ArchObject, host: Handle) -> 
     if start < 0 || start >= total_bits {
         return false;
     }
-    let mut reader = DwgBitReader::new(
-        raw.to_vec(),
+    let mut reader = DwgBitReader::from_shared(
+        std::sync::Arc::<[u8]>::from(raw),
         DwgVersion::AC24,
         object.raw_dwg_version.unwrap_or(DxfVersion::AC1032),
     );

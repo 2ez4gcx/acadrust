@@ -84,7 +84,9 @@ fn zero_coordinate_wall_translation_preserves_native_record_and_dwg_handles() {
         if data.kind != ArchKind::Wall {
             continue;
         }
-        assert!(data.translate(&mut e.common.graphic_data, v(10.0, 20.0, 0.0)));
+        assert!(data
+            .translate(&mut e.common.graphic_data, v(10.0, 20.0, 0.0))
+            .is_ok());
         let geometry = data.straight_wall_geometry().unwrap();
         assert!((geometry.start - v(10.0, 20.0, 0.0)).length() < 1e-6);
         agrees(data, &e.common.graphic_data);
@@ -113,7 +115,7 @@ fn translating_by_an_existing_coordinate_does_not_cascade() {
     .unwrap();
     let (mut data, mut graphics) = first(&document, ArchKind::Wall);
     let before = data.profiles.clone();
-    assert!(data.translate(&mut graphics, v(240.0, 0.0, 0.0)));
+    assert!(data.translate(&mut graphics, v(240.0, 0.0, 0.0)).is_ok());
     for (before, after) in before.iter().flatten().zip(data.profiles.iter().flatten()) {
         assert!((*after - *before - v(240.0, 0.0, 0.0)).length() < 1e-6);
     }
@@ -126,7 +128,13 @@ fn opening_sizes_survive_repeated_edits_and_refresh_all_caches() {
         (
             door(1010.0, 2000.0, None).unwrap(),
             ArchKind::Door,
-            set_door as fn(&mut ArchEntityData, &mut Option<Vec<u8>>, f64, f64) -> bool,
+            set_door
+                as fn(
+                    &mut ArchEntityData,
+                    &mut Option<Vec<u8>>,
+                    f64,
+                    f64,
+                ) -> Result<(), acadrust::classes::arch::ArchEditError>,
             door_size as fn(&ArchEntityData) -> Option<OpeningSize>,
         ),
         (
@@ -144,7 +152,7 @@ fn opening_sizes_survive_repeated_edits_and_refresh_all_caches() {
             (250.0, 800.0),
         ] {
             assert!(
-                setter(&mut data, &mut graphics, width, height),
+                setter(&mut data, &mut graphics, width, height).is_ok(),
                 "{kind:?} {width} {height}"
             );
             let size = reader(&data).unwrap();
@@ -156,7 +164,7 @@ fn opening_sizes_survive_repeated_edits_and_refresh_all_caches() {
                 .any(|f| f.role == NumberRole::Width && f.value == width));
         }
         graphics = None;
-        assert!(setter(&mut data, &mut graphics, 900.0, 2000.0));
+        assert!(setter(&mut data, &mut graphics, 900.0, 2000.0).is_ok());
         agrees(&data, &graphics);
     }
 }
@@ -172,7 +180,8 @@ fn constructor_fields_encoded_as_zero_or_one_remain_editable() {
         v(2.0, 0.0, 0.0),
         2.0,
         3.0
-    ));
+    )
+    .is_ok());
     let wall = data.straight_wall_geometry().unwrap();
     assert_eq!(
         ((wall.end - wall.start).length(), wall.width, wall.height),
@@ -181,13 +190,13 @@ fn constructor_fields_encoded_as_zero_or_one_remain_editable() {
 
     let (mut data, mut graphics) = first(&door(1.0, 1.0, None).unwrap(), ArchKind::Door);
     assert_eq!(door_size(&data).unwrap().width, 1.0);
-    assert!(set_door(&mut data, &mut graphics, 2.0, 3.0));
+    assert!(set_door(&mut data, &mut graphics, 2.0, 3.0).is_ok());
     let size = door_size(&data).unwrap();
     assert_eq!((size.width, size.height), (2.0, 3.0));
 
     let (mut data, mut graphics) = first(&window(1.0, 1.0, None).unwrap(), ArchKind::Window);
     assert_eq!(window_size(&data).unwrap().width, 1.0);
-    assert!(set_window(&mut data, &mut graphics, 2.0, 3.0));
+    assert!(set_window(&mut data, &mut graphics, 2.0, 3.0).is_ok());
     let size = window_size(&data).unwrap();
     assert_eq!((size.width, size.height), (2.0, 3.0));
 }
@@ -211,14 +220,7 @@ fn wall_baseline_turns_horizontal_and_diagonal() {
     );
     let diagonal = (v(-120.0, 50.0, 0.0), v(2880.0, 4050.0, 0.0), 175.0, 2800.0);
     for (start, end, width, height) in [horizontal, diagonal] {
-        assert!(set_wall(
-            &mut data,
-            &mut graphics,
-            start,
-            end,
-            width,
-            height
-        ));
+        assert!(set_wall(&mut data, &mut graphics, start, end, width, height).is_ok());
         let geometry = data.straight_wall_geometry().unwrap();
         assert!((geometry.start - start).length() < 1e-6);
         assert!((geometry.end - end).length() < 1e-6);
@@ -282,7 +284,7 @@ fn stair_edits_reject_incomplete_native_dimension_updates() {
         (800.0, 1800.0, 3400.0),
         (600.0, 2200.0, 2600.0),
     ] {
-        assert!(!set_stair(&mut data, &mut graphics, run, width, height));
+        assert!(set_stair(&mut data, &mut graphics, run, width, height).is_err());
         assert_eq!((data.clone(), graphics.clone()), original);
     }
 }
@@ -291,10 +293,10 @@ fn stair_edits_reject_incomplete_native_dimension_updates() {
 #[ignore = "requires local AEC SAMPLE DRAWINGS member fixtures"]
 fn member_lengths_follow_native_axis_and_sections_fail_unchanged() {
     let (mut data, mut graphics) = first(&sample("COLUMN.dwg"), ArchKind::StructuralMember);
-    assert!(set_member(&mut data, &mut graphics, 4000.0, 300.0, 300.0));
+    assert!(set_member(&mut data, &mut graphics, 4000.0, 300.0, 300.0).is_ok());
     assert!((spans(&data) - v(300.0, 300.0, 4000.0)).length() < 1e-6);
     let original = (data.clone(), graphics.clone());
-    assert!(!set_member(&mut data, &mut graphics, 3500.0, 600.0, 900.0));
+    assert!(set_member(&mut data, &mut graphics, 3500.0, 600.0, 900.0).is_err());
     assert_eq!((data.clone(), graphics.clone()), original);
     agrees(&data, &graphics);
     let (mut data, mut graphics) = first(&sample("BEAM.dwg"), ArchKind::StructuralMember);
@@ -304,7 +306,7 @@ fn member_lengths_follow_native_axis_and_sections_fail_unchanged() {
         .flatten()
         .map(|p| p.y)
         .fold(f64::NEG_INFINITY, f64::max);
-    assert!(set_member(&mut data, &mut graphics, 5000.0, 300.0, 300.0));
+    assert!(set_member(&mut data, &mut graphics, 5000.0, 300.0, 300.0).is_ok());
     assert!((spans(&data) - v(300.0, 5000.0, 300.0)).length() < 1e-6);
     assert_eq!(
         data.profiles
@@ -329,7 +331,7 @@ fn window_height_is_distinct_from_its_sill_elevation() {
         .flatten()
         .map(|point| point.z)
         .collect();
-    assert!(set_window(&mut data, &mut graphics, 1200.0, 1800.0));
+    assert!(set_window(&mut data, &mut graphics, 1200.0, 1800.0).is_ok());
     assert_eq!(window_size(&data).unwrap().height, 1800.0);
     assert_eq!(
         data.profiles
@@ -347,21 +349,22 @@ fn rejected_geometry_changes_leave_every_cache_and_byte_unchanged() {
     let (mut data, mut graphics) = first(&door(1010.0, 2000.0, None).unwrap(), ArchKind::Door);
     for (width, height) in [(f64::NAN, 2000.0), (900.0, f64::INFINITY), (0.0, 2000.0)] {
         let original = (data.clone(), graphics.clone());
-        assert!(!set_door(&mut data, &mut graphics, width, height));
+        assert!(set_door(&mut data, &mut graphics, width, height).is_err());
         assert_eq!((data.clone(), graphics.clone()), original);
     }
     let original = (data.clone(), graphics.clone());
-    assert!(!data.translate(&mut graphics, v(10.0, 20.0, 0.0)));
-    assert!(!set_profile_bounds(
+    assert!(data.translate(&mut graphics, v(10.0, 20.0, 0.0)).is_err());
+    assert!(set_profile_bounds(
         &mut data,
         &mut graphics,
         v(0.0, 0.0, 0.0),
         v(5000.0, 5000.0, 0.0)
-    ));
+    )
+    .is_err());
     assert_eq!((data.clone(), graphics.clone()), original);
     graphics.as_mut().unwrap()[0] ^= 1;
     let original = (data.clone(), graphics.clone());
-    assert!(!set_door(&mut data, &mut graphics, 900.0, 2100.0));
+    assert!(set_door(&mut data, &mut graphics, 900.0, 2100.0).is_err());
     assert_eq!((data, graphics), original);
 }
 
@@ -370,16 +373,17 @@ fn rejected_geometry_changes_leave_every_cache_and_byte_unchanged() {
 fn unsupported_bounds_and_beam_edits_fail_without_changes() {
     let (mut data, mut graphics) = first(&sample("SLAB.dwg"), ArchKind::Slab);
     let original = (data.clone(), graphics.clone());
-    assert!(!set_slab(
+    assert!(set_slab(
         &mut data,
         &mut graphics,
         v(0.0, 0.0, 0.0),
         v(5000.0, 3000.0, 0.0)
-    ));
+    )
+    .is_err());
     assert_eq!((data, graphics), original);
     let (mut data, mut graphics) = first(&sample("BEAM.dwg"), ArchKind::StructuralMember);
     let original = (data.clone(), graphics.clone());
-    assert!(!set_member(&mut data, &mut graphics, 5000.0, 600.0, 900.0));
+    assert!(set_member(&mut data, &mut graphics, 5000.0, 600.0, 900.0).is_err());
     assert_eq!((data, graphics), original);
 }
 
@@ -406,7 +410,8 @@ fn continuous_wall_edits_preflight_all_handles_and_dimensions() {
             end,
             240.0,
             3000.0
-        ));
+        )
+        .is_ok());
         doc.add_entity(entity).unwrap();
     }
     let chain = continuous_walls(&doc).remove(0);
@@ -418,26 +423,14 @@ fn continuous_wall_edits_preflight_all_handles_and_dimensions() {
         .collect();
     let mut invalid = chain.clone();
     *invalid.handles.last_mut().unwrap() = Handle::new(u64::MAX);
-    assert!(!set_continuous_wall(
-        &mut doc, &invalid, &points, 240.0, 3000.0
-    ));
+    assert!(set_continuous_wall(&mut doc, &invalid, &points, 240.0, 3000.0).is_err());
     assert_eq!(doc.entities().cloned().collect::<Vec<_>>(), original);
     invalid = chain.clone();
     invalid.handles[1] = invalid.handles[0];
-    assert!(!set_continuous_wall(
-        &mut doc, &invalid, &points, 240.0, 3000.0
-    ));
+    assert!(set_continuous_wall(&mut doc, &invalid, &points, 240.0, 3000.0).is_err());
     assert_eq!(doc.entities().cloned().collect::<Vec<_>>(), original);
-    assert!(!set_continuous_wall(
-        &mut doc,
-        &chain,
-        &points,
-        f64::NAN,
-        3000.0
-    ));
-    assert!(set_continuous_wall(
-        &mut doc, &chain, &points, 240.0, 3000.0
-    ));
+    assert!(set_continuous_wall(&mut doc, &chain, &points, f64::NAN, 3000.0).is_err());
+    assert!(set_continuous_wall(&mut doc, &chain, &points, 240.0, 3000.0).is_ok());
     assert!(continuous_wall_outline(&[v(0.0, 0.0, 0.0), v(1.0, 2.0, f64::NAN)], 240.0).is_none());
     assert!(continuous_wall_outline(&[v(0.0, 0.0, 0.0), v(1.0, 2.0, 3.0)], 240.0).is_none());
 }
@@ -460,7 +453,8 @@ fn continuous_walls_do_not_join_segments_across_a_subunit_gap() {
         v(2000.5, 0.0, 0.0),
         240.0,
         3000.0
-    ));
+    )
+    .is_ok());
     doc.add_entity(entity).unwrap();
     assert_eq!(continuous_walls(&doc).len(), 2);
 }

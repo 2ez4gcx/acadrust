@@ -218,7 +218,7 @@ fn ensure_entity_layer(
     document
         .layers
         .add(layer)
-        .map_err(|message| invalid(&message))?;
+        .map_err(|error| invalid(&error.to_string()))?;
     document.header.current_layer_name = name.clone();
     document.header.current_layer_handle = handle;
     Ok((name, handle))
