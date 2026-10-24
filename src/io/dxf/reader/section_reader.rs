@@ -854,15 +854,25 @@ fn class_dxf_hatch_context_boundary(
                 end_angle: fields.f64(section, 51).to_radians(),
                 counter_clockwise: fields.bool(section, 73),
             })),
-            3 => path.add_edge(BoundaryEdge::EllipticArc(EllipticArcEdge {
-                center: fields.point2(section, 10),
-                major_axis_endpoint: fields.point2(section, 11),
-                minor_axis_ratio: fields.f64(section, 40),
-                // Groups 50/51 are degrees, same as a circular edge.
-                start_angle: fields.f64(section, 50).to_radians(),
-                end_angle: fields.f64(section, 51).to_radians(),
-                counter_clockwise: fields.bool(section, 73),
-            })),
+            3 => {
+                let minor_axis_ratio = fields.f64(section, 40);
+                // Groups 50/51 are circular angles in degrees, same as a HATCH
+                // edge. The model stores the ellipse parameter.
+                path.add_edge(BoundaryEdge::EllipticArc(EllipticArcEdge {
+                    center: fields.point2(section, 10),
+                    major_axis_endpoint: fields.point2(section, 11),
+                    minor_axis_ratio,
+                    start_angle: circular_angle_to_ellipse_param(
+                        minor_axis_ratio,
+                        fields.f64(section, 50).to_radians(),
+                    ),
+                    end_angle: circular_angle_to_ellipse_param(
+                        minor_axis_ratio,
+                        fields.f64(section, 51).to_radians(),
+                    ),
+                    counter_clockwise: fields.bool(section, 73),
+                }))
+            }
             4 => {
                 let degree = fields.i32(section, 94);
                 let rational = fields.bool(section, 73);

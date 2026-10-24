@@ -9,7 +9,9 @@
   that follow the ODA layout still use the extra bit.
 - **Elliptic hatch edges** - DXF groups 50 and 51 are circular angles. The
   model and DWG keep the ellipse parameter, and a DXF round trip converts
-  between the two (issue #178).
+  between the two, including hatch context boundaries. The parameter stays in
+  the same revolution as the angle, so 300° and 424° come back unchanged
+  (issue #178).
 - **Arch records in DXF** - A non-R12 save no longer refuses the whole file
   because an AEC object has no DXF body. Those objects are omitted, along
   with dictionary entries and XDATA handles that point at them. An Arch entity with cached

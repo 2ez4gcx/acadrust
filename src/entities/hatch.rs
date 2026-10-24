@@ -167,30 +167,37 @@ pub struct EllipticArcEdge {
     pub counter_clockwise: bool,
 }
 
+/// Move `value` by whole turns so it lies in the same revolution as `reference`.
+///
+/// A circular angle and its ellipse parameter share a quadrant, so the nearest
+/// turn is the matching one. That keeps 300° and 424° on the turn they were
+/// written in, including where `atan2` itself returns a negative principal value.
+fn same_revolution(value: f64, reference: f64) -> f64 {
+    let turn = std::f64::consts::TAU;
+    value + ((reference - value) / turn).round() * turn
+}
+
 /// Circular angle used by a DXF hatch elliptic edge, as an ellipse parameter.
 ///
 /// Group 50/51 is the direction from the center, the same angle a circular
 /// arc would use. The parameter is the eccentric angle: a ray at circular
-/// angle `a` meets the ellipse at `atan2(sin(a) / ratio, cos(a))`. Full turns
-/// are kept, and a negative angle stays negative, so a clockwise edge uses
-/// the same conversion.
+/// angle `a` meets the ellipse at `atan2(sin(a) / ratio, cos(a))`. The result
+/// stays in the turn of `angle`, and a negative angle stays negative.
 pub(crate) fn circular_angle_to_ellipse_param(ratio: f64, angle: f64) -> f64 {
-    if !angle.is_finite() || !ratio.is_finite() || ratio == 0.0 {
+    if !(ratio > 0.0 && ratio.is_finite() && angle.is_finite()) {
         return angle;
     }
-    let turns = (angle / std::f64::consts::TAU).trunc();
-    let base = angle - turns * std::f64::consts::TAU;
-    (base.sin() / ratio).atan2(base.cos()) + turns * std::f64::consts::TAU
+    let param = (angle.sin() / ratio).atan2(angle.cos());
+    same_revolution(param, angle)
 }
 
 /// Ellipse parameter written back to a DXF hatch elliptic edge as a circular angle.
 pub(crate) fn ellipse_param_to_circular_angle(ratio: f64, param: f64) -> f64 {
-    if !param.is_finite() || !ratio.is_finite() || ratio == 0.0 {
+    if !(ratio > 0.0 && ratio.is_finite() && param.is_finite()) {
         return param;
     }
-    let turns = (param / std::f64::consts::TAU).trunc();
-    let base = param - turns * std::f64::consts::TAU;
-    (base.sin() * ratio).atan2(base.cos()) + turns * std::f64::consts::TAU
+    let angle = (param.sin() * ratio).atan2(param.cos());
+    same_revolution(angle, param)
 }
 
 /// Spline edge in a boundary path

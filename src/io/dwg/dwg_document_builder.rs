@@ -53,6 +53,19 @@ fn read_context_file_dictionary_flag(
     true
 }
 
+/// ODA §20.4.89 two-bit base. Used only when the native one-bit decode of an
+/// MLeader context does not fit the record.
+fn read_oda_context_file_dictionary_flag(
+    reader: &mut DwgMergedReader,
+    version: crate::io::dwg::dwg_version::DwgVersion,
+) -> bool {
+    if version.r2010_plus() {
+        reader.read_bit()
+    } else {
+        true
+    }
+}
+
 fn linetype_segment_is_complex(segment: &tables::LinetypeSegment, shape_handle: u64) -> bool {
     // Scale, rotation and offsets have no meaning on a plain dash; native
     // writers commonly store scale 0 instead of 1 (issue #128).
@@ -7278,11 +7291,10 @@ impl DwgDocumentBuilder {
                                     // is present. Native AutoCAD records take
                                     // the branch above and never reach here.
                                     let has_file_to_extension_dictionary =
-                                        if self.obj_reader.version().r2010_plus() {
-                                            reader.read_bit()
-                                        } else {
-                                            true
-                                        };
+                                        read_oda_context_file_dictionary_flag(
+                                            &mut reader,
+                                            self.obj_reader.version(),
+                                        );
                                     let is_default = reader.read_bit();
                                     let scale = reader.read_handle();
                                     let context =
