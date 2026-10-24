@@ -7,7 +7,8 @@
 //! together. Unsupported layouts return [`ArchEditError`] and leave the entity
 //! unchanged.
 //!
-//! The calling guide is `src/classes/arch/API.md`.
+//! The calling guide is
+//! [src/classes/arch/API.md](https://github.com/hakanaktt/acadrust/blob/main/src/classes/arch/API.md).
 
 mod continuous;
 mod create;

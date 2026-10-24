@@ -1,5 +1,7 @@
 # Arch API
 
+This is the calling guide for `acadrust::classes::arch` in 0.6.7.
+
 AEC classes are exposed through `acadrust::classes::arch`. A drawing is a
 `CadDocument`; its Arch entities contain
 `ExtendedEntityData::Arch(ArchEntityData)`, and its Arch objects

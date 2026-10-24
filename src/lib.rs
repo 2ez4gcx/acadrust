@@ -17,6 +17,9 @@
 //!   [`DwgReader::read_with_stats`].
 //! - **Automatic code-page handling** for older drawings.
 //! - Optional Serde serialization and 3D import support.
+//! - **ACAD Arch** classes: preserve native AEC records, construct straight
+//!   walls, doors, and windows, and edit supported parameters. See
+//!   [`classes::arch`].
 //!
 //! ## Feature Flags
 //!
@@ -28,7 +31,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! acadrust = { version = "0.6.6", features = ["serde", "import"] }
+//! acadrust = { version = "0.6.7", features = ["serde", "import"] }
 //! ```
 //!
 //! Use `default-features = false` to omit acadrust's Rayon dependency and run
@@ -36,7 +39,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! acadrust = { version = "0.6.6", default-features = false }
+//! acadrust = { version = "0.6.7", default-features = false }
 //! ```
 //!
 //! Cargo features are additive, so another dependency can enable `parallel`.
@@ -169,6 +172,15 @@
 //! # }
 //! ```
 //!
+//! ## ACAD Arch
+//!
+//! [`classes::arch`] recognizes AEC, structural, and building-systems classes.
+//! A same-version DWG save preserves the native class body. `wall`, `door`,
+//! and `window` build an AC1032 drawing from parameters. `decode` reads any
+//! Arch class, and supported setters update native parameters together with
+//! cached graphics. The calling guide is
+//! [src/classes/arch/API.md](https://github.com/hakanaktt/acadrust/blob/main/src/classes/arch/API.md).
+//!
 //! ## Module Overview
 //!
 //! | Module | Contents |
@@ -182,6 +194,7 @@
 //! | [`io`] | DXF, DWG, and optional import readers and writers |
 //! | [`entities::acis`] | ACIS/SAT/SAB parsing, writing, and primitive builders |
 //! | [`notification`] | Structured parse notifications and recovery counts |
+//! | [`classes::arch`] | ACAD Arch entities, objects, constructors, and edits |
 //!
 //! ## File Version Support
 //!
