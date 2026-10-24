@@ -74,6 +74,18 @@ pub fn extract_presentation(data: &[u8]) -> Option<OlePresentation> {
     scan_bmp(data).map(OlePresentation::Raster)
 }
 
+/// The object's user type ("Adobe Photoshop Image", "Paintbrush Picture"),
+/// read from the `\x01CompObj` stream of a raw OLE2FRAME data blob: the
+/// first length-prefixed ANSI string after the 28-byte stream header.
+pub fn ole_user_type(data: &[u8]) -> Option<String> {
+    let cfb = find_cfb(data).and_then(Cfb::parse)?;
+    let stream = cfb.stream("\u{1}CompObj")?;
+    let len = u32::from_le_bytes(stream.get(28..32)?.try_into().ok()?) as usize;
+    let text = stream.get(32..32 + len)?;
+    let text = text.split(|b| *b == 0).next().unwrap_or_default();
+    (!text.is_empty()).then(|| text.iter().map(|&b| char::from(b)).collect())
+}
+
 /// Strip the `\x01Ole10Native` u32 length prefix; other streams pass through.
 fn native_body<'a>(name: &str, stream: &'a [u8]) -> &'a [u8] {
     if name == "\u{1}Ole10Native" && stream.len() > 4 {
@@ -107,8 +119,17 @@ fn classify_metafile(body: &[u8]) -> Option<OlePresentation> {
         return None;
     }
     let key = u32::from_le_bytes(body[0..4].try_into().unwrap());
-    if key == 1 && body.len() >= 44 && &body[40..44] == b" EMF" {
+    if is_emf(body) {
         return Some(OlePresentation::Emf(body.to_vec()));
+    }
+    // Static-metafile CONTENTS: a u32 header size, a copy of the
+    // ENHMETAHEADER that long, then the complete EMF.
+    if key >= 88 && is_emf(&body[4..]) {
+        if let Some(emf) = 4usize.checked_add(key as usize).and_then(|o| body.get(o..)) {
+            if is_emf(emf) {
+                return Some(OlePresentation::Emf(emf.to_vec()));
+            }
+        }
     }
     let is_placeable = key == 0x9AC6_CDD7;
     let (ty, hs) = if is_placeable && body.len() >= 26 {
@@ -129,6 +150,11 @@ fn classify_metafile(body: &[u8]) -> Option<OlePresentation> {
         return Some(OlePresentation::Wmf(body.to_vec()));
     }
     None
+}
+
+/// Does `b` start with an EMR_HEADER record carrying the EMF signature?
+fn is_emf(b: &[u8]) -> bool {
+    b.len() >= 88 && b[0..4] == [1, 0, 0, 0] && &b[40..44] == b" EMF"
 }
 
 /// Decode an OlePres stream (MS-OLEDS): clipboard-format header, target
@@ -495,5 +521,23 @@ impl<'a> Cfb<'a> {
         }
         out.truncate(size);
         Some(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contents_with_enhmetaheader_prefix_yields_the_emf() {
+        let mut emf = vec![0u8; 108];
+        emf[0] = 1;
+        emf[4] = 108;
+        emf[40..44].copy_from_slice(b" EMF");
+        emf.extend_from_slice(&[14, 0, 0, 0, 20, 0, 0, 0]);
+        let mut contents = 108u32.to_le_bytes().to_vec();
+        contents.extend_from_slice(&emf[..108]);
+        contents.extend_from_slice(&emf);
+        assert_eq!(classify_metafile(&contents), Some(OlePresentation::Emf(emf)));
     }
 }

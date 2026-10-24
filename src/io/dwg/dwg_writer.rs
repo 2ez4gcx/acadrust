@@ -89,32 +89,36 @@ impl DwgWriter {
         // the controls, entries and handle map all agree (issue #51/#64
         // class of bug).
         let mut owned;
-        let document: &CadDocument =
-            if document.has_null_table_entries() || document.version < DxfVersion::AC1027 {
-                owned = document.clone();
-                if owned.has_null_table_entries() {
-                    owned.assign_table_entry_handles();
+        let document: &CadDocument = if document.has_null_table_entries()
+            || document.version < DxfVersion::AC1027
+            || has_missing_object_classes(document)
+        {
+            owned = document.clone();
+            if owned.has_null_table_entries() {
+                owned.assign_table_entry_handles();
+            }
+            if owned.version < DxfVersion::AC1027 {
+                // A table read from a file of this version is already valid
+                // for it, and the verbatim records copied from that file
+                // carry its class numbers: leave it as it is.
+                if owned.dwg_source_version != Some(owned.version) {
+                    prepare_legacy_classes(&mut owned);
                 }
-                if owned.version < DxfVersion::AC1027 {
-                    // A table read from a file of this version is already valid
-                    // for it, and the verbatim records copied from that file
-                    // carry its class numbers: leave it as it is.
-                    if owned.dwg_source_version != Some(owned.version) {
-                        prepare_legacy_classes(&mut owned);
-                    }
-                    if owned.version < DxfVersion::AC1018 {
-                        add_missing_object_classes(&mut owned);
-                    }
-                }
-                if owned.version < DxfVersion::AC1027 {
-                    prepare_legacy_document(&mut owned);
-                    crate::objects::store_table_style_roundtrip(&mut owned);
-                    crate::objects::store_visual_style_roundtrip(&mut owned);
-                }
-                &owned
-            } else {
-                document
-            };
+            }
+            // Objects added after reading (an evaluated dynamic block's
+            // AcDbBlockRepresentationData, a drawing variable) need their
+            // class whatever the version; the verbatim table only gains
+            // entries at its end, so the numbers it carries stay valid.
+            add_missing_object_classes(&mut owned);
+            if owned.version < DxfVersion::AC1027 {
+                prepare_legacy_document(&mut owned);
+                crate::objects::store_table_style_roundtrip(&mut owned);
+                crate::objects::store_visual_style_roundtrip(&mut owned);
+            }
+            &owned
+        } else {
+            document
+        };
 
         let result = if uses_ac21_format(version) {
             write_ac21(&mut output, document, version)
@@ -276,12 +280,27 @@ fn validate_unknown_records(document: &CadDocument) -> Result<()> {
             }
             DwgObjectWriter::validate_architecture_object(object, document.version)?;
         }
+        if let crate::objects::ObjectType::DynamicBlock(value) = object {
+            if let crate::objects::DynamicBlockData::PropertiesTable(table) = &value.data {
+                let supported = table.fields.iter().all(|field| match (field.code, &field.value) {
+                    (90..=99, crate::objects::BlockPropertiesTableValue::Integer(_))
+                    | (170..=179, crate::objects::BlockPropertiesTableValue::Integer(_))
+                    | (290..=299, crate::objects::BlockPropertiesTableValue::Boolean(_))
+                    | (140..=149, crate::objects::BlockPropertiesTableValue::Real(_))
+                    | (300..=309, crate::objects::BlockPropertiesTableValue::Text(_))
+                    | (340..=349, crate::objects::BlockPropertiesTableValue::Handle(_)) => true,
+                    _ => false,
+                });
+                if !supported {
+                    return Err(DxfError::NotImplemented(format!(
+                        "Cannot encode Block Properties Table at handle {} as DWG: a field uses an unsupported value type",
+                        value.handle
+                    )));
+                }
+            }
+        }
         if let crate::objects::ObjectType::Unknown {
-            type_name,
-            handle,
-            raw_dwg_data,
-            raw_dwg_version,
-            ..
+            type_name, handle, raw_dwg_data, raw_dwg_version, ..
         } = object
         {
             if raw_dwg_data.is_none()
@@ -819,6 +838,25 @@ fn entity_class_name(entity: &crate::entities::EntityType) -> &str {
     }
 }
 
+/// Walk `document.objects` in handle order.
+///
+/// `objects` is a `HashMap`, so it iterates in an order seeded per instance:
+/// reading the same file twice and writing both gives two different orders.
+/// The callers below turn that walk into on-disk structure - the class table
+/// is positional (`500 + index`, see `DxfClassCollection::add_or_update`) and
+/// names the type code of every class-registered record - so a random walk
+/// would hand out a different type code on every write. Lowest handle first
+/// makes the result the same file after file.
+fn objects_in_handle_order(document: &CadDocument) -> Vec<(Handle, &crate::objects::ObjectType)> {
+    let mut objects: Vec<_> = document
+        .objects
+        .iter()
+        .map(|(handle, obj)| (*handle, obj))
+        .collect();
+    objects.sort_by_key(|(handle, _)| handle.value());
+    objects
+}
+
 /// Shrink the class table to the pre-R2013 profile, keeping every class a
 /// record of the document is written under.
 ///
@@ -828,10 +866,11 @@ fn entity_class_name(entity: &crate::entities::EntityType) -> &str {
 /// record without a valid type code, so it is kept, after the profile.
 fn prepare_legacy_classes(document: &mut CadDocument) {
     let entity_classes = document.entities().map(entity_class_name);
-    let object_classes = document
-        .objects
-        .values()
-        .flat_map(crate::io::dwg::dwg_stream_writers::object_writer::objects::object_class_names);
+    let object_classes = objects_in_handle_order(document)
+        .into_iter()
+        .flat_map(|(_, object)| {
+            crate::io::dwg::dwg_stream_writers::object_writer::objects::object_class_names(object)
+        });
     // FIELD / FIELDLIST records exist from R2004 on and are written from the
     // document's field table, not from `objects`.
     let field_classes: &[&str] = if document.version >= DxfVersion::AC1018 {
@@ -860,17 +899,38 @@ fn prepare_legacy_classes(document: &mut CadDocument) {
     }
 }
 
-/// Declare the class of every object added to a pre-R2004 drawing whose
-/// source file never used that class. Before R2004 such records take their
-/// type code only from the class table; without an entry they fall back to a
-/// later version's fixed code, which strict readers reject.
+/// Class names of objects whose class the table lacks.
+fn missing_object_class_names(document: &CadDocument) -> Vec<Vec<std::borrow::Cow<'_, str>>> {
+    objects_in_handle_order(document)
+        .into_iter()
+        .map(|(_, object)| {
+            crate::io::dwg::dwg_stream_writers::object_writer::objects::object_class_names(object)
+        })
+        .filter(|names| !names.iter().any(|name| document.classes.contains(name)))
+        .collect()
+}
+
+/// True when an object the defaults can declare has no class in the table.
+fn has_missing_object_classes(document: &CadDocument) -> bool {
+    let defaults = crate::classes::default_classes();
+    missing_object_class_names(document).iter().any(|names| {
+        defaults.iter().any(|class| {
+            names
+                .iter()
+                .any(|name| class.dxf_name.eq_ignore_ascii_case(name))
+        })
+    })
+}
+
+/// Declare the class of every object whose source file never used that
+/// class. Such records take their type code from the class table; without an
+/// entry they fall back to a fixed or placeholder code (500 for dynamic block
+/// records), which readers resolve to another class or drop: an evaluated
+/// dynamic block reference then loses its link to the definition.
 fn add_missing_object_classes(document: &mut CadDocument) {
     let defaults = crate::classes::default_classes();
-    let missing: Vec<_> = document
-        .objects
-        .values()
-        .map(crate::io::dwg::dwg_stream_writers::object_writer::objects::object_class_names)
-        .filter(|names| !names.iter().any(|name| document.classes.contains(name)))
+    let missing: Vec<_> = missing_object_class_names(document)
+        .into_iter()
         .filter_map(|names| {
             defaults
                 .iter()
@@ -888,10 +948,11 @@ fn add_missing_object_classes(document: &mut CadDocument) {
     }
 }
 
-/// Remove style dictionaries only before the versions introducing their
-/// objects: TABLESTYLE in R2004 and MLEADERSTYLE in R2007.
+/// Bring a document into shape for a version older than the one it came from.
+///
+/// R14 and older expect a VxTable record per viewport. Style dictionaries are
+/// removed before the version that introduced their objects.
 fn prepare_legacy_document(document: &mut CadDocument) {
-    use crate::objects::ObjectType;
     if document.version <= DxfVersion::AC1014 {
         let missing: Vec<_> = document
             .entities()
@@ -927,9 +988,11 @@ fn prepare_legacy_document(document: &mut CadDocument) {
         }
     }
 
-    // R2004 saves keep ACAD_MLEADERSTYLE (with the MLEADERSTYLE class
-    // declared), written in the pre-R2010 record layout, as the reference
-    // application does; only older versions drop it.
+    // TABLESTYLE is an R2004 object. MLEADERSTYLE is an R2007 object.
+    // R2004 saves keep ACAD_MLEADERSTYLE when that class is already declared,
+    // in the pre-R2010 record layout. Older saves drop the dictionary and the
+    // style object it holds.
+    use crate::objects::ObjectType;
     let keep_mleader_style = document.version >= DxfVersion::AC1018
         && document.classes.get_by_name("MLEADERSTYLE").is_some();
     let root_handle = document.header.named_objects_dict_handle;
@@ -2670,8 +2733,8 @@ mod tests {
     }
 
     #[test]
-    fn object_without_its_class_is_skipped_instead_of_written_as_class_500() {
-        use crate::objects::ObjectType;
+    fn object_without_its_class_gets_it_declared_instead_of_written_as_class_500() {
+        use crate::objects::{ClassObjectData, ObjectType};
 
         let mut document = layer_filter_document();
         document.version = DxfVersion::AC1024;
@@ -2682,8 +2745,12 @@ mod tests {
                 classes.push_preserving(class.clone());
             }
         }
+        let numbers: Vec<_> = classes
+            .iter()
+            .map(|class| (class.dxf_name.clone(), class.class_number))
+            .collect();
         document.classes = classes;
-        let source_objects = document.objects.len() - 1;
+        let source_objects = document.objects.len();
 
         let bytes = DwgWriter::write_to_vec(&document).unwrap();
         let decoded = crate::io::dwg::DwgReader::from_stream(Cursor::new(bytes))
@@ -2691,10 +2758,18 @@ mod tests {
             .unwrap();
 
         assert_eq!(decoded.objects.len(), source_objects);
-        assert!(!decoded
-            .objects
-            .values()
-            .any(|object| matches!(object, ObjectType::ClassObject(_))));
+        assert!(decoded.classes.contains("LAYERFILTER"));
+        for (name, number) in numbers {
+            assert_eq!(
+                decoded.classes.get_by_name(&name).map(|c| c.class_number),
+                Some(number)
+            );
+        }
+        assert!(decoded.objects.values().any(|object| matches!(
+            object,
+            ObjectType::ClassObject(o)
+                if matches!(&o.data, ClassObjectData::LayerFilter(f) if f.names == ["WALLS"])
+        )));
     }
 
     #[test]
@@ -3483,4 +3558,130 @@ mod tests {
             }
         }
     }
+
+    fn constraint_group_document(version: DxfVersion) -> CadDocument {
+        use crate::objects::{
+            Assoc2dConstraintGroup, AssocAction, AssocConstraintNode, AssocConstraintNodeData,
+            AssociativeData, AssociativeObject, ObjectType,
+        };
+
+        let mut document = CadDocument::new();
+        document.version = version;
+        let handle = document.allocate_handle();
+        let owner = document.header.named_objects_dict_handle;
+        document.objects.insert(
+            handle,
+            ObjectType::Associative(AssociativeObject {
+                handle,
+                owner,
+                dxf_name: "ASSOC2DCONSTRAINTGROUP".to_string(),
+                cpp_class_name: "AcDbAssoc2dConstraintGroup".to_string(),
+                data: AssociativeData::ConstraintGroup(Assoc2dConstraintGroup {
+                    action: AssocAction {
+                        class_version: 2,
+                        ..Default::default()
+                    },
+                    version: 2,
+                    nodes: vec![
+                        AssocConstraintNode {
+                            status: 1,
+                            connections: vec![7],
+                            ..Default::default()
+                        },
+                        AssocConstraintNode {
+                            node_id: 1,
+                            class_name: "AcFixedConstraint".to_string(),
+                            status: 3,
+                            data: AssocConstraintNodeData::Geometrical {
+                                owner_id: 0,
+                                is_implied: false,
+                                is_active: true,
+                            },
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        );
+        document
+    }
+
+    fn constraint_group_of(document: &CadDocument) -> &crate::objects::Assoc2dConstraintGroup {
+        use crate::objects::{AssociativeData, AssociativeObject, ObjectType};
+        document
+            .objects
+            .values()
+            .find_map(|object| match object {
+                ObjectType::Associative(AssociativeObject {
+                    data: AssociativeData::ConstraintGroup(group),
+                    ..
+                }) => Some(group),
+                _ => None,
+            })
+            .expect("constraint group should round-trip")
+    }
+
+    #[test]
+    fn constraint_group_below_r2013_round_trips_without_serialized_root() {
+        use crate::objects::{AssocConstraintNode, AssocConstraintNodeData};
+        use crate::DwgReader;
+        use std::io::Cursor;
+
+        let document = constraint_group_document(DxfVersion::AC1018);
+        let decoded = DwgReader::from_stream(Cursor::new(
+            DwgWriter::write_to_vec(&document).expect("write DWG"),
+        ))
+        .read()
+        .expect("read DWG");
+        let group = constraint_group_of(&decoded);
+
+        assert_eq!(group.nodes.len(), 2);
+        assert_eq!(
+            group.nodes[0],
+            AssocConstraintNode::default(),
+            "pre-R2013 layouts serialize no root node; the reader rebuilds a placeholder"
+        );
+        assert_eq!(group.nodes[1].node_id, 1);
+        assert_eq!(group.nodes[1].class_name, "AcFixedConstraint");
+        assert_eq!(group.nodes[1].status, 3);
+        assert!(matches!(
+            group.nodes[1].data,
+            AssocConstraintNodeData::Geometrical {
+                is_active: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn constraint_group_r2013_plus_round_trips_with_serialized_root() {
+        use crate::objects::AssocConstraintNodeData;
+        use crate::DwgReader;
+        use std::io::Cursor;
+
+        let document = constraint_group_document(DxfVersion::AC1032);
+        let decoded = DwgReader::from_stream(Cursor::new(
+            DwgWriter::write_to_vec(&document).expect("write DWG"),
+        ))
+        .read()
+        .expect("read DWG");
+        let group = constraint_group_of(&decoded);
+
+        assert_eq!(group.nodes.len(), 2);
+        assert_eq!(group.nodes[0].node_id, 0);
+        assert_eq!(group.nodes[0].status, 1);
+        assert_eq!(group.nodes[0].connections, vec![7]);
+        assert_eq!(group.nodes[1].class_name, "AcFixedConstraint");
+        assert_eq!(group.nodes[1].status, 3);
+        assert!(matches!(
+            group.nodes[1].data,
+            AssocConstraintNodeData::Geometrical {
+                is_active: true,
+                ..
+            }
+        ));
+    }
 }
+

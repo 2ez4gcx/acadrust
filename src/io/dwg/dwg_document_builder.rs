@@ -1616,6 +1616,7 @@ impl DwgDocumentBuilder {
                                     scale: s.scale,
                                     rotation: s.rotation,
                                     absolute_rotation: s.dwg_flags & 0x01 != 0,
+                                    upright: s.dwg_flags & 0x08 != 0,
                                     source_flags: s.dwg_flags as u8,
                                     offset: [s.offset_x, s.offset_y],
                                 })
@@ -3587,10 +3588,16 @@ impl DwgDocumentBuilder {
                 br.block_end_handle = document.allocate_handle();
                 // Cross-link the owning Layout object, if present, so the record
                 // and its Layout reference each other like a normally-read pair.
-                for (oh, obj) in document.objects.iter() {
-                    if let crate::objects::ObjectType::Layout(l) = obj {
+                // The first match wins, so walk in handle order: `objects` is a
+                // hash map and a record with more than one candidate Layout
+                // would otherwise pick a different one on every read.
+                let mut layouts: Vec<crate::types::Handle> =
+                    document.objects.keys().copied().collect();
+                layouts.sort_by_key(|handle| handle.value());
+                for oh in layouts {
+                    if let Some(crate::objects::ObjectType::Layout(l)) = document.objects.get(&oh) {
                         if l.block_record == h {
-                            br.layout = *oh;
+                            br.layout = oh;
                             break;
                         }
                     }
@@ -5214,6 +5221,10 @@ impl DwgDocumentBuilder {
                     e.dwg_mode = data.mode;
                     e.is_paper_space = data.mode == 1;
                     e.lock_aspect = data.lock_aspect;
+                    // DWG keeps no source application; the object's storage
+                    // names it.
+                    e.source_application =
+                        crate::entities::ole_user_type(&e.encoded_payload()).unwrap_or_default();
                     let _ = document.add_entity(EntityType::Ole2Frame(Box::new(e)));
                 }
 

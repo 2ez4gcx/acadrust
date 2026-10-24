@@ -586,6 +586,9 @@ impl SabWriter {
                 // the same approximating `full nubs` spline.
                 let parent = match subtypes.last() {
                     Some(Some(name)) if name.ends_with("cur") => Some("exactcur"),
+                    // An offset surface's own spline (its approximation)
+                    // follows the distance and two senses.
+                    Some(Some("offsur")) => Some("exactsur"),
                     _ => parent,
                 };
                 let pcurve = in_int_cur(&subtypes) && previous != Some("full");
@@ -630,7 +633,7 @@ impl SabWriter {
                 && index + 1 < tokens.len()
                 && (matches!(
                     subtypes.last(),
-                    None | Some(Some("exactcur" | "exact_int_cur" | "exactsur" | "exppc"))
+                    None | Some(Some("exactcur" | "exact_int_cur" | "exactsur" | "offsur" | "exppc"))
                 ) || in_int_cur(&subtypes))
             {
                 doubles.push(index + 1);

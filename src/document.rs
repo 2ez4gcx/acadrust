@@ -20,10 +20,10 @@
 use crate::classes::DxfClassCollection;
 use crate::entities::{EntityCommon, EntityType};
 use crate::objects::{
-    BlockEvaluationEdge, BlockEvaluationGraph, BlockEvaluationNode, DataObjectData,
-    DynamicBlockData, DynamicBlockObject, MaterialColor, MaterialTexture, ObjectType, SolidHistory,
-    SolidHistoryBoolean, SolidHistoryNodeBase, SolidHistoryOperation, SolidHistoryTree,
-    XRecordEntry,
+    AssociativeData, BlockEvaluationEdge, BlockEvaluationGraph, BlockEvaluationNode,
+    DataObjectData, DynamicBlockData, DynamicBlockObject, MaterialColor, MaterialTexture,
+    ObjectType, SolidHistory, SolidHistoryBoolean, SolidHistoryNodeBase, SolidHistoryOperation,
+    SolidHistoryTree, XRecordEntry,
 };
 use crate::tables::*;
 use crate::types::{Color, DxfVersion, Handle, Vector2, Vector3};
@@ -208,6 +208,9 @@ pub struct HeaderVariables {
     pub retain_xref_visibility: bool,
     /// DISPSILH - Silhouette display for 3D objects
     pub display_silhouette: bool,
+    /// PELLIPSE - ELLIPSE draws a polyline approximation instead of a true
+    /// ellipse (DWG header only; DXF has no such variable).
+    pub create_ellipse_as_polyline: bool,
     /// SPLFRAME - Display spline control polygon
     pub spline_frame: bool,
     /// DELOBJ - Delete source objects for regions/solids
@@ -807,6 +810,7 @@ impl Default for HeaderVariables {
             world_view: true,
             retain_xref_visibility: true,
             display_silhouette: true,
+            create_ellipse_as_polyline: false,
             spline_frame: false,
             delete_objects: true,
             record_solid_history: false,
@@ -3872,6 +3876,7 @@ impl CadDocument {
     }
 
     pub fn ensure_model_layout(&mut self) {
+        self.ensure_layout_dictionary_registration();
         // Layouts name their record; a record left without the back link
         // (R13/R14 block headers have none) takes it from its layout.
         let owners: HashMap<Handle, Handle> = self
@@ -3911,15 +3916,80 @@ impl CadDocument {
             return;
         }
 
-        let dict_handle = self.header.acad_layout_dict_handle;
-        let dict_handle = if matches!(
-            self.objects.get(&dict_handle),
-            Some(ObjectType::Dictionary(_))
-        ) {
-            dict_handle
+        // A minimal DXF may have no root, or a handle-less empty dictionary
+        // that only received its handle during reference resolution. Resolve
+        // that role before creating anything owned by it.
+        let current_root = self.header.named_objects_dict_handle;
+        let root = if !current_root.is_null()
+            && matches!(self.objects.get(&current_root), Some(ObjectType::Dictionary(d))
+            if d.handle == current_root && d.owner.is_null())
+        {
+            current_root
+        } else {
+            let mut roots = self
+                .objects
+                .iter()
+                .filter_map(|(handle, object)| match object {
+                    ObjectType::Dictionary(d)
+                        if !handle.is_null() && d.handle == *handle && d.owner.is_null() =>
+                    {
+                        Some(*handle)
+                    }
+                    _ => None,
+                });
+            match (roots.next(), roots.next()) {
+                (Some(root), None) => root,
+                (None, None) => {
+                    self.synchronize_handle_allocator();
+                    let handle = self.allocate_handle();
+                    let mut root = crate::objects::Dictionary::new();
+                    root.handle = handle;
+                    self.objects.insert(handle, ObjectType::Dictionary(root));
+                    handle
+                }
+                _ => {
+                    self.notifications.notify(
+                        crate::notification::NotificationType::Warning,
+                        "Model layout not synthesized: named root dictionary is ambiguous",
+                    );
+                    return;
+                }
+            }
+        };
+        self.header.named_objects_dict_handle = root;
+        let Some(ObjectType::Dictionary(root_dictionary)) = self.objects.get(&root) else {
+            unreachable!();
+        };
+        let mut entries = root_dictionary
+            .entries
+            .iter()
+            .filter(|(name, _)| name == "ACAD_LAYOUT");
+        let dict_handle =
+            match (entries.next(), entries.next()) {
+                (Some((_, handle)), None)
+                    if !handle.is_null()
+                        && *handle != root
+                        && matches!(self.objects.get(handle), Some(ObjectType::Dictionary(d))
+                    if d.handle == *handle && (d.owner == root || d.owner.is_null())) =>
+                {
+                    Some(*handle)
+                }
+                (None, None) => None,
+                _ => {
+                    self.notifications.notify(crate::notification::NotificationType::Warning,
+                    "Model layout not synthesized: ACAD_LAYOUT membership or ownership conflicts");
+                    return;
+                }
+            };
+        let dict_handle = if let Some(handle) = dict_handle {
+            // The reader accepts an ownerless member (old files leave it
+            // unset); complete its ownership like a synthesized one.
+            if let Some(ObjectType::Dictionary(dict)) = self.objects.get_mut(&handle) {
+                dict.owner = root;
+            }
+            handle
         } else {
             let handle = self.allocate_handle();
-            let root = self.header.named_objects_dict_handle;
             let mut dict = crate::objects::Dictionary::new();
             dict.handle = handle;
             dict.owner = root;
@@ -3927,9 +3997,9 @@ impl CadDocument {
                 root.add_entry("ACAD_LAYOUT", handle);
             }
             self.objects.insert(handle, ObjectType::Dictionary(dict));
-            self.header.acad_layout_dict_handle = handle;
             handle
         };
+        self.header.acad_layout_dict_handle = dict_handle;
 
         let handle = self.allocate_handle();
         let mut layout = crate::objects::Layout::new("Model");
@@ -3945,6 +4015,90 @@ impl CadDocument {
             record.layout = handle;
         }
         self.objects.insert(handle, ObjectType::Layout(layout));
+    }
+
+    /// Complete the root dictionary's `ACAD_LAYOUT` registration.
+    ///
+    /// Pre-R2000 DWG files carry no `ACAD_LAYOUT` entry in the root
+    /// dictionary: the R13/R14 writer strips it (that named-object-dictionary
+    /// reference does not exist in the R14 format) while the layout
+    /// dictionary itself survives as a regular object owned by the root.
+    /// Loading such a file used to leave the model non-canonical — the
+    /// layout dictionary reachable only through its own `owner` back-link —
+    /// so every later save (DXF or DWG, any version) serialized it as an
+    /// orphan and strict handle-graph verification rejected the output.
+    ///
+    /// This is the entry-side mirror of the owner completion for ownerless
+    /// layout-dictionary members: when the layout dictionary exists but the
+    /// root lost its entry, complete the registration and re-point the
+    /// header handle. Idempotent — a document whose root carries any
+    /// `ACAD_LAYOUT` entry is left untouched.
+    fn ensure_layout_dictionary_registration(&mut self) {
+        let root = self.header.named_objects_dict_handle;
+
+        // Any root entry, even an ambiguous or dangling one, is the reader's
+        // to resolve; only a stripped entry is completed here.
+        let registered = match self.objects.get(&root) {
+            Some(ObjectType::Dictionary(dict)) => {
+                dict.entries.iter().any(|(name, _)| name == "ACAD_LAYOUT")
+            }
+            _ => true,
+        };
+        if registered {
+            return;
+        }
+
+        // Resolve the layout dictionary: the header pointer, then the
+        // dictionary that owns LAYOUT objects (prefer one owned by the root;
+        // lowest handle keeps the choice deterministic).
+        let mut dict_handle = Handle::NULL;
+        let header = self.header.acad_layout_dict_handle;
+        if matches!(self.objects.get(&header), Some(ObjectType::Dictionary(_))) {
+            dict_handle = header;
+        }
+        if dict_handle.is_null() {
+            let mut candidates: Vec<Handle> = self
+                .objects
+                .iter()
+                .filter_map(|(_handle, object)| match object {
+                    ObjectType::Layout(layout) if !layout.owner.is_null() => Some(layout.owner),
+                    _ => None,
+                })
+                .filter(|owner| {
+                    matches!(self.objects.get(owner), Some(ObjectType::Dictionary(_)))
+                })
+                .collect();
+            candidates.sort_unstable();
+            candidates.dedup();
+            dict_handle = candidates
+                .iter()
+                .copied()
+                .find(|&owner| {
+                    matches!(self.objects.get(&owner),
+                        Some(ObjectType::Dictionary(dict)) if dict.owner == root)
+                })
+                .or_else(|| candidates.first().copied())
+                .unwrap_or(Handle::NULL);
+        }
+        if dict_handle.is_null() {
+            // No layout dictionary anywhere — `ensure_model_layout`'s own
+            // path creates one together with the Model layout when needed.
+            return;
+        }
+
+        // Complete the registration. A null owner is completed to the root
+        // (the ACAD_LAYOUT dictionary is a root child in every well-formed
+        // drawing); a non-null owner is left for the existing repair passes
+        // to normalize.
+        if let Some(ObjectType::Dictionary(dict)) = self.objects.get_mut(&dict_handle) {
+            if dict.owner.is_null() {
+                dict.owner = root;
+            }
+        }
+        if let Some(ObjectType::Dictionary(root_dict)) = self.objects.get_mut(&root) {
+            root_dict.add_entry("ACAD_LAYOUT", dict_handle);
+        }
+        self.header.acad_layout_dict_handle = dict_handle;
     }
 
     /// Get the number of entities.
@@ -4540,9 +4694,21 @@ impl CadDocument {
             }
             _ => return Vec::new(),
         };
-        self.xrecord(layer, key)
-            .map(|record| record.layer_viewport_overrides(value_code))
-            .unwrap_or_default()
+        // Renderers ask this once per entity for every viewport, so it must not
+        // fall back to `xrecord`'s scan over all objects for the many layers
+        // that have no extension dictionary. Every reader and
+        // `ensure_extension_dictionary` register a layer's dictionary here.
+        let Some(dictionary) = self.xdic_by_handle.get(&layer) else {
+            return Vec::new();
+        };
+        let record = match self.objects.get(dictionary) {
+            Some(ObjectType::Dictionary(dictionary)) => dictionary.get(key),
+            _ => None,
+        };
+        match record.and_then(|handle| self.objects.get(&handle)) {
+            Some(ObjectType::XRecord(record)) => record.layer_viewport_overrides(value_code),
+            _ => Vec::new(),
+        }
     }
 
     /// Walk the ownership chain upward from `start` (inclusive) and report
@@ -4712,6 +4878,100 @@ impl CadDocument {
         }
         self.apply_table_renames(&layers, &line_types, &text_styles);
         renamed
+    }
+
+    /// Rebuild missing polyline vertex ids from geometric constraint edges.
+    ///
+    /// Drawing formats before R2010 cannot store LWPOLYLINE vertex ids, but
+    /// associative edge constraints already persist their endpoints as vertex
+    /// id pairs. A document read from such a format therefore carries
+    /// resolvable constraint references into a polyline that has no ids at
+    /// all, and re-encoding to R2010+ leaves those references dangling. Each
+    /// constrained polyline whose vertices are all unnumbered is renumbered
+    /// along the edge chain described by its constraints; polylines that
+    /// already carry ids, that no constraint references, or whose edge chain
+    /// does not cover every vertex are left untouched. Returns the number of
+    /// renumbered polylines.
+    pub fn restore_constraint_vertex_ids(&mut self) -> usize {
+        use std::collections::BTreeSet;
+
+        // Directed edge endpoints referenced by geometric dependencies, keyed
+        // by the host entity handle.
+        let mut edges: HashMap<u64, Vec<(i32, i32)>> = HashMap::new();
+        for object in self.objects.values() {
+            let ObjectType::Associative(object) = object else {
+                continue;
+            };
+            let AssociativeData::GeomDependency(geom) = &object.data else {
+                continue;
+            };
+            let subent = &geom.persistent_subent;
+            if !subent.class_name.ends_with("EdgePersSubentId") || subent.values.len() < 3 {
+                continue;
+            }
+            edges
+                .entry(geom.dependency.dependent_on.value())
+                .or_default()
+                .push((subent.values[1], subent.values[2]));
+        }
+        if edges.is_empty() {
+            return 0;
+        }
+
+        let mut assigned = 0;
+        for entity in self.entities_mut() {
+            let EntityType::LwPolyline(polyline) = entity else {
+                continue;
+            };
+            if polyline
+                .vertices
+                .iter()
+                .any(|vertex| vertex.vertex_id != 0)
+            {
+                continue;
+            }
+            let Some(edge_list) = edges.get(&polyline.common.handle.value()) else {
+                continue;
+            };
+            let vertex_count = polyline.vertices.len();
+            let mut successor: HashMap<i32, i32> = HashMap::new();
+            let mut indegree: HashMap<i32, usize> = HashMap::new();
+            for &(from, to) in edge_list {
+                successor.insert(from, to);
+                *indegree.entry(to).or_insert(0) += 1;
+            }
+            let mut start = successor
+                .keys()
+                .copied()
+                .filter(|id| indegree.get(id).copied().unwrap_or(0) == 0)
+                .min();
+            if start.is_none() {
+                start = successor.keys().copied().min();
+            }
+            let Some(mut current) = start else {
+                continue;
+            };
+            let mut chain = Vec::with_capacity(vertex_count);
+            let mut seen = BTreeSet::new();
+            loop {
+                if !seen.insert(current) {
+                    break;
+                }
+                chain.push(current);
+                match successor.get(&current) {
+                    Some(&next) if chain.len() < vertex_count => current = next,
+                    _ => break,
+                }
+            }
+            if chain.len() != vertex_count {
+                continue;
+            }
+            for (vertex, id) in polyline.vertices.iter_mut().zip(chain) {
+                vertex.vertex_id = id;
+            }
+            assigned += 1;
+        }
+        assigned
     }
 
     /// Re-point name-based references at the entries `resync_keys` moved.
@@ -5880,18 +6140,12 @@ impl CadDocument {
         }
         let model_handle = self.header.model_space_block_handle;
         let paper_handle = self.header.paper_space_block_handle;
-        let paper_handles: std::collections::HashSet<Handle> = self
+        // Only the active layout's `*Paper_Space` has the implicit paper
+        // mode; inactive `*Paper_SpaceN` entities keep an explicit owner (#123).
+        let active_paper = self
             .block_records
-            .iter()
-            .filter_map(|record| {
-                let name = record.name.to_ascii_uppercase();
-                (name == "*PAPER_SPACE"
-                    || (name.starts_with("*PAPER_SPACE")
-                        && name.len() > 12
-                        && name[12..].bytes().all(|b| b.is_ascii_digit())))
-                .then_some(record.handle)
-            })
-            .collect();
+            .get("*Paper_Space")
+            .map_or(paper_handle, |record| record.handle);
 
         // Block record entities — set owner handle on entities looked up from
         // the entity map. This MUST run before the model-space default below:
@@ -5943,7 +6197,7 @@ impl CadDocument {
             }
             common.entity_mode = Some(if common.owner_handle == model_handle {
                 2
-            } else if paper_handles.contains(&common.owner_handle) {
+            } else if common.owner_handle == active_paper {
                 1
             } else {
                 0

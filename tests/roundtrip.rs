@@ -2799,6 +2799,7 @@ fn dxf_roundtrip_complex_linetype_shape() {
         scale: 2.0,
         rotation: 30.0,
         absolute_rotation: false,
+        upright: true,
         source_flags: 8,
         offset: [1.0, 0.5],
     });
@@ -2820,7 +2821,48 @@ fn dxf_roundtrip_complex_linetype_shape() {
     assert!((c0.scale - 2.0).abs() < 1e-6);
     assert!((c0.rotation - 30.0).abs() < 1e-6);
     assert!(!c0.is_absolute_rotation());
+    assert!(c0.is_upright());
     assert_eq!(c0.source_flags, 12);
+}
+
+/// #108: upright (`U=`, flag 0x08) is its own mode; DXF carries it from R2013,
+/// DWG on every version, and older DXF falls back to relative rotation.
+#[test]
+fn complex_linetype_upright_rotation_roundtrip() {
+    use acadrust::tables::LineTypeComplexData;
+    let gas = |version| {
+        let mut doc = build_minimal_document(version, EntityType::Point(Point::new()));
+        let mut lt = LineType::new("GAS_LINE");
+        lt.handle = Handle::new(0xF0);
+        let mut text = LineTypeElement::space(0.2);
+        text.complex = Some(LineTypeComplexData {
+            content: LineTypeComplexContent::Text {
+                text: "GAS".to_string(),
+            },
+            scale: 0.1,
+            upright: true,
+            offset: [-0.1, -0.05],
+            ..Default::default()
+        });
+        lt.elements.push(LineTypeElement::dash(0.5));
+        lt.elements.push(text);
+        lt.pattern_length = 0.7;
+        doc.line_types.add(lt).ok();
+        doc
+    };
+    let upright = |doc: &CadDocument| {
+        let c = doc.line_types.get("GAS_LINE").expect("linetype lost").elements[1]
+            .complex
+            .clone()
+            .expect("complex lost");
+        assert_eq!(c.text(), Some("GAS"));
+        assert!(!c.is_absolute_rotation());
+        c.is_upright()
+    };
+    assert!(upright(&dxf_roundtrip(gas(DxfVersion::AC1032))));
+    assert!(upright(&dwg_roundtrip(&gas(DxfVersion::AC1032))));
+    assert!(upright(&dwg_roundtrip(&gas(DxfVersion::AC1015))));
+    assert!(!upright(&dxf_roundtrip(gas(DxfVersion::AC1024))));
 }
 
 #[test]
@@ -2838,6 +2880,7 @@ fn dxf_roundtrip_complex_linetype_text() {
         scale: 1.5,
         rotation: 45.0,
         absolute_rotation: true,
+        upright: false,
         source_flags: 1,
         offset: [0.0, 0.25],
     });
@@ -2872,6 +2915,7 @@ fn dwg_roundtrip_complex_linetype_shape() {
         scale: 1.0,
         rotation: 0.0,
         absolute_rotation: false,
+        upright: false,
         source_flags: 0,
         offset: [0.0, 0.0],
     });
@@ -3080,4 +3124,251 @@ fn dwg_roundtrip_edge_action_param_line() {
     };
     assert_eq!(edge.action_type, 19);
     assert_eq!(edge.curve, curve);
+}
+
+// ── untested dynamic-block and associative classes ─────────────────────────
+//
+// BLOCKSCALEACTION, BLOCKUSERPARAMETER, BLOCKHORIZONTALCONSTRAINTPARAMETER and
+// ACDBASSOCVERTEXACTIONPARAM decode and encode in both formats but no test
+// pinned that, so a reader/writer regression would drop the object silently.
+// Each case builds the object with distinctive non-default fields, round-trips
+// through DWG and DXF, and asserts both the variant and the field values come
+// back unchanged.
+
+/// A scale action keeps its base point, offset, connections and tail byte.
+///
+/// The DWG record carries a fixed number of connections (two inside the action,
+/// three on the object), so the fixture must supply exactly those counts - the
+/// writer emits the vectors as-is with no count prefix.
+#[test]
+fn scale_action_survives_dwg_and_dxf_roundtrips() {
+    use acadrust::objects::{
+        BlockActionWithBasePoint, BlockBasePointAction, BlockConnection, DynamicBlockData,
+        DynamicBlockObject, ObjectType,
+    };
+
+    let data = DynamicBlockData::ScaleAction(BlockBasePointAction {
+        action: BlockActionWithBasePoint {
+            offset: Vector3::new(1.5, -2.5, 0.0),
+            connections: vec![
+                BlockConnection {
+                    code: 3,
+                    name: "distance".into(),
+                },
+                BlockConnection {
+                    code: 4,
+                    name: "start".into(),
+                },
+            ],
+            dependent: true,
+            base_point: Vector3::new(10.0, 20.0, 0.0),
+            ..Default::default()
+        },
+        connections: vec![
+            BlockConnection {
+                code: 5,
+                name: "base point".into(),
+            },
+            BlockConnection {
+                code: 6,
+                name: "x".into(),
+            },
+            BlockConnection {
+                code: 7,
+                name: "y".into(),
+            },
+        ],
+        dwg_tail_byte: 0,
+    });
+
+    let mut doc = CadDocument::new();
+    let handle = doc.allocate_handle();
+    let mut object = DynamicBlockObject::new("BLOCKSCALEACTION", "AcDbBlockScaleAction");
+    object.handle = handle;
+    object.owner = doc.header.named_objects_dict_handle;
+    object.data = data.clone();
+    doc.objects.insert(handle, ObjectType::DynamicBlock(object));
+
+    for saved in [dwg_roundtrip(&doc), dxf_roundtrip(doc)] {
+        let Some(ObjectType::DynamicBlock(object)) = saved.objects.get(&handle) else {
+            panic!("scale action object lost on roundtrip");
+        };
+        assert_eq!(object.data, data);
+        let DynamicBlockData::ScaleAction(scale) = &object.data else {
+            panic!("scale action decoded as a different class");
+        };
+        assert_eq!(scale.action.base_point, Vector3::new(10.0, 20.0, 0.0));
+        assert_eq!(scale.action.offset, Vector3::new(1.5, -2.5, 0.0));
+        assert!(scale.action.dependent);
+        assert_eq!(scale.action.connections.len(), 2);
+        assert_eq!(scale.action.connections[0].name, "distance");
+        assert_eq!(scale.action.connections[1].name, "start");
+        assert_eq!(scale.connections.len(), 3);
+        assert_eq!(scale.connections[0].code, 5);
+        assert_eq!(scale.connections[0].name, "base point");
+        assert_eq!(scale.connections[1].name, "x");
+        assert_eq!(scale.connections[2].name, "y");
+        assert_eq!(scale.dwg_tail_byte, 0);
+    }
+}
+
+/// A user parameter keeps its expression, value and associated variable.
+#[test]
+fn user_parameter_survives_dwg_and_dxf_roundtrips() {
+    use acadrust::objects::{
+        BlockEvalValue, BlockOnePointParameter, BlockUserParameter, DynamicBlockData,
+        DynamicBlockObject, ObjectType,
+    };
+
+    let data = DynamicBlockData::UserParameter(BlockUserParameter {
+        parameter: BlockOnePointParameter {
+            definition_point: Vector3::new(4.0, 5.0, 0.0),
+            ..Default::default()
+        },
+        flags: 1,
+        associated_variable: Handle::new(0x1234),
+        expression: "width * 2".into(),
+        value_code: 40,
+        value: BlockEvalValue::Real(7.5),
+        value_type: 1,
+    });
+
+    let mut doc = CadDocument::new();
+    let handle = doc.allocate_handle();
+    let mut object = DynamicBlockObject::new("BLOCKUSERPARAMETER", "AcDbBlockUserParameter");
+    object.handle = handle;
+    object.owner = doc.header.named_objects_dict_handle;
+    object.data = data.clone();
+    doc.objects.insert(handle, ObjectType::DynamicBlock(object));
+
+    for saved in [dwg_roundtrip(&doc), dxf_roundtrip(doc)] {
+        let Some(ObjectType::DynamicBlock(object)) = saved.objects.get(&handle) else {
+            panic!("user parameter object lost on roundtrip");
+        };
+        assert_eq!(object.data, data);
+        let DynamicBlockData::UserParameter(user) = &object.data else {
+            panic!("user parameter decoded as a different class");
+        };
+        assert_eq!(user.expression, "width * 2");
+        assert_eq!(user.value, BlockEvalValue::Real(7.5));
+        assert_eq!(user.value_code, 40);
+        assert_eq!(user.value_type, 1);
+        assert_eq!(user.flags, 1);
+        assert_eq!(user.associated_variable, Handle::new(0x1234));
+        assert_eq!(user.parameter.definition_point, Vector3::new(4.0, 5.0, 0.0));
+    }
+}
+
+/// A horizontal constraint keeps its expression, value and value set.
+///
+/// The value set's `description` is a DXF-only group (307/309/410): the DXF
+/// writer emits it and the DXF reader restores it, while the DWG record has no
+/// such field - the writer never emits one and the reader pins it to empty.
+/// Every other field must survive both formats.
+#[test]
+fn horizontal_constraint_parameter_survives_dwg_and_dxf_roundtrips() {
+    use acadrust::objects::{
+        BlockConstraintParameter, BlockLinearConstraintParameter, BlockParameterValueSet,
+        DynamicBlockData, DynamicBlockObject, ObjectType,
+    };
+
+    let value_set = BlockParameterValueSet {
+        description: "spacing".into(),
+        flags: 1,
+        minimum: 0.0,
+        maximum: 100.0,
+        increment: 5.0,
+        values: vec![0.0, 5.0, 10.0],
+    };
+    let data = DynamicBlockData::HorizontalConstraintParameter(BlockLinearConstraintParameter {
+        constraint: BlockConstraintParameter {
+            dependency: Handle::new(0x55),
+            ..Default::default()
+        },
+        expression_name: "d1".into(),
+        expression_description: "horizontal spacing".into(),
+        value: 42.5,
+        value_set: value_set.clone(),
+    });
+
+    let build = || {
+        let mut doc = CadDocument::new();
+        let handle = doc.allocate_handle();
+        let mut object = DynamicBlockObject::new(
+            "BLOCKHORIZONTALCONSTRAINTPARAMETER",
+            "AcDbBlockHorizontalConstraintParameter",
+        );
+        object.handle = handle;
+        object.owner = doc.header.named_objects_dict_handle;
+        object.data = data.clone();
+        doc.objects.insert(handle, ObjectType::DynamicBlock(object));
+        (doc, handle)
+    };
+
+    let check = |saved: CadDocument, handle: Handle, expect_description: &str| {
+        let Some(ObjectType::DynamicBlock(object)) = saved.objects.get(&handle) else {
+            panic!("horizontal constraint object lost on roundtrip");
+        };
+        let DynamicBlockData::HorizontalConstraintParameter(constraint) = &object.data else {
+            panic!("horizontal constraint decoded as a different class");
+        };
+        assert_eq!(constraint.expression_name, "d1");
+        assert_eq!(constraint.expression_description, "horizontal spacing");
+        assert_eq!(constraint.value, 42.5);
+        assert_eq!(constraint.value_set.flags, 1);
+        assert_eq!(constraint.value_set.minimum, 0.0);
+        assert_eq!(constraint.value_set.maximum, 100.0);
+        assert_eq!(constraint.value_set.increment, 5.0);
+        assert_eq!(constraint.value_set.values, vec![0.0, 5.0, 10.0]);
+        assert_eq!(constraint.value_set.description, expect_description);
+        assert_eq!(constraint.constraint.dependency, Handle::new(0x55));
+    };
+
+    let (doc, handle) = build();
+    check(dwg_roundtrip(&doc), handle, "");
+
+    let (doc, handle) = build();
+    check(dxf_roundtrip(doc), handle, "spacing");
+}
+
+/// A vertex action parameter keeps its point and dependency handles.
+#[test]
+fn vertex_action_param_survives_dwg_and_dxf_roundtrips() {
+    use acadrust::objects::{
+        AssocSingleDependencyActionParam, AssocVertexActionParam, AssociativeData,
+        AssociativeObject, ObjectType,
+    };
+
+    let data = AssociativeData::VertexActionParam(AssocVertexActionParam {
+        single_dependency: AssocSingleDependencyActionParam {
+            dependency_class_version: 3,
+            dependency: Handle::new(0x77),
+            class_version: 2,
+            ..Default::default()
+        },
+        point: Vector3::new(3.0, 4.0, 0.0),
+    });
+
+    let mut doc = CadDocument::new();
+    let handle = doc.allocate_handle();
+    let mut object =
+        AssociativeObject::new("ACDBASSOCVERTEXACTIONPARAM", "AcDbAssocVertexActionParam");
+    object.handle = handle;
+    object.owner = doc.header.named_objects_dict_handle;
+    object.data = data.clone();
+    doc.objects.insert(handle, ObjectType::Associative(object));
+
+    for saved in [dwg_roundtrip(&doc), dxf_roundtrip(doc)] {
+        let Some(ObjectType::Associative(object)) = saved.objects.get(&handle) else {
+            panic!("vertex action parameter object lost on roundtrip");
+        };
+        assert_eq!(object.data, data);
+        let AssociativeData::VertexActionParam(vertex) = &object.data else {
+            panic!("vertex action parameter decoded as a different class");
+        };
+        assert_eq!(vertex.point, Vector3::new(3.0, 4.0, 0.0));
+        assert_eq!(vertex.single_dependency.dependency, Handle::new(0x77));
+        assert_eq!(vertex.single_dependency.dependency_class_version, 3);
+        assert_eq!(vertex.single_dependency.class_version, 2);
+    }
 }

@@ -70,6 +70,36 @@
 
 ### 0.6.5
 
+- **DIMASSOC point references without objects** - A point reference that
+  snaps to no object, such as the `_End` last point AutoCAD chains after a
+  perpendicular snap, carries no main sub-entity. DWG and DXF now read and
+  write it without subent type, GS marker and xref paths, as AutoCAD does;
+  such drawings previously failed the strict read and needed recovery.
+
+- **DWG 2010 REGION tails** - The silhouette count stays in the wireframe
+  block, including zero, as in ODA DWG section 20.4.41. A missing count is
+  not treated as a material tail.
+
+- **Serde reference and provenance retention** - With the `serde` feature,
+  `EntityCommon` now includes `layer_handle`, `linetype_handle`,
+  `color_book_handle`, `face_visual_style_handle`, `edge_visual_style_handle`,
+  `material_flags`, `material_handle`, `shadow_flags`, `plotstyle_flags`,
+  `plotstyle_handle` and `entity_mode`. `Spline.dwg_scenario` (including an
+  embedded Helix spline) and `AssociativeObject.source_version` are also
+  included. Older field-named input, such as JSON, without these fields remains
+  readable: optional values default to `None` and flags to zero. Supplied values
+  are retained without normalization. `preserve_storage_data_from` respects edits
+  to these serialized fields, including explicit `None` and zero; existing R12
+  metadata restoration remains unchanged. Raw DWG records, graphic bytes and
+  private document storage remain outside this change; ordinary Serde is not a
+  complete CAD snapshot.
+  The serialized structs gain fields; positional formats require a separate
+  compatibility strategy.
+
+- **DWG associative arcs** - An edge arc carries three points and four
+  scalars in every version. A shorter terminal record is not accepted as a
+  decoded arc.
+
 - **Genuine DXF R12 output** - `DxfWriter::with_version(DxfVersion::AC1009)`
   writes a real R12 file: no handles, CLASSES or OBJECTS, R12 table records,
   and R12 entities only. LWPOLYLINE becomes a 2D POLYLINE with its bulges,
@@ -82,6 +112,11 @@
   explodes to one TEXT per line with formatting codes removed, aligned by its
   attachment point. INSERT restores block definitions and rotated array
   positions, and resolves inherited ByBlock transparency and linetype.
+- **Upright complex linetype elements (issue #108)** - `LineTypeComplexData`
+  gains `upright` (`U=`, element flag 0x08) beside `absolute_rotation`. It is
+  read from DXF and DWG, written to DWG and DXF R2013+, and becomes relative
+  rotation in older DXF. Struct literals need `upright: false` or
+  `..Default::default()`; Serde input without the field reads as `false`.
 - **Audit and recovery** - Adds document audit and repair APIs and DXF/DWG
   recovery results. Preserves bounded auxiliary DWG records after decode
   failures and keeps orphaned geometry out of model space.

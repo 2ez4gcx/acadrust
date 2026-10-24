@@ -389,12 +389,13 @@ impl<'a> DwgObjectWriter<'a> {
         }
 
         // ── MAIN: entity mode (2 bits) ──
-        let entmode =
-            if entity_mode_override == Some(1) && owner_handle != self.paper_space_block_handle {
-                0
-            } else {
-                entity_mode_override.unwrap_or_else(|| self.get_entity_mode(&owner_handle))
-            };
+        // Explicit ownership (0) stays 0 so an ATTRIB under a paper-space
+        // INSERT keeps its owner. Implicit modes must match that owner.
+        let entmode = match entity_mode_override {
+            Some(0) => 0,
+            Some(mode) if owner_handle.is_null() => mode,
+            _ => self.get_entity_mode(&owner_handle),
+        };
         self.writer.write_2bits(entmode);
 
         // ── HANDLE: owner (if entmode == 0) ──

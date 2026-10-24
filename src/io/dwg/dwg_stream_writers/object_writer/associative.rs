@@ -356,7 +356,10 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_byte(reference.osnap_type);
                 self.writer.write_bit_long(reference.xrefs.len() as i32);
                 self.write_assoc_handles(DwgReferenceType::SoftPointer, &reference.xrefs);
-                if reference.osnap_type != 0 {
+                if AssocDimensionReference::stores_main_subentity(
+                    reference.osnap_type,
+                    reference.xrefs.len(),
+                ) {
                     self.writer.write_bit_long(reference.main_subent_type);
                     self.writer.write_bit_long(reference.main_gs_marker);
                     self.writer

@@ -370,7 +370,7 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
     }
 
     h.display_silhouette = r.read_bit();
-    let _ = r.read_bit(); // PELLIPSE
+    h.create_ellipse_as_polyline = r.read_bit();
     h.proxy_graphics = r.read_bit_short();
 
     if r13_14_only(v) {

@@ -345,6 +345,9 @@ impl MTextParser {
                     self.text_buf.push(code_char);
                     self.pos += 1;
                 }
+            } else {
+                // A trailing `%%` has no code yet (an editor mid-typing): keep it.
+                self.text_buf.push_str("%%");
             }
         } else {
             // Not a %% code, just a regular '%' character
@@ -2131,6 +2134,11 @@ mod tests {
     fn test_parse_only_special_chars() {
         let doc = parse_mtext("{%%d%%p%%c}", false);
         assert_eq!(doc.paragraphs[0].to_plain_text(), "°±Ø");
+    }
+
+    #[test]
+    fn test_parse_trailing_double_percent_is_kept() {
+        assert_eq!(parse_mtext("x%%", true).to_plain_text(), "x%%");
     }
 
     #[test]

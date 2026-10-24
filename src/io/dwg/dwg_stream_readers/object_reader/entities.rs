@@ -6432,4 +6432,74 @@ mod tests {
         assert!(result.sat_data.is_empty());
         assert!(result.sab_data.is_empty());
     }
+
+    /// AcDs-backed R2018 solids store a point and no isoline cache. ODA 20.4.41
+    /// still stores BL(0) silhouettes before the material tail.
+    #[test]
+    fn test_acds_solid_empty_silhouette_count_r2018() {
+        use crate::io::dwg::dwg_reference_type::DwgReferenceType;
+        use crate::io::dwg::dwg_stream_readers::bit_reader::DwgBitReader;
+        use crate::io::dwg::dwg_stream_writers::bit_writer::DwgBitWriter;
+
+        let v = DwgVersion::AC24;
+        let d = DxfVersion::AC1032;
+
+        let mut main = DwgBitWriter::new(v, d);
+        let mut handles = DwgBitWriter::new(v, d);
+        main.write_bit(true); // wireframe header
+        main.write_bit(true); // reference point
+        main.write_3bit_double(Vector3::new(1.0, 2.0, 3.0));
+        main.write_bit_long(4); // isolines
+        main.write_bit(false); // no isoline cache
+        main.write_bit_long(0); // silhouette count
+        main.write_bit(true); // no extra modeler body
+        main.write_bit_long(1); // one material binding
+        main.write_bit_long(7);
+        main.write_bit_long(9);
+        handles.write_handle(DwgReferenceType::HardPointer, 0x1234);
+        main.write_bit(false); // revision: no guid
+        main.write_bit_long(1);
+        main.write_bit_short(2);
+        main.write_bit_short(3);
+        main.write_bytes(&[5; 8]);
+        main.write_bit_long(6);
+        let end = main.position_in_bits();
+        let mut r = DwgMergedReader::from_readers(
+            DwgBitReader::new(main.into_bytes(), v, d),
+            None,
+            Some(DwgBitReader::new(handles.into_bytes(), v, d)),
+            d,
+        );
+        r.set_main_data_end(end);
+
+        let result = read_acis_entity(&mut r, v, d, true);
+        r.check_error().unwrap();
+        assert_eq!(r.position_in_bits(), end);
+        assert_eq!(result.point, Vector3::new(1.0, 2.0, 3.0));
+        assert_eq!(result.materials.len(), 1);
+        assert_eq!(result.materials[0].array_index, 7);
+        assert_eq!(result.revision.end_marker, 6);
+
+        let mut missing = DwgBitWriter::new(v, d);
+        missing.write_bit(true);
+        missing.write_bit(true);
+        missing.write_3bit_double(Vector3::new(1.0, 2.0, 3.0));
+        missing.write_bit_long(4);
+        missing.write_bit(false);
+        missing.write_bit(true);
+        missing.write_bit_long(0);
+        let missing_end = missing.position_in_bits();
+        let mut missing_reader = DwgMergedReader::from_readers(
+            DwgBitReader::new(missing.into_bytes(), v, d),
+            None,
+            None,
+            d,
+        );
+        missing_reader.set_main_data_end(missing_end);
+        read_acis_entity(&mut missing_reader, v, d, true);
+        assert!(
+            missing_reader.check_error().is_err()
+                || missing_reader.position_in_bits() != missing_end
+        );
+    }
 }

@@ -413,7 +413,7 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
     }
 
     w.write_bit(h.display_silhouette);
-    w.write_bit(false); // PELLIPSE (CreateEllipseAsPolyline) — default false
+    w.write_bit(h.create_ellipse_as_polyline);
     w.write_bit_short(h.proxy_graphics);
 
     if r13_14_only(v) {

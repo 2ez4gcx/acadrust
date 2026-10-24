@@ -68,7 +68,8 @@ pub use dynamic_block::{
     BlockLookupAction, BlockLookupColumn, BlockLookupParameter, BlockMoveAction,
     BlockOnePointParameter, BlockOrientedGrip, BlockParameter, BlockParameterDependencyBody,
     BlockParameterProperty, BlockParameterValueSet, BlockPointParameter, BlockPolarParameter,
-    BlockPolarStretchAction, BlockRepresentationData, BlockRotationParameter, BlockStretchAction,
+    BlockPolarStretchAction, BlockPropertiesTable, BlockPropertiesTableField,
+    BlockPropertiesTableValue, BlockRepresentationData, BlockRotationParameter, BlockStretchAction,
     BlockStretchCode, BlockStretchHandle, BlockTwoPointParameter, BlockUserParameter,
     BlockXYParameter, DynamicBlockData, DynamicBlockObject, SolidHistory, SolidHistoryBoolean,
     SolidHistoryBox, SolidHistoryBrep, SolidHistoryChamfer, SolidHistoryCone, SolidHistoryCylinder,
@@ -594,8 +595,9 @@ impl ObjectType {
     }
 
     /// Restore storage-only data omitted from serde after editing an object's
-    /// public representation. The source and destination must have the same
-    /// variant and identity; callers remain responsible for that check.
+    /// public representation. Serialized associative `source_version` keeps
+    /// its edited value, including `None`. The source and destination must have
+    /// the same variant and identity; callers remain responsible for that check.
     pub fn preserve_storage_data_from(&mut self, source: &Self) {
         match (self, source) {
             (Self::Layout(value), Self::Layout(source)) => {
@@ -611,9 +613,6 @@ impl ObjectType {
             (Self::SortEntitiesTable(value), Self::SortEntitiesTable(source)) => {
                 value.raw_dxf_codes = source.raw_dxf_codes.clone();
                 value.raw_dxf_version = source.raw_dxf_version;
-            }
-            (Self::Associative(value), Self::Associative(source)) => {
-                value.source_version = source.source_version;
             }
             (Self::ClassObject(value), Self::ClassObject(source)) => {
                 if let (

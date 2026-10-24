@@ -81,7 +81,8 @@ pub struct Spline {
     /// splines not read from DWG. Fit-point records do not state `periodic`;
     /// before R2013 they do not state `closed` either, so the corresponding
     /// `flags` values are defaults rather than values read from the file.
-    #[cfg_attr(feature = "serde", serde(skip))]
+    /// Missing provenance in field-named Serde input defaults to `None`.
+    #[cfg_attr(feature = "serde", serde(default))]
     pub dwg_scenario: Option<i32>,
     /// Complete DXF spline flag word. Geometry, knot parameterization, frame
     /// visibility and creation-method bits are refreshed from typed fields

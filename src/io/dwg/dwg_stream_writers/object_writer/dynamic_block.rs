@@ -560,6 +560,32 @@ impl<'a> DwgObjectWriter<'a> {
                 }
                 self.writer.write_bit(value.flag_280);
             }
+            DynamicBlockData::PropertiesTable(value) => {
+                self.write_dynamic_one_point(&value.parameter);
+                for field in &value.fields {
+                    match &field.value {
+                        BlockPropertiesTableValue::Text(value) => {
+                            self.writer.write_variable_text(value);
+                        }
+                        BlockPropertiesTableValue::Boolean(value) => {
+                            self.writer.write_bit(*value);
+                        }
+                        BlockPropertiesTableValue::Integer(value) => match field.code {
+                            170..=179 | 270..=279 | 370..=389 => {
+                                self.writer.write_bit_short(*value as i16);
+                            }
+                            _ => self.writer.write_bit_long(*value as i32),
+                        },
+                        BlockPropertiesTableValue::Real(value) => {
+                            self.writer.write_bit_double(*value);
+                        }
+                        BlockPropertiesTableValue::Handle(value) => self
+                            .writer
+                            .write_handle(DwgReferenceType::HardPointer, value.value()),
+                        BlockPropertiesTableValue::Binary(_) => {}
+                    }
+                }
+            }
             DynamicBlockData::StretchAction(value) => {
                 self.write_dynamic_action(&value.action);
                 for connection in &value.connections {

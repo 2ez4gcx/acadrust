@@ -181,6 +181,34 @@ fn count_keeps_references_with_different_normals() {
 }
 
 #[test]
+fn object_fields_measure_polylines() {
+    use acadrust::entities::{LwPolyline, LwVertex};
+    use acadrust::types::Vector2;
+    let mut doc = CadDocument::new();
+    // A 4 x 2 rectangle whose right side is a half circle bulging outward.
+    let mut pline = LwPolyline::new();
+    pline.vertices = vec![
+        LwVertex::new(Vector2::new(0.0, 0.0)),
+        LwVertex::with_bulge(Vector2::new(4.0, 0.0), 1.0),
+        LwVertex::new(Vector2::new(4.0, 2.0)),
+        LwVertex::new(Vector2::new(0.0, 2.0)),
+    ];
+    pline.is_closed = true;
+    let handle = doc.add_entity(EntityType::LwPolyline(pline)).unwrap();
+    let ctx = Context {
+        sheet_set: SheetSetDatabase::new("", ""),
+    };
+    let value = |prop: &str| {
+        let code = format!("\\AcObjProp Object(%<\\_ObjIdx 0>%).{prop} \\f \"%lu2%pr4\"");
+        fields::evaluate_code(&doc, &code, &[handle], None, &ctx)
+    };
+    let half_disc = std::f64::consts::PI / 2.0;
+    assert_eq!(value("Area").as_deref(), Some(format!("{:.4}", 8.0 + half_disc).as_str()));
+    let perimeter = 10.0 + std::f64::consts::PI;
+    assert_eq!(value("Length").as_deref(), Some(format!("{perimeter:.4}").as_str()));
+}
+
+#[test]
 fn table_formulas_keep_existing_aggregate_functions() {
     let mut doc = CadDocument::new();
     let mut table = Table::new(Vector3::ZERO, 1, 3);

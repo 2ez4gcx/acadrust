@@ -17,7 +17,9 @@ pub struct AssociativeObject {
     pub dxf_name: String,
     pub cpp_class_name: String,
     pub data: AssociativeData,
-    #[cfg_attr(feature = "serde", serde(skip))]
+    /// Known source version, retained as provenance without raw-record storage.
+    /// Missing values in field-named Serde input default to `None`.
+    #[cfg_attr(feature = "serde", serde(default))]
     pub source_version: Option<DxfVersion>,
 }
 
@@ -1378,6 +1380,18 @@ pub struct AssocDimensionReference {
     pub intersection_gs_marker: i32,
     pub intersection_xref_paths: Vec<String>,
     pub has_last_point_reference: bool,
+}
+
+impl AssocDimensionReference {
+    /// Whether a reference with this osnap type and number of referenced
+    /// objects stores its main sub-entity (subent type, GS marker, xref
+    /// paths). A reference that snaps to no object has none to describe:
+    /// AutoCAD writes an `_End` "last point" reference with no objects as
+    /// class name, osnap type, object count, distance, point and the
+    /// continuation bit only, in DWG and DXF alike.
+    pub fn stores_main_subentity(osnap_type: u8, object_count: usize) -> bool {
+        osnap_type != 0 && object_count > 0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]

@@ -20,7 +20,8 @@ fn read_edge_curve(
             for _ in 0..3 {
                 out.push(point(reader));
             }
-            for _ in 0..if curve_type == 11 { 4 } else { 5 } {
+            let scalar_count = if curve_type == 11 { 4 } else { 5 };
+            for _ in 0..scalar_count {
                 out.push(real(reader));
             }
         }
@@ -679,18 +680,19 @@ fn read_dimension_association(reader: &mut DwgMergedReader) -> AssocDimensionAss
             let osnap_type = reader.read_byte();
             let count = reader.read_bit_long();
             let xrefs = read_handles(reader, count);
-            let (main_subent_type, main_gs_marker, xref_paths) = if osnap_type != 0 {
-                let main_subent_type = reader.read_bit_long();
-                let main_gs_marker = reader.read_bit_long();
-                let count = safe_count(reader.read_bit_long(), reader);
-                let mut xref_paths = Vec::with_capacity(count as usize);
-                for _ in 0..count {
-                    xref_paths.push(reader.read_variable_text());
-                }
-                (main_subent_type, main_gs_marker, xref_paths)
-            } else {
-                (0, 0, Vec::new())
-            };
+            let (main_subent_type, main_gs_marker, xref_paths) =
+                if AssocDimensionReference::stores_main_subentity(osnap_type, xrefs.len()) {
+                    let main_subent_type = reader.read_bit_long();
+                    let main_gs_marker = reader.read_bit_long();
+                    let count = safe_count(reader.read_bit_long(), reader);
+                    let mut xref_paths = Vec::with_capacity(count as usize);
+                    for _ in 0..count {
+                        xref_paths.push(reader.read_variable_text());
+                    }
+                    (main_subent_type, main_gs_marker, xref_paths)
+                } else {
+                    (0, 0, Vec::new())
+                };
             let osnap_distance = reader.read_bit_double();
             let osnap_point = reader.read_3bit_double();
             let (

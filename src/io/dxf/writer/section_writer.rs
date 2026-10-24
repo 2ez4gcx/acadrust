@@ -11,7 +11,8 @@ use crate::document::CadDocument;
 use crate::entities::*;
 use crate::error::{DxfError, Result};
 use crate::objects::{
-    BlockEvalValue, BlockVisibilityParameter, BookColor, DataObject, DataObjectData, Dictionary,
+    BlockEvalValue, BlockPropertiesTableValue, BlockVisibilityParameter, BookColor, DataObject,
+    DataObjectData, Dictionary,
     DictionaryVariable, DictionaryWithDefault, DimSubtype, DynamicBlockData, DynamicBlockObject,
     GeoData, Group, ImageDefinition, ImageDefinitionReactor, Layout, MLineStyle, Material,
     MaterialColor, MaterialMap, MaterialProceduralValue, MaterialTexture, MultiLeaderStyle,
@@ -502,7 +503,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.write_header_variable("$AUNITS", |w| w.write_i16(70, hdr.angular_unit_format))?;
         self.write_header_variable("$AUPREC", |w| w.write_i16(70, hdr.angular_unit_precision))?;
         self.write_header_variable("$ANGBASE", |w| {
-            w.write_double(50, hdr.angle_base.to_degrees())
+            w.write_double(50, super::degrees(hdr.angle_base))
         })?;
         self.write_header_variable("$ANGDIR", |w| w.write_i16(70, hdr.angle_direction))?;
         self.write_header_variable("$MEASUREMENT", |w| w.write_i16(70, hdr.measurement))?;
@@ -1039,11 +1040,11 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Snap rotation
         self.writer
-            .write_double(50, vport.snap_rotation.to_degrees())?;
+            .write_double(50, super::degrees(vport.snap_rotation))?;
 
         // View twist angle
         self.writer
-            .write_double(51, vport.view_twist.to_degrees())?;
+            .write_double(51, super::degrees(vport.view_twist))?;
 
         let mut view_mode = 0;
         if vport.perspective {
@@ -1179,14 +1180,17 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         for element in &ltype.elements {
             self.writer.write_double(49, element.length)?;
             // DXF LTYPE per-element codes: 74 = element-type FLAGS
-            // (0x01=abs rot, 0x02=text, 0x04=shape; 0 = plain dash),
-            // 75 = shape number. These used to be emitted swapped — ACAD
-            // then read every element as complex (OCS#314).
+            // (0x01=abs rot, 0x02=text, 0x04=shape, 0x08=upright from R2013;
+            // 0 = plain dash), 75 = shape number. These used to be emitted
+            // swapped — ACAD then read every element as complex (OCS#314).
             if let Some(c) = &element.complex {
                 let mut flags: i16 = c.source_flags as i16;
-                flags &= !(0x01 | 0x02 | 0x04);
+                flags &= !(0x01 | 0x02 | 0x04 | 0x08);
                 if c.is_absolute_rotation() {
                     flags |= 0x01;
+                }
+                if c.is_upright() && self.dxf_version >= DxfVersion::AC1027 {
+                    flags |= 0x08;
                 }
                 if c.is_shape() {
                     flags |= 0x04;
@@ -1221,7 +1225,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_handle(340, style_handle)?;
                 self.writer.write_double(46, c.scale)?;
                 // `rotation` is stored in radians; DXF code 50 is in degrees.
-                self.writer.write_double(50, c.rotation.to_degrees())?;
+                self.writer.write_double(50, super::degrees(c.rotation))?;
                 self.writer.write_double(44, c.offset[0])?;
                 self.writer.write_double(45, c.offset[1])?;
                 if let Some(t) = c.text() {
@@ -1437,7 +1441,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(41, style.width_factor)?;
         // Group 50 is in degrees; the entity stores radians.
         self.writer
-            .write_double(50, style.oblique_angle.to_degrees())?;
+            .write_double(50, super::degrees(style.oblique_angle))?;
         // Text generation flags: 2 = backward, 4 = upside down.
         let mut generation: i16 = 0;
         if style.flags.backward {
@@ -1516,7 +1520,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(43, view.front_clip)?;
         self.writer.write_double(44, view.back_clip)?;
         self.writer
-            .write_double(50, view.twist_angle.to_degrees())?;
+            .write_double(50, super::degrees(view.twist_angle))?;
         let mut view_mode = 0;
         if view.perspective {
             view_mode |= 1;
@@ -2483,8 +2487,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_double(45, data.right_offset)?;
                 self.writer.write_double(46, data.left_offset)?;
                 self.writer
-                    .write_double(50, data.start_angle.to_degrees())?;
-                self.writer.write_double(51, data.end_angle.to_degrees())?;
+                    .write_double(50, super::degrees(data.start_angle))?;
+                self.writer.write_double(51, super::degrees(data.end_angle))?;
                 self.writer.write_i16(70, data.reverse as i16)?;
                 self.writer.write_i16(71, data.text_direction)?;
                 self.writer.write_i16(72, data.alignment)?;
@@ -3266,6 +3270,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             DynamicBlockData::AlignmentGrip(value) => {
                 self.write_dynamic_grip_dxf(&value.grip)?;
                 self.writer.write_subclass("AcDbBlockAlignmentGrip")?;
+                // Orientation vector groups are 140/141/142, not 140/150/160.
                 self.writer.write_double(140, value.orientation.x)?;
                 self.writer.write_double(141, value.orientation.y)?;
                 self.writer.write_double(142, value.orientation.z)?;
@@ -3496,6 +3501,36 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     self.writer.write_string(304, &column.connection_name)?;
                 }
                 self.writer.write_bool(280, value.flag_280)?;
+            }
+            DynamicBlockData::PropertiesTable(value) => {
+                self.write_dynamic_one_point_dxf(&value.parameter)?;
+                self.writer.write_subclass("AcDbBlockPropertiesTable")?;
+                for field in &value.fields {
+                    match &field.value {
+                        BlockPropertiesTableValue::Text(value) => {
+                            self.writer.write_string(field.code, value)?;
+                        }
+                        BlockPropertiesTableValue::Boolean(value) => {
+                            self.writer.write_bool(field.code, *value)?;
+                        }
+                        BlockPropertiesTableValue::Integer(value) => match field.code {
+                            160..=169 => self.writer.write_i64(field.code, *value)?,
+                            60..=79 | 170..=179 | 270..=279 | 370..=389 | 400..=409 => {
+                                self.writer.write_i16(field.code, *value as i16)?;
+                            }
+                            _ => self.writer.write_i32(field.code, *value as i32)?,
+                        },
+                        BlockPropertiesTableValue::Real(value) => {
+                            self.writer.write_double(field.code, *value)?;
+                        }
+                        BlockPropertiesTableValue::Handle(value) => {
+                            self.writer.write_handle(field.code, *value)?;
+                        }
+                        BlockPropertiesTableValue::Binary(value) => {
+                            self.writer.write_binary(field.code, value)?;
+                        }
+                    }
+                }
             }
             DynamicBlockData::StretchAction(value) => {
                 self.write_dynamic_action_dxf(&value.action)?;
@@ -4061,8 +4096,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         }
         self.write_normal(arc.normal)?;
         self.writer.write_subclass("AcDbArc")?;
-        self.writer.write_double(50, arc.start_angle.to_degrees())?;
-        self.writer.write_double(51, arc.end_angle.to_degrees())?;
+        self.writer.write_double(50, super::degrees(arc.start_angle))?;
+        self.writer.write_double(51, super::degrees(arc.end_angle))?;
         Ok(())
     }
 
@@ -4204,7 +4239,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             self.writer.write_i16(70, vertex.flags.bits() as i16)?;
             self.writer
-                .write_double(50, vertex.curve_tangent.to_degrees())?;
+                .write_double(50, super::degrees(vertex.curve_tangent))?;
         }
 
         // Write SEQEND
@@ -4310,7 +4345,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_double(40, vertex.start_width)?;
             self.writer.write_double(41, vertex.end_width)?;
             self.writer.write_double(42, vertex.bulge)?;
-            if vertex.vertex_id != 0 {
+            // Vertex ids only exist in R2010+ drawings; earlier formats have
+            // no such field.
+            if vertex.vertex_id != 0 && self.dxf_version >= DxfVersion::AC1024 {
                 self.writer.write_i32(91, vertex.vertex_id)?;
             }
         }
@@ -4331,14 +4368,14 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_double(40, text.height)?;
         self.writer.write_string(1, &text.value)?;
         if text.rotation != 0.0 {
-            self.writer.write_double(50, text.rotation.to_degrees())?;
+            self.writer.write_double(50, super::degrees(text.rotation))?;
         }
         if text.width_factor != 1.0 {
             self.writer.write_double(41, text.width_factor)?;
         }
         if text.oblique_angle != 0.0 {
             self.writer
-                .write_double(51, text.oblique_angle.to_degrees())?;
+                .write_double(51, super::degrees(text.oblique_angle))?;
         }
         self.writer.write_string(7, &text.style)?;
         if text.generation_flags != 0 {
@@ -4617,20 +4654,22 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         if base.insertion_point != Vector3::ZERO {
             self.writer.write_point3d(12, base.insertion_point)?;
         }
-        // Bit 0x80 marks text positioned at a user-defined location.
+        // Bit 0x80 marks text positioned at a user-defined location; bit
+        // 0x20 says the dimension's block is referenced by this dimension
+        // only, which every dimension's own geometry block is.
         let type_flags = if base.text_user_positioned {
-            type_flags | 0x80
+            type_flags | 0xA0
         } else {
-            type_flags
+            type_flags | 0x20
         };
         self.writer.write_i16(70, type_flags)?;
         self.writer.write_double(42, base.actual_measurement)?;
         // DXF angles are in degrees; internal representation is radians.
         self.writer
-            .write_double(53, base.text_rotation.to_degrees())?;
+            .write_double(53, super::degrees(base.text_rotation))?;
         if base.horizontal_direction.abs() > 1e-12 {
             self.writer
-                .write_double(51, base.horizontal_direction.to_degrees())?;
+                .write_double(51, super::degrees(base.horizontal_direction))?;
         }
         self.writer.write_i16(71, base.attachment_point as i16)?;
         self.writer.write_i16(72, base.line_spacing_style)?;
@@ -4659,7 +4698,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_point3d(14, dim.second_point)?;
         if dim.ext_line_rotation.abs() > 1e-12 {
             self.writer
-                .write_double(52, dim.ext_line_rotation.to_degrees())?;
+                .write_double(52, super::degrees(dim.ext_line_rotation))?;
         }
         Ok(())
     }
@@ -4671,10 +4710,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_point3d(13, dim.first_point)?;
         self.writer.write_point3d(14, dim.second_point)?;
         // DXF dimension-line rotation is in degrees.
-        self.writer.write_double(50, dim.rotation.to_degrees())?;
+        self.writer.write_double(50, super::degrees(dim.rotation))?;
         if dim.ext_line_rotation.abs() > 1e-12 {
             self.writer
-                .write_double(52, dim.ext_line_rotation.to_degrees())?;
+                .write_double(52, super::degrees(dim.ext_line_rotation))?;
         }
         self.writer.write_subclass("AcDbRotatedDimension")?;
         Ok(())
@@ -4827,7 +4866,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         if !hatch.is_solid {
             self.writer
-                .write_double(52, hatch.pattern_angle.to_degrees())?;
+                .write_double(52, super::degrees(hatch.pattern_angle))?;
             self.writer.write_double(41, hatch.pattern_scale)?;
             self.writer
                 .write_i16(77, if hatch.is_double { 1 } else { 0 })?;
@@ -4836,7 +4875,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer
                 .write_i16(78, hatch.pattern.lines.len() as i16)?;
             for line in &hatch.pattern.lines {
-                self.writer.write_double(53, line.angle.to_degrees())?;
+                self.writer.write_double(53, super::degrees(line.angle))?;
                 self.writer.write_double(43, line.base_point.x)?;
                 self.writer.write_double(44, line.base_point.y)?;
                 self.writer.write_double(45, line.offset.x)?;
@@ -4896,14 +4935,14 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer.write_i16(76, hatch.pattern_type as i16)?;
         if !hatch.is_solid {
             self.writer
-                .write_double(52, hatch.pattern_angle.to_degrees())?;
+                .write_double(52, super::degrees(hatch.pattern_angle))?;
             self.writer.write_double(41, hatch.pattern_scale)?;
             self.writer
                 .write_i16(77, if hatch.is_double { 1 } else { 0 })?;
             self.writer
                 .write_i16(78, hatch.pattern.lines.len() as i16)?;
             for line in &hatch.pattern.lines {
-                self.writer.write_double(53, line.angle.to_degrees())?;
+                self.writer.write_double(53, super::degrees(line.angle))?;
                 self.writer.write_double(43, line.base_point.x)?;
                 self.writer.write_double(44, line.base_point.y)?;
                 self.writer.write_double(45, line.offset.x)?;
@@ -4994,8 +5033,8 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_double(10, arc.center.x)?;
                 self.writer.write_double(20, arc.center.y)?;
                 self.writer.write_double(40, arc.radius)?;
-                self.writer.write_double(50, arc.start_angle.to_degrees())?;
-                self.writer.write_double(51, arc.end_angle.to_degrees())?;
+                self.writer.write_double(50, super::degrees(arc.start_angle))?;
+                self.writer.write_double(51, super::degrees(arc.end_angle))?;
                 self.writer
                     .write_i16(73, if arc.counter_clockwise { 1 } else { 0 })?;
             }
@@ -5129,7 +5168,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_double(43, insert.z_scale())?;
         }
         if insert.rotation != 0.0 {
-            self.writer.write_double(50, insert.rotation.to_degrees())?;
+            self.writer.write_double(50, super::degrees(insert.rotation))?;
         }
         if insert.column_count > 1 {
             self.writer.write_i16(70, insert.column_count as i16)?;
@@ -5371,9 +5410,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Snap and twist angles
         self.writer
-            .write_double(50, viewport.snap_angle.to_degrees())?;
+            .write_double(50, super::degrees(viewport.snap_angle))?;
         self.writer
-            .write_double(51, viewport.twist_angle.to_degrees())?;
+            .write_double(51, super::degrees(viewport.twist_angle))?;
 
         // Circle sides
         self.writer.write_i16(72, viewport.circle_sides)?;
@@ -5457,14 +5496,14 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         )?;
 
         // Rotation
-        self.writer.write_double(50, attdef.rotation.to_degrees())?;
+        self.writer.write_double(50, super::degrees(attdef.rotation))?;
 
         // Width factor
         self.writer.write_double(41, attdef.width_factor)?;
 
         // Oblique angle
         self.writer
-            .write_double(51, attdef.oblique_angle.to_degrees())?;
+            .write_double(51, super::degrees(attdef.oblique_angle))?;
 
         // Text style
         self.writer.write_string(7, &attdef.text_style)?;
@@ -5586,7 +5625,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             self.writer.write_double(43, mtext.extents_height)?;
         }
         if mtext.rotation != 0.0 {
-            self.writer.write_double(50, mtext.rotation.to_degrees())?;
+            self.writer.write_double(50, super::degrees(mtext.rotation))?;
         }
         self.writer.write_i16(73, mtext.line_spacing_style as i16)?;
         self.writer.write_double(44, mtext.line_spacing_factor)?;
@@ -5634,14 +5673,14 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         )?;
 
         // Rotation
-        self.writer.write_double(50, attrib.rotation.to_degrees())?;
+        self.writer.write_double(50, super::degrees(attrib.rotation))?;
 
         // Width factor
         self.writer.write_double(41, attrib.width_factor)?;
 
         // Oblique angle
         self.writer
-            .write_double(51, attrib.oblique_angle.to_degrees())?;
+            .write_double(51, super::degrees(attrib.oblique_angle))?;
 
         // Text style
         self.writer.write_string(7, &attrib.text_style)?;
@@ -7782,10 +7821,10 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Start angle (code 51) — DXF expects degrees
         self.writer
-            .write_double(51, style.start_angle.to_degrees())?;
+            .write_double(51, super::degrees(style.start_angle))?;
 
         // End angle (code 52) — DXF expects degrees
-        self.writer.write_double(52, style.end_angle.to_degrees())?;
+        self.writer.write_double(52, super::degrees(style.end_angle))?;
 
         // Number of elements (code 71)
         self.writer.write_i16(71, style.element_count() as i16)?;
@@ -8409,7 +8448,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             ObjectContextKind::MTextAttribute(value) => {
                 self.writer.write_i16(70, value.horizontal_mode)?;
-                self.writer.write_double(50, value.rotation.to_degrees())?;
+                self.writer.write_double(50, super::degrees(value.rotation))?;
                 self.writer.write_point2d(10, value.insertion)?;
                 self.writer.write_point2d(11, value.alignment)?;
                 let has_context = value.enable_context && value.context.is_some();
@@ -8474,7 +8513,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer.write_handle(330, value.view)?;
                 self.writer.write_point3d(10, value.view_normal)?;
                 self.writer
-                    .write_double(51, value.view_rotation.to_degrees())?;
+                    .write_double(51, super::degrees(value.view_rotation))?;
                 self.writer.write_bool(290, value.evaluate_hatch)?;
             }
             ObjectContextKind::Opaque => {}
@@ -8491,7 +8530,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         self.writer
             .write_i16(78, value.pattern_lines.len() as i16)?;
         for line in &value.pattern_lines {
-            self.writer.write_double(53, line.angle.to_degrees())?;
+            self.writer.write_double(53, super::degrees(line.angle))?;
             self.writer.write_double(43, line.base_point.x)?;
             self.writer.write_double(44, line.base_point.y)?;
             self.writer.write_double(45, line.offset.x)?;
@@ -11648,14 +11687,28 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Clip boundary type
         self.writer.write_i16(71, wipeout.clip_type as i16)?;
 
+        // A polygonal clip boundary is a closed ring: the reference DXF repeats
+        // the first point as the last and counts it in 91. An unclosed ring
+        // leaves the reader short of a point and the drawing is discarded.
+        let ring_is_closed = wipeout.clip_type == crate::entities::WipeoutClipType::Polygonal
+            && wipeout.clip_boundary_vertices.len() >= 3
+            && wipeout.clip_boundary_vertices.first() != wipeout.clip_boundary_vertices.last();
+
         // Clip boundary count
-        self.writer
-            .write_i32(91, wipeout.clip_boundary_vertices.len() as i32)?;
+        self.writer.write_i32(
+            91,
+            (wipeout.clip_boundary_vertices.len() + usize::from(ring_is_closed)) as i32,
+        )?;
 
         // Clip boundary vertices
         for v in &wipeout.clip_boundary_vertices {
             self.writer.write_double(14, v.x)?;
             self.writer.write_double(24, v.y)?;
+        }
+        if ring_is_closed {
+            let first = wipeout.clip_boundary_vertices[0];
+            self.writer.write_double(14, first.x)?;
+            self.writer.write_double(24, first.y)?;
         }
 
         Ok(())
@@ -11685,7 +11738,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Rotation
         if shape.rotation.abs() > 1e-10 {
-            self.writer.write_double(50, shape.rotation.to_degrees())?;
+            self.writer.write_double(50, super::degrees(shape.rotation))?;
         }
 
         // Relative X scale
@@ -11696,7 +11749,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
         // Oblique angle
         if shape.oblique_angle.abs() > 1e-10 {
             self.writer
-                .write_double(51, shape.oblique_angle.to_degrees())?;
+                .write_double(51, super::degrees(shape.oblique_angle))?;
         }
 
         // Normal
@@ -11730,7 +11783,7 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
 
         // Rotation
         self.writer
-            .write_double(50, underlay.rotation.to_degrees())?;
+            .write_double(50, super::degrees(underlay.rotation))?;
 
         // Normal
         self.writer.write_double(210, underlay.normal.x)?;

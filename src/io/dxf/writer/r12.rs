@@ -126,7 +126,7 @@ fn is_paper_space(name: &str) -> bool {
 }
 
 fn degrees(radians: f64) -> f64 {
-    radians.to_degrees()
+    super::degrees(radians)
 }
 
 impl<'a, W: DxfStreamWriter> R12Writer<'a, W> {

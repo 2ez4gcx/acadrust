@@ -1,5 +1,8 @@
 use acadrust::{
-    objects::{DynamicBlockData, ObjectType},
+    objects::{
+        BlockPropertiesTable, BlockPropertiesTableField, BlockPropertiesTableValue,
+        DynamicBlockData, ObjectType,
+    },
     types::Handle,
     CadDocument, DwgReader, DwgWriter, DxfReader, DxfWriter,
 };
@@ -128,16 +131,215 @@ fn native_action_fields_survive_dwg_and_dxf() {
 }
 
 #[test]
-fn undecoded_properties_table_keeps_its_payload() {
+fn properties_table_numeric_rows_roundtrip_in_dxf_and_dwg() {
     let mut doc = read(include_bytes!("fixtures/dynamic-blocks/point.dwg"));
     let handle = Handle::new(0x25C);
     let ObjectType::DynamicBlock(object) = doc.objects.get_mut(&handle).unwrap() else {
         panic!()
     };
-    // Use an arbitrary nonempty native payload: this tests preservation, not a
-    // claim that the payload can be evaluated as a properties table.
     object.dxf_name = "BLOCKPROPERTIESTABLE".into();
     object.cpp_class_name = "AcDbBlockPropertiesTable".into();
+    object.data = DynamicBlockData::PropertiesTable(BlockPropertiesTable {
+        parameter: Default::default(),
+        fields: vec![
+            BlockPropertiesTableField {
+                code: 90,
+                value: BlockPropertiesTableValue::Integer(2),
+            },
+            BlockPropertiesTableField {
+                code: 300,
+                value: BlockPropertiesTableValue::Text("Example table".into()),
+            },
+            BlockPropertiesTableField {
+                code: 301,
+                value: BlockPropertiesTableValue::Text(String::new()),
+            },
+            BlockPropertiesTableField {
+                code: 91,
+                value: BlockPropertiesTableValue::Integer(2),
+            },
+            BlockPropertiesTableField {
+                code: 340,
+                value: BlockPropertiesTableValue::Handle(Handle::NULL),
+            },
+            BlockPropertiesTableField {
+                code: 170,
+                value: BlockPropertiesTableValue::Integer(0),
+            },
+            BlockPropertiesTableField {
+                code: 171,
+                value: BlockPropertiesTableValue::Integer(-1),
+            },
+            BlockPropertiesTableField {
+                code: 300,
+                value: BlockPropertiesTableValue::Text(String::new()),
+            },
+            BlockPropertiesTableField {
+                code: 301,
+                value: BlockPropertiesTableValue::Text("UpdatedDistance".into()),
+            },
+            BlockPropertiesTableField {
+                code: 90,
+                value: BlockPropertiesTableValue::Integer(14),
+            },
+            BlockPropertiesTableField {
+                code: 170,
+                value: BlockPropertiesTableValue::Integer(-9999),
+            },
+            BlockPropertiesTableField {
+                code: 170,
+                value: BlockPropertiesTableValue::Integer(-9999),
+            },
+            BlockPropertiesTableField {
+                code: 290,
+                value: BlockPropertiesTableValue::Boolean(false),
+            },
+            BlockPropertiesTableField {
+                code: 291,
+                value: BlockPropertiesTableValue::Boolean(true),
+            },
+            BlockPropertiesTableField {
+                code: 292,
+                value: BlockPropertiesTableValue::Boolean(true),
+            },
+            BlockPropertiesTableField {
+                code: 293,
+                value: BlockPropertiesTableValue::Boolean(false),
+            },
+            BlockPropertiesTableField {
+                code: 294,
+                value: BlockPropertiesTableValue::Boolean(false),
+            },
+            BlockPropertiesTableField {
+                code: 302,
+                value: BlockPropertiesTableValue::Text(String::new()),
+            },
+            BlockPropertiesTableField {
+                code: 340,
+                value: BlockPropertiesTableValue::Handle(Handle::NULL),
+            },
+            BlockPropertiesTableField {
+                code: 340,
+                value: BlockPropertiesTableValue::Handle(Handle::NULL),
+            },
+            BlockPropertiesTableField {
+                code: 170,
+                value: BlockPropertiesTableValue::Integer(0),
+            },
+            BlockPropertiesTableField {
+                code: 171,
+                value: BlockPropertiesTableValue::Integer(-1),
+            },
+            BlockPropertiesTableField {
+                code: 300,
+                value: BlockPropertiesTableValue::Text(String::new()),
+            },
+            BlockPropertiesTableField {
+                code: 301,
+                value: BlockPropertiesTableValue::Text("UpdatedAngle".into()),
+            },
+            BlockPropertiesTableField {
+                code: 90,
+                value: BlockPropertiesTableValue::Integer(21),
+            },
+            BlockPropertiesTableField {
+                code: 170,
+                value: BlockPropertiesTableValue::Integer(-9999),
+            },
+            BlockPropertiesTableField {
+                code: 170,
+                value: BlockPropertiesTableValue::Integer(-9999),
+            },
+            BlockPropertiesTableField {
+                code: 290,
+                value: BlockPropertiesTableValue::Boolean(false),
+            },
+            BlockPropertiesTableField {
+                code: 291,
+                value: BlockPropertiesTableValue::Boolean(true),
+            },
+            BlockPropertiesTableField {
+                code: 292,
+                value: BlockPropertiesTableValue::Boolean(true),
+            },
+            BlockPropertiesTableField {
+                code: 293,
+                value: BlockPropertiesTableValue::Boolean(true),
+            },
+            BlockPropertiesTableField {
+                code: 294,
+                value: BlockPropertiesTableValue::Boolean(false),
+            },
+            BlockPropertiesTableField {
+                code: 302,
+                value: BlockPropertiesTableValue::Text(String::new()),
+            },
+            BlockPropertiesTableField {
+                code: 340,
+                value: BlockPropertiesTableValue::Handle(Handle::NULL),
+            },
+            BlockPropertiesTableField {
+                code: 92,
+                value: BlockPropertiesTableValue::Integer(2),
+            },
+            BlockPropertiesTableField {
+                code: 90,
+                value: BlockPropertiesTableValue::Integer(0),
+            },
+            BlockPropertiesTableField {
+                code: 170,
+                value: BlockPropertiesTableValue::Integer(40),
+            },
+            BlockPropertiesTableField {
+                code: 140,
+                value: BlockPropertiesTableValue::Real(2.0),
+            },
+            BlockPropertiesTableField {
+                code: 170,
+                value: BlockPropertiesTableValue::Integer(40),
+            },
+            BlockPropertiesTableField {
+                code: 140,
+                value: BlockPropertiesTableValue::Real(0.75),
+            },
+            BlockPropertiesTableField {
+                code: 90,
+                value: BlockPropertiesTableValue::Integer(1),
+            },
+            BlockPropertiesTableField {
+                code: 170,
+                value: BlockPropertiesTableValue::Integer(40),
+            },
+            BlockPropertiesTableField {
+                code: 140,
+                value: BlockPropertiesTableValue::Real(4.0),
+            },
+            BlockPropertiesTableField {
+                code: 170,
+                value: BlockPropertiesTableValue::Integer(40),
+            },
+            BlockPropertiesTableField {
+                code: 140,
+                value: BlockPropertiesTableValue::Real(1.5),
+            },
+            BlockPropertiesTableField {
+                code: 93,
+                value: BlockPropertiesTableValue::Integer(3),
+            },
+            BlockPropertiesTableField {
+                code: 290,
+                value: BlockPropertiesTableValue::Boolean(false),
+            },
+            BlockPropertiesTableField {
+                code: 291,
+                value: BlockPropertiesTableValue::Boolean(true),
+            },
+            BlockPropertiesTableField {
+                code: 292,
+                value: BlockPropertiesTableValue::Boolean(false),
+            },
+        ],
+    });
     let mut class = doc
         .classes
         .get_by_name("BLOCKPOINTPARAMETER")
@@ -146,10 +348,31 @@ fn undecoded_properties_table_keeps_its_payload() {
     class.dxf_name = "BLOCKPROPERTIESTABLE".into();
     class.cpp_class_name = "AcDbBlockPropertiesTable".into();
     doc.classes.add_or_update(class);
-    let first = read(&DwgWriter::write_to_vec(&doc).unwrap());
-    assert!(
-        matches!(&first.objects[&handle], ObjectType::Unknown { raw_dwg_data: Some(bytes), .. } if !bytes.is_empty())
-    );
-    let saved = read(&DwgWriter::write_to_vec(&first).unwrap());
-    assert_eq!(first.objects[&handle], saved.objects[&handle]);
+
+    let dxf = DxfWriter::new(&doc).write_to_vec().unwrap();
+    let decoded = DxfReader::from_reader(Cursor::new(dxf))
+        .unwrap()
+        .read()
+        .unwrap();
+    assert_eq!(data(&doc, handle.value()), data(&decoded, handle.value()));
+
+    let dwg = DwgWriter::write_to_vec(&doc).unwrap();
+    let decoded = DwgReader::from_stream(Cursor::new(dwg)).read().unwrap();
+    assert_eq!(data(&doc, handle.value()), data(&decoded, handle.value()));
+
+    let mut unsupported = doc.clone();
+    let ObjectType::DynamicBlock(object) = unsupported.objects.get_mut(&handle).unwrap() else {
+        panic!()
+    };
+    let DynamicBlockData::PropertiesTable(table) = &mut object.data else {
+        panic!()
+    };
+    table.fields.push(BlockPropertiesTableField {
+        code: 310,
+        value: BlockPropertiesTableValue::Binary(vec![0xAA]),
+    });
+    let error = DwgWriter::write_to_vec(&unsupported)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("unsupported value type"), "{error}");
 }

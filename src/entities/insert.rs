@@ -725,6 +725,45 @@ impl Insert {
         EntityType::Ellipse(ellipse)
     }
 
+    /// The entities of this insert's block, read from `document` and moved
+    /// so the block's base point is at the origin, ready for
+    /// [`explode`](Self::explode). `None` when the block record is missing,
+    /// refuses explosion or is an external reference.
+    pub fn block_entities_from_document(
+        &self,
+        document: &crate::document::CadDocument,
+    ) -> Option<Vec<EntityType>> {
+        let br = document.block_records.get(&self.block_name)?;
+        if !br.explodable
+            || br.flags.is_xref
+            || br.flags.is_xref_overlay
+            || br.flags.is_external
+            || !br.xref_path.is_empty()
+        {
+            return None;
+        }
+        let base = document
+            .get_entity(br.block_entity_handle)
+            .and_then(|entity| match entity {
+                EntityType::Block(block) => Some(block.base_point),
+                _ => None,
+            })
+            .unwrap_or(br.base_point);
+        let to_base = Transform::from_translation(base * -1.0);
+        Some(
+            br.entity_handles
+                .iter()
+                .filter_map(|h| {
+                    document.entity_index.get(h).map(|&idx| {
+                        let mut entity = document.entities[idx].as_ref().clone();
+                        entity.as_entity_mut().apply_transform(&to_base);
+                        entity
+                    })
+                })
+                .collect(),
+        )
+    }
+
     /// Convenience wrapper that looks up the block in a
     /// [`CadDocument`](crate::document::CadDocument) by `block_name` and
     /// calls [`explode`](Self::explode) with contents relative to its base point.
@@ -740,37 +779,9 @@ impl Insert {
         if self.is_minsert() {
             return Vec::new();
         }
-        match document.block_records.get(&self.block_name) {
-            Some(br)
-                if br.explodable
-                    && !br.flags.is_xref
-                    && !br.flags.is_xref_overlay
-                    && !br.flags.is_external
-                    && br.xref_path.is_empty() =>
-            {
-                let base = document
-                    .get_entity(br.block_entity_handle)
-                    .and_then(|entity| match entity {
-                        EntityType::Block(block) => Some(block.base_point),
-                        _ => None,
-                    })
-                    .unwrap_or(br.base_point);
-                let to_base = Transform::from_translation(base * -1.0);
-                let entities: Vec<EntityType> = br
-                    .entity_handles
-                    .iter()
-                    .filter_map(|h| {
-                        document.entity_index.get(h).map(|&idx| {
-                            let mut entity = document.entities[idx].as_ref().clone();
-                            entity.as_entity_mut().apply_transform(&to_base);
-                            entity
-                        })
-                    })
-                    .collect();
-                self.explode(&entities)
-            }
-            _ => Vec::new(),
-        }
+        self.block_entities_from_document(document)
+            .map(|entities| self.explode(&entities))
+            .unwrap_or_default()
     }
 }
 

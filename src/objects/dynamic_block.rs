@@ -86,6 +86,7 @@ pub enum DynamicBlockData {
     ScaleAction(BlockBasePointAction),
     ArrayAction(BlockArrayAction),
     LookupAction(BlockLookupAction),
+    PropertiesTable(BlockPropertiesTable),
     StretchAction(BlockStretchAction),
     PolarStretchAction(BlockPolarStretchAction),
     AlignmentParameterEntity,
@@ -194,6 +195,14 @@ impl DynamicBlockData {
             | Self::XYGripEntity
             | Self::ParameterDependencyBody(_) => {}
             Self::Representation(value) => visit(&mut value.block),
+            Self::PropertiesTable(value) => {
+                visit_one_point_parameter(&mut value.parameter, visit);
+                for field in &mut value.fields {
+                    if let BlockPropertiesTableValue::Handle(handle) = &mut field.value {
+                        visit(handle);
+                    }
+                }
+            }
             Self::ProxyNode(value) => visit_block_eval(value, visit),
             Self::GripLocationComponent(value) => {
                 visit_block_eval(&mut value.eval, visit);
@@ -797,6 +806,40 @@ pub struct BlockLookupAction {
     pub expressions: Vec<String>,
     pub columns: Vec<BlockLookupColumn>,
     pub flag_280: bool,
+}
+
+/// Ordered fields belonging to a native Block Properties Table subclass.
+/// Retaining the original group-code sequence preserves fields that are not
+/// yet interpreted by the application.
+#[derive(Debug, Clone, PartialEq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BlockPropertiesTable {
+    pub parameter: BlockOnePointParameter,
+    pub fields: Vec<BlockPropertiesTableField>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct BlockPropertiesTableField {
+    pub code: i32,
+    pub value: BlockPropertiesTableValue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum BlockPropertiesTableValue {
+    Text(String),
+    Boolean(bool),
+    Integer(i64),
+    Real(f64),
+    Handle(Handle),
+    Binary(Vec<u8>),
+}
+
+impl Default for BlockPropertiesTableValue {
+    fn default() -> Self {
+        Self::Text(String::new())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
