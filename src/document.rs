@@ -4306,6 +4306,61 @@ impl CadDocument {
         raw.len() != before
     }
 
+    /// The reactors an image definition lists (DXF Reference, IMAGEDEF):
+    /// its owner dictionary, then the IMAGEDEF_REACTOR of each image that
+    /// uses it. The ones a DWG read kept win; a drawing read from DXF, or
+    /// built in code, gets them from its images. AutoCAD lists an image whose
+    /// definition has none as unreferenced.
+    pub(crate) fn image_definition_reactors(
+        &self,
+        definition: &crate::objects::ImageDefinition,
+    ) -> Vec<Handle> {
+        if let Some(saved) = self.reactors_by_handle.get(&definition.handle) {
+            return saved.clone();
+        }
+        let mut reactors = Vec::new();
+        if !definition.owner.is_null() {
+            reactors.push(definition.owner);
+        }
+        for entity in self.entities() {
+            let EntityType::RasterImage(image) = entity else {
+                continue;
+            };
+            if image.definition_handle != Some(definition.handle) {
+                continue;
+            }
+            if let Some(reactor) = image.definition_reactor_handle.filter(|r| {
+                !r.is_null()
+                    && matches!(
+                        self.objects.get(r),
+                        Some(ObjectType::ImageDefinitionReactor(_))
+                    )
+            }) {
+                if !reactors.contains(&reactor) {
+                    reactors.push(reactor);
+                }
+            }
+        }
+        reactors
+    }
+
+    /// The reactors the RASTERVARIABLES object lists: its owner, the named
+    /// object dictionary (DXF Reference, RASTERVARIABLES), unless a DWG read
+    /// kept others.
+    pub(crate) fn raster_variables_reactors(
+        &self,
+        variables: &crate::objects::RasterVariables,
+    ) -> Vec<Handle> {
+        if let Some(saved) = self.reactors_by_handle.get(&variables.handle) {
+            return saved.clone();
+        }
+        if variables.owner.is_null() {
+            Vec::new()
+        } else {
+            vec![variables.owner]
+        }
+    }
+
     pub fn extension_dictionary_handle(&self, owner: Handle) -> Option<Handle> {
         // A record without a handle owns nothing; the search below would
         // otherwise return the root dictionary, whose owner is NULL too.
