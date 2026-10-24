@@ -15982,6 +15982,10 @@ impl<'a> SectionReader<'a> {
             end_angle: std::f64::consts::TAU,
             counter_clockwise: true,
         };
+        // Groups 50/51 are circular angles in degrees. Hold them until the
+        // ratio (group 40) has been seen, then store ellipse parameters.
+        let mut start_degrees = Some(0.0);
+        let mut end_degrees: Option<f64> = None;
         // Expected sequence: 10, 20, 11, 21, 40, 50, 51, 73
         for _ in 0..8 {
             if let Some(p) = self.reader.read_pair()? {
@@ -15991,15 +15995,8 @@ impl<'a> SectionReader<'a> {
                     11 => edge.major_axis_endpoint.x = p.as_double().unwrap_or(0.0),
                     21 => edge.major_axis_endpoint.y = p.as_double().unwrap_or(0.0),
                     40 => edge.minor_axis_ratio = p.as_double().unwrap_or(1.0),
-                    // Groups 50/51 are degrees. A missing or unparseable 51
-                    // keeps the full-ellipse default, which is already radians.
-                    50 => edge.start_angle = p.as_double().unwrap_or(0.0).to_radians(),
-                    51 => {
-                        edge.end_angle = p
-                            .as_double()
-                            .map(f64::to_radians)
-                            .unwrap_or(std::f64::consts::TAU)
-                    }
+                    50 => start_degrees = p.as_double().or(Some(0.0)),
+                    51 => end_degrees = p.as_double(),
                     73 => edge.counter_clockwise = p.as_i16().unwrap_or(1) != 0,
                     _ => {
                         self.reader.push_back(p);
@@ -16008,6 +16005,20 @@ impl<'a> SectionReader<'a> {
                 }
             }
         }
+        if let Some(degrees) = start_degrees {
+            edge.start_angle = crate::entities::hatch::circular_angle_to_ellipse_param(
+                edge.minor_axis_ratio,
+                degrees.to_radians(),
+            );
+        }
+        edge.end_angle = end_degrees
+            .map(|degrees| {
+                crate::entities::hatch::circular_angle_to_ellipse_param(
+                    edge.minor_axis_ratio,
+                    degrees.to_radians(),
+                )
+            })
+            .unwrap_or(std::f64::consts::TAU);
         Ok(edge)
     }
 
