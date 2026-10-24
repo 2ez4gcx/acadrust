@@ -39,18 +39,18 @@ use crate::types::Handle;
 use crate::types::LineWeight;
 use std::collections::{HashMap, HashSet};
 
-/// Read the DWG-only context-base flag added in the R2010 layout. ODA
-/// §20.4.89 specifies a default value of true; earlier files retain their
-/// version/default pair.
+/// ODA §20.4.89 documents a file-to-extension-dictionary bit before the
+/// default flag on R2010+. AutoCAD does not write that bit for annotative
+/// context leaves (aligned dimensions, text, MTEXT, leaders, hatches, and
+/// the same classes through R2018). Consuming it shifts the rest of the
+/// record by one bit and the strict read stops. The value stays at ODA's
+/// documented default. The MLeader decoder is the exception: it tries this
+/// native layout first, then the two-bit ODA layout.
 fn read_context_file_dictionary_flag(
-    reader: &mut DwgMergedReader,
-    version: crate::io::dwg::dwg_version::DwgVersion,
+    _reader: &mut DwgMergedReader,
+    _version: crate::io::dwg::dwg_version::DwgVersion,
 ) -> bool {
-    if version.r2010_plus() {
-        reader.read_bit()
-    } else {
-        true
-    }
+    true
 }
 
 fn linetype_segment_is_complex(segment: &tables::LinetypeSegment, shape_handle: u64) -> bool {
@@ -7274,11 +7274,15 @@ impl DwgDocumentBuilder {
                                         legacy_context,
                                     )
                                 } else {
+                                    // ODA §20.4.89 layout: the dictionary bit
+                                    // is present. Native AutoCAD records take
+                                    // the branch above and never reach here.
                                     let has_file_to_extension_dictionary =
-                                        read_context_file_dictionary_flag(
-                                            &mut reader,
-                                            self.obj_reader.version(),
-                                        );
+                                        if self.obj_reader.version().r2010_plus() {
+                                            reader.read_bit()
+                                        } else {
+                                            true
+                                        };
                                     let is_default = reader.read_bit();
                                     let scale = reader.read_handle();
                                     let context =

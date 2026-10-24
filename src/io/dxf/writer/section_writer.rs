@@ -189,11 +189,23 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.model_space_handle = br.handle();
             }
             for eh in &br.entity_handles {
+                if document
+                    .get_entity(*eh)
+                    .is_some_and(super::dxf_skips_arch_entity)
+                {
+                    continue;
+                }
                 set.insert(*eh);
             }
         }
         // Entity index (covers all entities including orphans)
         for h in document.entity_index.keys() {
+            if document
+                .get_entity(*h)
+                .is_some_and(super::dxf_skips_arch_entity)
+            {
+                continue;
+            }
             set.insert(*h);
         }
         // INSERT attributes are inline child entities and are not present in
@@ -2260,6 +2272,9 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
     /// spot; every other entity gets it here. `Unknown` entities re-emit their
     /// captured bytes verbatim, so they are skipped.
     fn write_entity_with_owner(&mut self, entity: &EntityType, owner: Handle) -> Result<()> {
+        if super::dxf_skips_arch_entity(entity) {
+            return Ok(());
+        }
         self.write_entity_body(entity, owner)?;
         if !matches!(
             entity,
@@ -2388,6 +2403,18 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 }
                 return Ok(());
             }
+            // A DWG read has no DXF class body. Cached proxy graphics are what
+            // AutoCAD draws for an object whose application is absent, so
+            // emit them as a standard proxy entity. An entity with neither
+            // body nor graphics is omitted; see `dxf_skips_arch_entity`.
+            let graphics = e.common.graphic_data.as_deref().unwrap_or_default();
+            if !graphics.is_empty() {
+                let mut unknown = crate::entities::UnknownEntity::new(data.dxf_name.clone());
+                unknown.common = e.common.clone();
+                unknown.dwg_type_code = data.dwg_type_code;
+                return self.write_unknown_entity(&unknown, owner);
+            }
+            return Ok(());
         }
         if let ExtendedEntityData::RegisteredClass(data) = &e.data {
             if data.payload.bit_count != 0 {
@@ -5053,11 +5080,22 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                 self.writer
                     .write_double(21, ellipse.major_axis_endpoint.y)?;
                 self.writer.write_double(40, ellipse.minor_axis_ratio)?;
-                // DXF stores these angles in degrees. The model uses radians.
-                self.writer
-                    .write_double(50, ellipse.start_angle.to_degrees())?;
-                self.writer
-                    .write_double(51, ellipse.end_angle.to_degrees())?;
+                // Groups 50/51 are circular angles in degrees. The model
+                // stores ellipse parameters, which is also what DWG stores.
+                self.writer.write_double(
+                    50,
+                    super::degrees(crate::entities::hatch::ellipse_param_to_circular_angle(
+                        ellipse.minor_axis_ratio,
+                        ellipse.start_angle,
+                    )),
+                )?;
+                self.writer.write_double(
+                    51,
+                    super::degrees(crate::entities::hatch::ellipse_param_to_circular_angle(
+                        ellipse.minor_axis_ratio,
+                        ellipse.end_angle,
+                    )),
+                )?;
                 self.writer
                     .write_i16(73, if ellipse.counter_clockwise { 1 } else { 0 })?;
             }
@@ -9561,7 +9599,13 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                         self.writer.write_binary(1004, data)?;
                     }
                     XDataValue::Handle(h) => {
-                        self.writer.write_handle(1005, *h)?;
+                        // A handle that pointed at an omitted Arch object would
+                        // otherwise remain as an unknown xdata reference.
+                        if !h.is_null()
+                            && (self.valid_handles.is_empty() || self.valid_handles.contains(h))
+                        {
+                            self.writer.write_handle(1005, *h)?;
+                        }
                     }
                     XDataValue::Point3D(p) => {
                         self.writer.write_double(1010, p.x)?;

@@ -158,12 +158,39 @@ pub struct EllipticArcEdge {
     pub major_axis_endpoint: Vector2,
     /// Ratio of minor axis to major axis
     pub minor_axis_ratio: f64,
-    /// Start angle in radians
+    /// Start parameter, in radians. This is the ellipse parameter stored by
+    /// DWG, not the circular angle stored in DXF groups 50/51.
     pub start_angle: f64,
-    /// End angle in radians
+    /// End parameter, in radians. See [`Self::start_angle`].
     pub end_angle: f64,
     /// Counter-clockwise flag
     pub counter_clockwise: bool,
+}
+
+/// Circular angle used by a DXF hatch elliptic edge, as an ellipse parameter.
+///
+/// Group 50/51 is the direction from the center, the same angle a circular
+/// arc would use. The parameter is the eccentric angle: a ray at circular
+/// angle `a` meets the ellipse at `atan2(sin(a) / ratio, cos(a))`. Full turns
+/// are kept, and a negative angle stays negative, so a clockwise edge uses
+/// the same conversion.
+pub(crate) fn circular_angle_to_ellipse_param(ratio: f64, angle: f64) -> f64 {
+    if !angle.is_finite() || !ratio.is_finite() || ratio == 0.0 {
+        return angle;
+    }
+    let turns = (angle / std::f64::consts::TAU).trunc();
+    let base = angle - turns * std::f64::consts::TAU;
+    (base.sin() / ratio).atan2(base.cos()) + turns * std::f64::consts::TAU
+}
+
+/// Ellipse parameter written back to a DXF hatch elliptic edge as a circular angle.
+pub(crate) fn ellipse_param_to_circular_angle(ratio: f64, param: f64) -> f64 {
+    if !param.is_finite() || !ratio.is_finite() || ratio == 0.0 {
+        return param;
+    }
+    let turns = (param / std::f64::consts::TAU).trunc();
+    let base = param - turns * std::f64::consts::TAU;
+    (base.sin() * ratio).atan2(base.cos()) + turns * std::f64::consts::TAU
 }
 
 /// Spline edge in a boundary path
