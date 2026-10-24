@@ -59,9 +59,9 @@ fn ac1024_empty_silhouette_count_preserves_geometry_and_materials() {
         for materials in [0, 1] {
             let (mut reader, sab, end) = record(offset, Some(0), materials);
             let data = read_acis_entity(&mut reader, DwgVersion::AC24, DxfVersion::AC1024, false);
-            reader.check_error().unwrap_or_else(|error| {
-                panic!("offset={offset}, materials={materials}: {error}")
-            });
+            reader
+                .check_error()
+                .unwrap_or_else(|error| panic!("offset={offset}, materials={materials}: {error}"));
             assert_eq!(reader.position_in_bits(), end);
             assert_eq!(data.sab_data, sab);
             assert_eq!(data.version, 2);

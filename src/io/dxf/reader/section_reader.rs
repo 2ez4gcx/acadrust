@@ -1077,12 +1077,12 @@ impl DynamicDxfFields {
                     GroupCodeValueType::Byte
                     | GroupCodeValueType::Int16
                     | GroupCodeValueType::Int32
-                    | GroupCodeValueType::Int64 => BlockPropertiesTableValue::Integer(
-                        value.trim().parse::<i64>().unwrap_or(0),
-                    ),
-                    GroupCodeValueType::Double => BlockPropertiesTableValue::Real(
-                        value.trim().parse::<f64>().unwrap_or(0.0),
-                    ),
+                    | GroupCodeValueType::Int64 => {
+                        BlockPropertiesTableValue::Integer(value.trim().parse::<i64>().unwrap_or(0))
+                    }
+                    GroupCodeValueType::Double => {
+                        BlockPropertiesTableValue::Real(value.trim().parse::<f64>().unwrap_or(0.0))
+                    }
                     GroupCodeValueType::Handle => {
                         BlockPropertiesTableValue::Handle(parse_dxf_handle(value))
                     }
@@ -1093,9 +1093,7 @@ impl DynamicDxfFields {
                     }
                     GroupCodeValueType::None
                     | GroupCodeValueType::String
-                    | GroupCodeValueType::Point3D => {
-                        BlockPropertiesTableValue::Text(value.clone())
-                    }
+                    | GroupCodeValueType::Point3D => BlockPropertiesTableValue::Text(value.clone()),
                 };
                 BlockPropertiesTableField {
                     code: *code,
@@ -4604,12 +4602,10 @@ impl<'a> SectionReader<'a> {
             "BLOCKROTATIONGRIP" => DynamicBlockData::RotationGrip(dynamic_dxf_grip(&fields)),
             "BLOCKVISIBILITYGRIP" => DynamicBlockData::VisibilityGrip(dynamic_dxf_grip(&fields)),
             "BLOCKXYGRIP" => DynamicBlockData::XYGrip(dynamic_dxf_grip(&fields)),
-            "BLOCKPROPERTIESTABLE" => {
-                DynamicBlockData::PropertiesTable(BlockPropertiesTable {
-                    parameter: dynamic_dxf_one_point(&fields),
-                    fields: fields.properties_table_fields("AcDbBlockPropertiesTable"),
-                })
-            }
+            "BLOCKPROPERTIESTABLE" => DynamicBlockData::PropertiesTable(BlockPropertiesTable {
+                parameter: dynamic_dxf_one_point(&fields),
+                fields: fields.properties_table_fields("AcDbBlockPropertiesTable"),
+            }),
             "BLOCKPROPERTIESTABLEGRIP" => {
                 DynamicBlockData::PropertiesTableGrip(dynamic_dxf_grip(&fields))
             }

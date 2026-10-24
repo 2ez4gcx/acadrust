@@ -633,7 +633,9 @@ impl SabWriter {
                 && index + 1 < tokens.len()
                 && (matches!(
                     subtypes.last(),
-                    None | Some(Some("exactcur" | "exact_int_cur" | "exactsur" | "offsur" | "exppc"))
+                    None | Some(Some(
+                        "exactcur" | "exact_int_cur" | "exactsur" | "offsur" | "exppc"
+                    ))
                 ) || in_int_cur(&subtypes))
             {
                 doubles.push(index + 1);

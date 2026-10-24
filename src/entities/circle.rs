@@ -1,9 +1,7 @@
 //! Circle entity
 
 use super::{Entity, EntityCommon};
-use crate::types::{
-    BoundingBox3D, Matrix3, Transform, Vector3,
-};
+use crate::types::{BoundingBox3D, Matrix3, Transform, Vector3};
 
 /// A circle entity
 #[derive(Debug, Clone, PartialEq)]

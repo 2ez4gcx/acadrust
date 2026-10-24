@@ -5,10 +5,7 @@
 //! enum compact.
 
 use crate::entities::{Entity, EntityCommon, MText};
-use crate::types::{
-    BoundingBox3D, Color, Handle, Matrix3, Matrix4, Transform, Vector2,
-    Vector3,
-};
+use crate::types::{BoundingBox3D, Color, Handle, Matrix3, Matrix4, Transform, Vector2, Vector3};
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

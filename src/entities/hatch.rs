@@ -1,9 +1,7 @@
 //! Hatch entity and boundary path types
 
 use crate::entities::{Entity, EntityCommon};
-use crate::types::{
-    BoundingBox3D, Color, Handle, Transform, Vector2, Vector3,
-};
+use crate::types::{BoundingBox3D, Color, Handle, Transform, Vector2, Vector3};
 
 /// Hatch pattern type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1056,11 +1056,17 @@ fn area(e: &EntityType) -> Option<f64> {
 fn bulge_vertices(e: &EntityType) -> Option<(Vec<(f64, f64, f64)>, bool)> {
     let (vertices, closed): (Vec<_>, bool) = match e {
         EntityType::LwPolyline(p) => (
-            p.vertices.iter().map(|v| (v.location.x, v.location.y, v.bulge)).collect(),
+            p.vertices
+                .iter()
+                .map(|v| (v.location.x, v.location.y, v.bulge))
+                .collect(),
             p.is_closed,
         ),
         EntityType::Polyline2D(p) => (
-            p.vertices.iter().map(|v| (v.location.x, v.location.y, v.bulge)).collect(),
+            p.vertices
+                .iter()
+                .map(|v| (v.location.x, v.location.y, v.bulge))
+                .collect(),
             p.is_closed(),
         ),
         _ => return None,

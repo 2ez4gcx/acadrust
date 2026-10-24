@@ -282,15 +282,18 @@ fn validate_unknown_records(document: &CadDocument) -> Result<()> {
         }
         if let crate::objects::ObjectType::DynamicBlock(value) = object {
             if let crate::objects::DynamicBlockData::PropertiesTable(table) = &value.data {
-                let supported = table.fields.iter().all(|field| match (field.code, &field.value) {
-                    (90..=99, crate::objects::BlockPropertiesTableValue::Integer(_))
-                    | (170..=179, crate::objects::BlockPropertiesTableValue::Integer(_))
-                    | (290..=299, crate::objects::BlockPropertiesTableValue::Boolean(_))
-                    | (140..=149, crate::objects::BlockPropertiesTableValue::Real(_))
-                    | (300..=309, crate::objects::BlockPropertiesTableValue::Text(_))
-                    | (340..=349, crate::objects::BlockPropertiesTableValue::Handle(_)) => true,
-                    _ => false,
-                });
+                let supported = table
+                    .fields
+                    .iter()
+                    .all(|field| match (field.code, &field.value) {
+                        (90..=99, crate::objects::BlockPropertiesTableValue::Integer(_))
+                        | (170..=179, crate::objects::BlockPropertiesTableValue::Integer(_))
+                        | (290..=299, crate::objects::BlockPropertiesTableValue::Boolean(_))
+                        | (140..=149, crate::objects::BlockPropertiesTableValue::Real(_))
+                        | (300..=309, crate::objects::BlockPropertiesTableValue::Text(_))
+                        | (340..=349, crate::objects::BlockPropertiesTableValue::Handle(_)) => true,
+                        _ => false,
+                    });
                 if !supported {
                     return Err(DxfError::NotImplemented(format!(
                         "Cannot encode Block Properties Table at handle {} as DWG: a field uses an unsupported value type",
@@ -300,7 +303,11 @@ fn validate_unknown_records(document: &CadDocument) -> Result<()> {
             }
         }
         if let crate::objects::ObjectType::Unknown {
-            type_name, handle, raw_dwg_data, raw_dwg_version, ..
+            type_name,
+            handle,
+            raw_dwg_data,
+            raw_dwg_version,
+            ..
         } = object
         {
             if raw_dwg_data.is_none()
@@ -3684,4 +3691,3 @@ mod tests {
         ));
     }
 }
-
