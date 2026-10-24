@@ -12,6 +12,23 @@ pub fn rgb_to_aci(r: u8, g: u8, b: u8) -> Color {
     Color::Index(crate::types::aci_table::nearest_aci(r, g, b))
 }
 
+/// Round a 0–1 channel to an 8-bit value. Non-finite and out-of-range inputs saturate.
+pub fn unit_channel_to_u8(value: f32) -> u8 {
+    if !value.is_finite() {
+        return 0;
+    }
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// True-colour value from 0–1 channels, rounded to the nearest byte.
+pub fn color_from_unit_rgb(r: f32, g: f32, b: f32) -> Color {
+    Color::Rgb {
+        r: unit_channel_to_u8(r),
+        g: unit_channel_to_u8(g),
+        b: unit_channel_to_u8(b),
+    }
+}
+
 /// Map an RGB colour to a [`Color`], preferring true colour (`Rgb`) when the
 /// DXF version supports it (R2004+), otherwise falling back to the nearest ACI.
 pub fn rgb_to_color(r: u8, g: u8, b: u8, use_true_color: bool) -> Color {
@@ -119,5 +136,13 @@ mod tests {
     fn test_rgb_to_color_aci_fallback() {
         let c = rgb_to_color(255, 0, 0, false);
         assert_eq!(c, Color::Index(1));
+    }
+
+    #[test]
+    fn test_unit_channel_rounds_half_up() {
+        assert_eq!(unit_channel_to_u8(0.5), 128);
+        assert_eq!(unit_channel_to_u8(1.0), 255);
+        assert_eq!(unit_channel_to_u8(2.0), 255);
+        assert_eq!(unit_channel_to_u8(f32::NAN), 0);
     }
 }
