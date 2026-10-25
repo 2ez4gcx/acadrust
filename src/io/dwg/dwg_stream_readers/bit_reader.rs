@@ -1479,9 +1479,11 @@ mod tests {
     }
 }
 
+/// R2007+ text is UTF-16 and holds every character, so a `\U+XXXX` in it is
+/// content; only the `\M+` double-byte escapes are transport.
 fn decode_mif(text: String) -> String {
-    if crate::io::dxf::code_page::has_legacy_escape(&text) {
-        crate::io::dxf::code_page::decode_legacy_escapes(&text)
+    if text.contains("\\M+") {
+        crate::io::dxf::code_page::decode_mif_escapes(&text)
     } else {
         text
     }
