@@ -3527,6 +3527,31 @@ impl DwgDocumentBuilder {
             .map(|layer| layer.name.clone())
             .unwrap_or_default();
 
+        // The current text style, linetype and dimension style are handles in
+        // the DWG header too, and the DXF reader gives their names. Resolve them
+        // the same way, and keep the default when a handle names nothing.
+        if let Some(style) = document
+            .text_styles
+            .iter()
+            .find(|s| s.handle == document.header.current_text_style_handle)
+        {
+            document.header.current_text_style_name = style.name.clone();
+        }
+        if let Some(lt) = document
+            .line_types
+            .iter()
+            .find(|l| l.handle == document.header.current_linetype_handle)
+        {
+            document.header.current_linetype_name = lt.name.clone();
+        }
+        if let Some(ds) = document
+            .dim_styles
+            .iter()
+            .find(|d| d.handle == document.header.current_dimstyle_handle)
+        {
+            document.header.current_dimstyle_name = ds.name.clone();
+        }
+
         // ── Post-pass: guarantee the mandatory *Model_Space / *Paper_Space ──
         // block records exist and enumerate their geometry.
         //
