@@ -346,6 +346,12 @@ impl<'a> DwgObjectWriter<'a> {
     /// class, whatever that is) or 0, so readers resolve it to another class
     /// or drop it: it is left out instead.
     pub(super) fn lacks_object_class(&self, object: &ObjectType) -> bool {
+        // A save back to the version the drawing came from has no downgrade to
+        // protect against, so the object stays. Only a save to another version
+        // leaves it out.
+        if self.document.dwg_source_version == Some(self.dxf_version) {
+            return false;
+        }
         let class_only = matches!(
             object,
             ObjectType::ObjectContextData(_)
