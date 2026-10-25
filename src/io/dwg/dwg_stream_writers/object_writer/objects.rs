@@ -180,12 +180,11 @@ fn transcode_xrecord_xdata(
             }
             let source_code_page = raw[p] as u16;
             p += 1;
-            let s = crate::io::dxf::code_page::encoding_from_dwg_code_page(source_code_page)
-                .decode(&raw[p..p + len])
-                .0
-                .into_owned();
+            let source = crate::io::dxf::code_page::encoding_from_dwg_code_page(source_code_page);
+            let s = source.decode(&raw[p..p + len]).0.into_owned();
             p += len;
-            crate::io::dxf::code_page::decode_legacy_escapes(&s)
+            // The escapes were written against the source code page, not the target.
+            crate::io::dxf::code_page::decode_legacy_escapes_in(&s, source)
         };
         if tgt_unicode {
             let utf16: Vec<u16> = text.encode_utf16().take(u16::MAX as usize).collect();

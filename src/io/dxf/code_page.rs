@@ -49,6 +49,13 @@ impl LegacyEncoding {
         }
     }
 
+    /// Whether this encoding holds `ch`, so that [`encode_legacy_string`] writes
+    /// it as bytes instead of a `\U+XXXX` escape.
+    pub fn can_encode(self, ch: char) -> bool {
+        let mut buf = [0u8; 4];
+        !self.encode(ch.encode_utf8(&mut buf)).2
+    }
+
     pub fn decode<'a>(self, bytes: &'a [u8]) -> (Cow<'a, str>, Self, bool) {
         match self {
             Self::Whatwg(encoding) => {
@@ -359,6 +366,31 @@ pub fn encode_legacy_string(text: &str, encoding: impl Into<LegacyEncoding>) -> 
 /// text, and invalid code points are dropped — matching the MTEXT
 /// formatter's behavior for the same escapes.
 pub fn decode_cif_escapes(text: &str) -> String {
+    decode_cif(text, None)
+}
+
+/// Decode ACAD CIF `\U+XXXX` escapes in text read from a drawing whose code
+/// page is `encoding`.
+///
+/// [`encode_legacy_string`] escapes a character only when the code page cannot
+/// hold it, so an escape naming a character the page *can* hold was never
+/// written as transport: it is the text itself, and it is copied through as it
+/// stands (lower-case hex included). Surrogate pairs are judged as the one
+/// scalar they name. A UTF-8 stream has no code page to ask and decodes every
+/// escape, as [`decode_cif_escapes`] does.
+pub fn decode_cif_escapes_in(text: &str, encoding: impl Into<LegacyEncoding>) -> String {
+    decode_cif(text, Some(encoding.into()))
+}
+
+/// [`decode_legacy_escapes`] for text read from a drawing whose code page is
+/// `encoding`: MIF escapes decode as before, CIF escapes by
+/// [`decode_cif_escapes_in`].
+pub fn decode_legacy_escapes_in(text: &str, encoding: impl Into<LegacyEncoding>) -> String {
+    decode_cif_escapes_in(&decode_mif_escapes(text), encoding)
+}
+
+fn decode_cif(text: &str, held_by: Option<LegacyEncoding>) -> String {
+    let held_by = held_by.filter(|e| *e != LegacyEncoding::Whatwg(encoding_rs::UTF_8));
     if !text.contains("\\U+") {
         return text.to_string();
     }
@@ -376,6 +408,7 @@ pub fn decode_cif_escapes(text: &str) -> String {
     while i < len {
         if chars[i] == '\\' && i + 7 <= len && chars[i + 1] == 'U' && chars[i + 2] == '+' {
             if let Some(unit) = hex_at(i + 3) {
+                let start = i;
                 i += 7;
                 let mut units = [unit, 0];
                 let mut count = 1usize;
@@ -396,7 +429,11 @@ pub fn decode_cif_escapes(text: &str) -> String {
                 }
                 if let Some(Ok(ch)) = std::char::decode_utf16(units[..count].iter().copied()).next()
                 {
-                    out.push(ch);
+                    if held_by.is_some_and(|e| e.can_encode(ch)) {
+                        out.extend(&chars[start..i]);
+                    } else {
+                        out.push(ch);
+                    }
                 }
                 continue;
             }
@@ -561,6 +598,38 @@ mod tests {
             "技术要求"
         );
         assert_eq!(decode_mif_escapes("\\M+48861"), "\u{AC00}");
+    }
+
+    #[test]
+    fn test_gated_cif_decode_follows_the_code_page() {
+        let w1252 = encoding_rs::WINDOWS_1252;
+        // Held by the page: content, copied as written (hex case included).
+        assert_eq!(decode_cif_escapes_in(r"94\U+00B0", w1252), r"94\U+00B0");
+        assert_eq!(decode_cif_escapes_in(r"94\U+00b0", w1252), r"94\U+00b0");
+        assert_eq!(
+            decode_cif_escapes_in(r"\U+0041\U+0042", w1252),
+            r"\U+0041\U+0042"
+        );
+        // Not held: transport escape, decoded, surrogate pairs as one scalar.
+        assert_eq!(decode_cif_escapes_in(r"\U+2205 x", w1252), "\u{2205} x");
+        assert_eq!(decode_cif_escapes_in(r"\U+D83D\U+DE00", w1252), "\u{1F600}");
+        assert_eq!(
+            decode_cif_escapes_in(r"\U+D83D\U+DE00", encoding_rs::SHIFT_JIS),
+            "\u{1F600}"
+        );
+        // The same character is held by one page and not by another.
+        assert_eq!(decode_cif_escapes_in(r"\U+0411", w1252), "\u{411}");
+        assert_eq!(
+            decode_cif_escapes_in(r"\U+0411", encoding_rs::WINDOWS_1251),
+            r"\U+0411"
+        );
+        // No code page to ask in UTF-8: every escape decodes.
+        assert_eq!(decode_cif_escapes_in(r"\U+0041", encoding_rs::UTF_8), "A");
+        // An OEM page is asked too.
+        assert_eq!(
+            decode_cif_escapes_in(r"\U+00E9", LegacyEncoding::Oem(437)),
+            r"\U+00E9"
+        );
     }
 
     #[test]
