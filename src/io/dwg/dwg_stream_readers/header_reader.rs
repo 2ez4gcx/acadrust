@@ -421,7 +421,7 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
     h.spline_type = r.read_bit_short();
     h.shade_edge = r.read_bit_short();
     h.shade_diffuse = r.read_bit_short();
-    let _ = r.read_bit_short(); // UNITMODE
+    h.unit_mode = r.read_bit_short(); // UNITMODE
     h.max_active_viewports = r.read_bit_short();
     h.isolines = r.read_bit_short();
     h.multiline_justification = r.read_bit_short();
@@ -571,12 +571,13 @@ fn read_header_fields(r: &mut SectionReader, v: DxfVersion, h: &mut HeaderVariab
         h.dim_tolerance_justification = r.read_byte() as i16;
         h.dim_horizontal_justification = r.read_byte() as i16;
         h.dim_fit = r.read_byte() as i16;
+        h.dim_fit_r13 = h.dim_fit;
         h.dim_user_positioned_text = r.read_bit();
         h.dim_tolerance_zero_suppression = r.read_byte() as i16;
         h.dim_alt_tolerance_zero_suppression = r.read_byte() as i16;
         h.dim_alt_tolerance_zero_tight = r.read_byte() as i16;
         h.dim_text_above = r.read_byte() as i16;
-        let _ = r.read_bit_short(); // DIMUNIT
+        h.dim_unit = r.read_bit_short(); // DIMUNIT
         h.dim_angular_decimal_places = r.read_bit_short();
         h.dim_decimal_places = r.read_bit_short();
         h.dim_tolerance_decimal_places = r.read_bit_short();

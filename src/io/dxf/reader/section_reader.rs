@@ -1620,6 +1620,7 @@ impl<'a> SectionReader<'a> {
         // A $CUSTOMPROPERTYTAG waits for its $CUSTOMPROPERTY value.
         let mut custom_value_pending = false;
         let mut code_page_seen = false;
+        let mut dimatfit_seen = false;
 
         while let Some(pair) = self.reader.read_pair()? {
             if pair.code == 0 && pair.value_string == "ENDSEC" {
@@ -1664,7 +1665,10 @@ impl<'a> SectionReader<'a> {
                             "$VIEWMODE" => state.view_mode = value,
                             "$FLATLAND" => state.flatland = value,
                             "$UCSICON" => state.ucs_icon = value,
-                            "$UNITMODE" => state.unit_mode = value,
+                            "$UNITMODE" => {
+                                state.unit_mode = value;
+                                hdr.unit_mode = value;
+                            }
                             _ => unreachable!(),
                         }
                     }
@@ -1698,7 +1702,9 @@ impl<'a> SectionReader<'a> {
                     }
                 }
                 "$ACADMAINTVER" => {
-                    self.reader.read_pair()?;
+                    if let Some(v) = self.reader.read_pair()?.and_then(|p| p.as_int()) {
+                        hdr.acad_maintenance_version = v as i32;
+                    }
                 }
                 "$REQUIREDVERSIONS" => {
                     if let Some(p) = self.reader.read_pair()? {
@@ -3053,11 +3059,25 @@ impl<'a> SectionReader<'a> {
                         }
                     }
                 }
-                "$DIMATFIT" | "$DIMFIT" => {
-                    if let Some(p) = self.reader.read_pair()? {
-                        if let Some(v) = p.as_i16() {
+                "$DIMATFIT" => {
+                    if let Some(v) = self.reader.read_pair()?.and_then(|p| p.as_i16()) {
+                        hdr.dim_fit = v;
+                        dimatfit_seen = true;
+                    }
+                }
+                // R13/R14 files only have $DIMFIT, so it feeds dim_fit until a
+                // $DIMATFIT says otherwise.
+                "$DIMFIT" => {
+                    if let Some(v) = self.reader.read_pair()?.and_then(|p| p.as_i16()) {
+                        hdr.dim_fit_r13 = v;
+                        if !dimatfit_seen {
                             hdr.dim_fit = v;
                         }
+                    }
+                }
+                "$DIMUNIT" => {
+                    if let Some(v) = self.reader.read_pair()?.and_then(|p| p.as_i16()) {
+                        hdr.dim_unit = v;
                     }
                 }
                 "$DIMUPT" => {

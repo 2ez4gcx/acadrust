@@ -464,7 +464,7 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
     w.write_bit_short(h.spline_type);
     w.write_bit_short(h.shade_edge);
     w.write_bit_short(h.shade_diffuse);
-    w.write_bit_short(0); // UNITMODE — default 0
+    w.write_bit_short(h.unit_mode); // UNITMODE
     w.write_bit_short(h.max_active_viewports);
     w.write_bit_short(h.isolines);
     w.write_bit_short(h.multiline_justification);
@@ -621,7 +621,7 @@ fn write_header_fields(w: &mut SectionWriter, v: DxfVersion, h: &HeaderVariables
         w.write_byte(h.dim_alt_tolerance_zero_suppression as u8);
         w.write_byte(h.dim_alt_tolerance_zero_tight as u8);
         w.write_byte(h.dim_text_above as u8);
-        w.write_bit_short(0); // DIMUNIT
+        w.write_bit_short(h.dim_unit); // DIMUNIT
         w.write_bit_short(h.dim_angular_decimal_places);
         w.write_bit_short(h.dim_decimal_places);
         w.write_bit_short(h.dim_tolerance_decimal_places);
