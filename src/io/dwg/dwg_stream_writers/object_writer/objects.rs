@@ -2216,7 +2216,8 @@ impl<'a> DwgObjectWriter<'a> {
     fn write_image_definition(&mut self, def: &ImageDefinition) {
         // UNLISTED type — always use DXF class number (500+)
         let type_code = self.class_type_code("IMAGEDEF", common::OBJ_IMAGEDEF);
-        self.write_common_non_entity_data(type_code, def.handle, def.owner, &[], &None);
+        let reactors = self.document.image_definition_reactors(def);
+        self.write_common_non_entity_data(type_code, def.handle, def.owner, &reactors, &None);
 
         self.writer.write_bit_long(def.class_version);
         self.writer.write_2raw_double(crate::types::Vector2::new(
@@ -2830,7 +2831,8 @@ impl<'a> DwgObjectWriter<'a> {
     fn write_raster_variables(&mut self, rv: &RasterVariables) {
         // UNLISTED type — always use DXF class number (500+)
         let type_code = self.class_type_code("RASTERVARIABLES", common::OBJ_RASTERVARIABLES);
-        self.write_common_non_entity_data(type_code, rv.handle, rv.owner, &[], &None);
+        let reactors = self.document.raster_variables_reactors(rv);
+        self.write_common_non_entity_data(type_code, rv.handle, rv.owner, &reactors, &None);
 
         self.writer.write_bit_long(rv.class_version);
         self.writer.write_bit_short(rv.display_image_frame);
