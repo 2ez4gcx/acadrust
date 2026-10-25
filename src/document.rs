@@ -331,6 +331,22 @@ pub struct HeaderVariables {
     pub dim_text_fill: i16,
     /// DIMTFILLCLR - Dimension text background fill color
     pub dim_text_fill_color: Color,
+    /// DIMTXTDIRECTION - Dimension text reads right to left
+    pub dim_text_direction: bool,
+    /// DIMALTMZF - Alternate units zero suppression scale factor
+    pub dim_alt_mzf: f64,
+    /// DIMALTMZS - Alternate units zero suppression text
+    pub dim_alt_mzs: String,
+    /// DIMMZF - Zero suppression scale factor
+    pub dim_mzf: f64,
+    /// DIMMZS - Zero suppression text
+    pub dim_mzs: String,
+    /// CSHADOW - Shadow casting mode of new objects
+    pub cast_shadow: i16,
+    /// UCSORGTOP, BOTTOM, LEFT, RIGHT, FRONT, BACK
+    pub ucs_ortho_origins: [Vector3; 6],
+    /// PUCSORGTOP, BOTTOM, LEFT, RIGHT, FRONT, BACK
+    pub paper_ucs_ortho_origins: [Vector3; 6],
     /// DIMASSOC - Dimension associativity (0=no, 1=non-exploded, 2=associative)
     pub dimension_associativity: i16,
     /// PROJECTNAME - Project name
@@ -879,6 +895,14 @@ impl Default for HeaderVariables {
             dim_jog_angle: std::f64::consts::FRAC_PI_4,
             dim_text_fill: 0,
             dim_text_fill_color: Color::ByBlock,
+            dim_text_direction: false,
+            dim_alt_mzf: 0.0,
+            dim_alt_mzs: String::new(),
+            dim_mzf: 0.0,
+            dim_mzs: String::new(),
+            cast_shadow: 0,
+            ucs_ortho_origins: [Vector3::ZERO; 6],
+            paper_ucs_ortho_origins: [Vector3::ZERO; 6],
             dimension_associativity: 2,
             project_name: String::new(),
 

@@ -3213,6 +3213,80 @@ impl<'a> SectionReader<'a> {
                 "$PUCSYDIR" => {
                     self.read_header_point3(&mut hdr.paper_space_ucs_y_axis)?;
                 }
+                "$UCSORGTOP" => {
+                    self.read_header_point3(&mut hdr.ucs_ortho_origins[0])?;
+                }
+                "$PUCSORGTOP" => {
+                    self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[0])?;
+                }
+                "$UCSORGBOTTOM" => {
+                    self.read_header_point3(&mut hdr.ucs_ortho_origins[1])?;
+                }
+                "$PUCSORGBOTTOM" => {
+                    self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[1])?;
+                }
+                "$UCSORGLEFT" => {
+                    self.read_header_point3(&mut hdr.ucs_ortho_origins[2])?;
+                }
+                "$PUCSORGLEFT" => {
+                    self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[2])?;
+                }
+                "$UCSORGRIGHT" => {
+                    self.read_header_point3(&mut hdr.ucs_ortho_origins[3])?;
+                }
+                "$PUCSORGRIGHT" => {
+                    self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[3])?;
+                }
+                "$UCSORGFRONT" => {
+                    self.read_header_point3(&mut hdr.ucs_ortho_origins[4])?;
+                }
+                "$PUCSORGFRONT" => {
+                    self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[4])?;
+                }
+                "$UCSORGBACK" => {
+                    self.read_header_point3(&mut hdr.ucs_ortho_origins[5])?;
+                }
+                "$PUCSORGBACK" => {
+                    self.read_header_point3(&mut hdr.paper_ucs_ortho_origins[5])?;
+                }
+                "$DIMTXTDIRECTION" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.dim_text_direction = v != 0;
+                        }
+                    }
+                }
+                "$DIMALTMZF" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_alt_mzf = v;
+                        }
+                    }
+                }
+                "$DIMALTMZS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_alt_mzs = p.value_string.clone();
+                    }
+                }
+                "$DIMMZF" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_double() {
+                            hdr.dim_mzf = v;
+                        }
+                    }
+                }
+                "$DIMMZS" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        hdr.dim_mzs = p.value_string.clone();
+                    }
+                }
+                "$CSHADOW" => {
+                    if let Some(p) = self.reader.read_pair()? {
+                        if let Some(v) = p.as_i16() {
+                            hdr.cast_shadow = v;
+                        }
+                    }
+                }
                 "$UCSORTHOVIEW" => {
                     if let Some(p) = self.reader.read_pair()? {
                         if let Some(v) = p.as_i16() {
