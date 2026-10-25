@@ -390,10 +390,14 @@ pub fn decode_cif_escapes(text: &str) -> String {
 /// hold it, so an escape naming a character the page *can* hold was never
 /// written as transport: it is the text itself, and it is copied through as it
 /// stands (lower-case hex included). Surrogate pairs are judged as the one
-/// scalar they name. A UTF-8 stream has no code page to ask and decodes every
-/// escape, as [`decode_cif_escapes`] does.
+/// scalar they name. UTF-8 holds every character, so nothing in it was ever
+/// written as transport and its escapes are all text.
 pub fn decode_cif_escapes_in(text: &str, encoding: impl Into<LegacyEncoding>) -> String {
-    decode_cif(text, Some(encoding.into()))
+    let encoding = encoding.into();
+    if encoding == LegacyEncoding::Whatwg(encoding_rs::UTF_8) {
+        return text.to_string();
+    }
+    decode_cif(text, Some(encoding))
 }
 
 /// [`decode_legacy_escapes`] for text read from a drawing whose code page is
@@ -404,7 +408,6 @@ pub fn decode_legacy_escapes_in(text: &str, encoding: impl Into<LegacyEncoding>)
 }
 
 fn decode_cif(text: &str, held_by: Option<LegacyEncoding>) -> String {
-    let held_by = held_by.filter(|e| *e != LegacyEncoding::Whatwg(encoding_rs::UTF_8));
     if !text.contains("\\U+") {
         return text.to_string();
     }
@@ -637,8 +640,11 @@ mod tests {
             decode_cif_escapes_in(r"\U+0411", encoding_rs::WINDOWS_1251),
             r"\U+0411"
         );
-        // No code page to ask in UTF-8: every escape decodes.
-        assert_eq!(decode_cif_escapes_in(r"\U+0041", encoding_rs::UTF_8), "A");
+        // UTF-8 holds every character, so its escapes are text.
+        assert_eq!(
+            decode_cif_escapes_in(r"\U+0041", encoding_rs::UTF_8),
+            r"\U+0041"
+        );
         // An OEM page is asked too.
         assert_eq!(
             decode_cif_escapes_in(r"\U+00E9", LegacyEncoding::Oem(437)),
