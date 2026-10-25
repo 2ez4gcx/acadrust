@@ -271,6 +271,15 @@ pub fn dwg_code_page_name(index: u16) -> &'static str {
     }
 }
 
+/// Whether `index` is one of the compact DWG code page indices this crate maps.
+///
+/// Anything else is decoded with the ANSI_1252 fallback by
+/// [`dwg_code_page_name`], so callers can use this to tell a declared 1252
+/// file from a guessed one.
+pub fn dwg_code_page_is_known(index: u16) -> bool {
+    matches!(index, 1..=44)
+}
+
 /// Convert a DXF `$DWGCODEPAGE` name to the compact DWG metadata index.
 pub fn dwg_code_page_index(code_page: &str) -> u16 {
     match code_page.to_ascii_lowercase().as_str() {
