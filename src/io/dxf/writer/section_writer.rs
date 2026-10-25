@@ -2322,6 +2322,21 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
                     data.add_record(record);
                 }
                 self.write_xdata(&data)?;
+            } else if let Some(record) = match entity {
+                EntityType::MText(m) => self.mtext_column_xdata(m),
+                _ => None,
+            } {
+                // One ACAD record per entity: join the columns to the one it has.
+                let mut records = entity.common().extended_data.records().to_vec();
+                match records.iter_mut().find(|r| r.application_name == "ACAD") {
+                    Some(acad) => acad.values.extend(record.values),
+                    None => records.push(record),
+                }
+                let mut data = ExtendedData::new();
+                for r in records {
+                    data.add_record(r);
+                }
+                self.write_xdata(&data)?;
             } else {
                 self.write_xdata(&entity.common().extended_data)?;
             }
@@ -4505,32 +4520,75 @@ impl<'a, W: DxfStreamWriter> SectionWriter<'a, W> {
             }
             return Ok(());
         }
-        // Standard DXF MTEXT column layout. Rotation is emitted above before
-        // the first column marker because code 50 is reused for column heights.
-        if mtext.column_data.column_type != 0 {
-            self.writer.write_i16(75, mtext.column_data.column_type)?;
-            let manual_heights =
-                mtext.column_data.column_type == 2 && !mtext.column_data.auto_height;
-            let column_count = if manual_heights {
-                mtext.column_data.heights.len().min(i16::MAX as usize) as i16
-            } else {
-                mtext.column_data.column_count.clamp(0, i16::MAX as i32) as i16
-            };
-            self.writer.write_i16(76, column_count)?;
-            self.writer
-                .write_i16(78, i16::from(mtext.column_data.flow_reversed))?;
-            self.writer
-                .write_i16(79, i16::from(mtext.column_data.auto_height))?;
-            self.writer.write_double(48, mtext.column_data.width)?;
-            self.writer.write_double(49, mtext.column_data.gutter)?;
-            if manual_heights {
-                for height in mtext.column_data.heights.iter().take(column_count as usize) {
-                    self.writer.write_double(50, *height)?;
-                }
-            }
-        }
+        // Columns are not written as group codes here: 75, 76, 78, 79, 48, 49
+        // and a 50 per column height. Group 50 is the rotation of the entity,
+        // and readers that keep the last one took a column height for it. From
+        // R2007 AutoCAD keeps the columns in ACAD extended data (see
+        // `mtext_column_xdata`); below that there are none.
         self.write_normal(mtext.normal)?;
         Ok(())
+    }
+
+    /// The ACAD extended data AutoCAD 2007 to 2013 keeps an MTEXT's columns in.
+    /// None when the entity has no columns, the version cannot carry them, or
+    /// the entity already holds a column block of its own (a drawing read from
+    /// AutoCAD keeps that one, which is written back as it is).
+    fn mtext_column_xdata(&self, mtext: &MText) -> Option<ExtendedDataRecord> {
+        let cols = &mtext.column_data;
+        if cols.column_type == 0
+            || self.dxf_version < DxfVersion::AC1021
+            || self.dxf_version >= DxfVersion::AC1032
+        {
+            return None;
+        }
+        if mtext.common.extended_data.records().iter().any(|r| {
+            r.values
+                .iter()
+                .any(|v| matches!(v, XDataValue::String(s) if s == "ACAD_MTEXT_COLUMN_INFO_BEGIN"))
+        }) {
+            return None;
+        }
+        let manual_heights = cols.column_type == 2 && !cols.auto_height;
+        let count = if manual_heights {
+            cols.heights.len()
+        } else {
+            cols.column_count.max(0) as usize
+        };
+        let i = XDataValue::Integer16;
+        let mut record = ExtendedDataRecord::new("ACAD");
+        record.values = vec![
+            XDataValue::String("ACAD_MTEXT_COLUMN_INFO_BEGIN".into()),
+            i(75),
+            i(cols.column_type),
+            i(79),
+            i(i16::from(cols.auto_height)),
+            i(76),
+            i(count.min(i16::MAX as usize) as i16),
+            i(78),
+            i(i16::from(cols.flow_reversed)),
+            i(48),
+            XDataValue::Real(cols.width),
+            i(49),
+            XDataValue::Real(cols.gutter),
+            i(50),
+            i(if manual_heights {
+                count.min(i16::MAX as usize) as i16
+            } else {
+                0
+            }),
+        ];
+        if manual_heights {
+            record.values.extend(
+                cols.heights
+                    .iter()
+                    .take(count)
+                    .map(|h| XDataValue::Real(*h)),
+            );
+        }
+        record
+            .values
+            .push(XDataValue::String("ACAD_MTEXT_COLUMN_INFO_END".into()));
+        Some(record)
     }
 
     fn write_mtext_value(&mut self, value: &str) -> Result<()> {
