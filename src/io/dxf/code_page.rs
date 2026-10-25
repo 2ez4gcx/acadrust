@@ -51,9 +51,14 @@ impl LegacyEncoding {
 
     /// Whether this encoding holds `ch`, so that [`encode_legacy_string`] writes
     /// it as bytes instead of a `\U+XXXX` escape.
+    ///
+    /// The bytes must also decode back to `ch`: WHATWG Shift_JIS encodes U+00A5
+    /// to `0x5C` without an error, and that byte reads back as a backslash.
     pub fn can_encode(self, ch: char) -> bool {
         let mut buf = [0u8; 4];
-        !self.encode(ch.encode_utf8(&mut buf)).2
+        let text: &str = ch.encode_utf8(&mut buf);
+        let (bytes, _, unmappable) = self.encode(text);
+        !unmappable && self.decode(&bytes).0 == text
     }
 
     pub fn decode<'a>(self, bytes: &'a [u8]) -> (Cow<'a, str>, Self, bool) {
@@ -347,15 +352,15 @@ pub fn encoding_from_dwg_code_page(index: u16) -> LegacyEncoding {
 pub fn encode_legacy_string(text: &str, encoding: impl Into<LegacyEncoding>) -> Vec<u8> {
     let encoding = encoding.into();
     let (encoded, _, unmappable) = encoding.encode(text);
-    if !unmappable {
+    if !unmappable && encoding.decode(&encoded).0 == text {
         return encoded.into_owned();
     }
     let mut out = Vec::with_capacity(text.len() + 6);
     let mut buf = [0u8; 4];
     for ch in text.chars() {
         // Every DWG code page is stateless, so per-char encoding is safe.
-        let (bytes, _, err) = encoding.encode(ch.encode_utf8(&mut buf));
-        if err {
+        let (bytes, _, _) = encoding.encode(ch.encode_utf8(&mut buf));
+        if !encoding.can_encode(ch) {
             let mut units = [0u16; 2];
             for unit in ch.encode_utf16(&mut units) {
                 out.extend_from_slice(format!("\\U+{:04X}", unit).as_bytes());
