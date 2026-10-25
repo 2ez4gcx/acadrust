@@ -116,20 +116,31 @@ impl<W: Write> DxfBinaryWriter<W> {
         use crate::error::DxfError;
         use crate::io::dxf::GroupCodeValueType;
 
+        let too_big = || {
+            DxfError::Parse(format!(
+                "value {value} does not fit the width binary DXF gives group {code}"
+            ))
+        };
         match GroupCodeValueType::from_raw_code(code) {
             GroupCodeValueType::Bool => {
+                let v = u8::try_from(value)
+                    .ok()
+                    .filter(|v| *v <= 1)
+                    .ok_or_else(too_big)?;
                 self.write_code(code)?;
-                self.writer.write_u8(value as u8)?;
+                self.writer.write_u8(v)?;
             }
             // Binary DXF stores Byte groups in the same two-byte slot as
             // Int16 groups (the reader follows this convention as well).
             GroupCodeValueType::Byte | GroupCodeValueType::Int16 => {
+                let v = i16::try_from(value).map_err(|_| too_big())?;
                 self.write_code(code)?;
-                self.writer.write_i16::<LittleEndian>(value as i16)?;
+                self.writer.write_i16::<LittleEndian>(v)?;
             }
             GroupCodeValueType::Int32 => {
+                let v = i32::try_from(value).map_err(|_| too_big())?;
                 self.write_code(code)?;
-                self.writer.write_i32::<LittleEndian>(value as i32)?;
+                self.writer.write_i32::<LittleEndian>(v)?;
             }
             GroupCodeValueType::Int64 => {
                 self.write_code(code)?;
