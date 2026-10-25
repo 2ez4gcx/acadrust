@@ -1810,6 +1810,15 @@ mod tests {
     }
 
     #[test]
+    fn a_unicode_escape_takes_exactly_four_hex_digits() {
+        assert_eq!(parse_mtext(r"20\U+00B0C", false).to_plain_text(), "20°C");
+        assert_eq!(parse_mtext(r"\U+00B12", false).to_plain_text(), "±2");
+        assert_eq!(parse_mtext(r"\U+00GZ", false).to_plain_text(), r"\U+00GZ");
+        assert_eq!(parse_mtext(r"\U+00B", false).to_plain_text(), r"\U+00B");
+        assert_eq!(parse_mtext(r"\U+D800", false).to_plain_text(), r"\U+D800");
+    }
+
+    #[test]
     fn test_parse_mif_escape() {
         let doc = parse_mtext(r"\M+5BCFE\M+5BAC5", false);
         assert_eq!(doc.to_plain_text(), "件号");
