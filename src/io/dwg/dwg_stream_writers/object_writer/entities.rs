@@ -3732,7 +3732,16 @@ impl<'a> DwgObjectWriter<'a> {
     fn write_table_cell_data(&mut self, cell: &TableCell) {
         let cell_type = match cell.cell_type {
             CellType::Block => 2,
-            CellType::Text if cell.contents.is_empty() && cell.value_handle.is_none() => 0,
+            // Below R2007 an empty text cell is still a text cell with an empty
+            // string, as AutoCAD writes it: a type of 0 is not a cell type there and
+            // the reader loses its place after the first one.
+            CellType::Text
+                if cell.contents.is_empty()
+                    && cell.value_handle.is_none()
+                    && self.version.r2007_plus() =>
+            {
+                0
+            }
             CellType::Text => 1,
         };
         self.writer.write_bit_short(cell_type);
@@ -3742,15 +3751,18 @@ impl<'a> DwgObjectWriter<'a> {
         self.writer.write_bit_long(cell.merge_width);
         self.writer.write_bit_long(cell.merge_height);
         self.writer.write_bit_double(cell.rotation);
-        self.writer.write_handle(
-            DwgReferenceType::HardPointer,
-            cell.value_handle
-                .or_else(|| cell.contents.first().and_then(|c| c.block_handle))
-                .map(|h| h.value())
-                .unwrap_or(0),
-        );
+        // The reader takes the text from the cell only when this handle is 0, so
+        // the same value has to decide whether the text is written (a cell whose
+        // first content holds a block handle has a handle and no text here).
+        let value_handle = cell
+            .value_handle
+            .or_else(|| cell.contents.first().and_then(|c| c.block_handle))
+            .map(|h| h.value())
+            .unwrap_or(0);
+        self.writer
+            .write_handle(DwgReferenceType::HardPointer, value_handle);
         if cell_type == 1 {
-            if !self.version.r2007_plus() && cell.value_handle.is_none() {
+            if !self.version.r2007_plus() && value_handle == 0 {
                 self.writer.write_variable_text(cell.text_value());
             }
         } else if cell_type == 2 {
@@ -3786,10 +3798,10 @@ impl<'a> DwgObjectWriter<'a> {
                 self.writer.write_bit(!style.fill_enabled);
             }
             if flags & 0x04 != 0 {
-                self.writer.write_cm_color(&style.background_color);
+                self.writer.write_cm_true_color(&style.background_color);
             }
             if flags & 0x08 != 0 {
-                self.writer.write_cm_color(&style.content_color);
+                self.writer.write_cm_true_color(&style.content_color);
             }
             if flags & 0x10 != 0 {
                 self.writer.write_handle(
@@ -3807,7 +3819,7 @@ impl<'a> DwgObjectWriter<'a> {
                 (0x200, 0x2000, &style.left_border),
             ] {
                 if flags & color_bit != 0 {
-                    self.writer.write_cm_color(&border.color);
+                    self.writer.write_cm_true_color(&border.color);
                 }
                 if flags & lw_bit != 0 {
                     self.writer.write_bit_short(border.line_weight.as_i16());
@@ -3860,7 +3872,7 @@ impl<'a> DwgObjectWriter<'a> {
                     .get(index)
                     .cloned()
                     .unwrap_or(Color::ByBlock);
-                self.writer.write_cm_color(&color);
+                self.writer.write_cm_true_color(&color);
                 index += 1;
             }
         }
@@ -3880,7 +3892,7 @@ impl<'a> DwgObjectWriter<'a> {
                     .get(index)
                     .cloned()
                     .unwrap_or(Color::ByBlock);
-                self.writer.write_cm_color(&color);
+                self.writer.write_cm_true_color(&color);
                 index += 1;
             }
         }
@@ -3930,7 +3942,7 @@ impl<'a> DwgObjectWriter<'a> {
         for bit in 0..18 {
             if value.flags & (1 << bit) != 0 {
                 let color = value.values.get(index).cloned().unwrap_or(Color::ByBlock);
-                self.writer.write_cm_color(&color);
+                self.writer.write_cm_true_color(&color);
                 index += 1;
             }
         }
