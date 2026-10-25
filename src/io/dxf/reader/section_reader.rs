@@ -847,13 +847,23 @@ fn class_dxf_hatch_context_boundary(
                 start: fields.point2(section, 10),
                 end: fields.point2(section, 11),
             })),
-            2 => path.add_edge(BoundaryEdge::CircularArc(CircularArcEdge {
-                center: fields.point2(section, 10),
-                radius: fields.f64(section, 40),
-                start_angle: fields.f64(section, 50).to_radians(),
-                end_angle: fields.f64(section, 51).to_radians(),
-                counter_clockwise: fields.bool(section, 73),
-            })),
+            2 => {
+                let counter_clockwise = fields.bool(section, 73);
+                let mut start_angle = fields.f64(section, 50).to_radians();
+                let mut end_angle = fields.f64(section, 51).to_radians();
+                // A clockwise edge's angles are stored as 360 minus each.
+                if !counter_clockwise {
+                    start_angle = std::f64::consts::TAU - start_angle;
+                    end_angle = std::f64::consts::TAU - end_angle;
+                }
+                path.add_edge(BoundaryEdge::CircularArc(CircularArcEdge {
+                    center: fields.point2(section, 10),
+                    radius: fields.f64(section, 40),
+                    start_angle,
+                    end_angle,
+                    counter_clockwise,
+                }))
+            }
             3 => {
                 let minor_axis_ratio = fields.f64(section, 40);
                 // Groups 50/51 are circular angles in degrees, same as a HATCH
@@ -15978,6 +15988,11 @@ impl<'a> SectionReader<'a> {
                     }
                 }
             }
+        }
+        // A clockwise edge's angles are stored as 360 minus each (see the writer).
+        if !edge.counter_clockwise {
+            edge.start_angle = std::f64::consts::TAU - edge.start_angle;
+            edge.end_angle = std::f64::consts::TAU - edge.end_angle;
         }
         Ok(edge)
     }
