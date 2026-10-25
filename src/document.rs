@@ -171,6 +171,11 @@ pub struct HeaderVariables {
     // ==================== Version-specific Flags ====================
     /// REQUIREDVERSIONS (R2013+) - Bit coded required versions
     pub required_versions: i64,
+    /// `$ACADMAINTVER` as a DXF header carries it (AutoCAD's maintenance build
+    /// number, for example 329 for an AC1032 save). 0 when the file has none, as a
+    /// DWG's header does not. Not the DWG file-header byte that
+    /// [`CadDocument::maintenance_version`] holds, which is a different quantity.
+    pub acad_maintenance_version: i32,
 
     // ==================== Drawing Mode Flags ====================
     /// DIMASO - Associates dimensions with geometry
@@ -574,6 +579,12 @@ pub struct HeaderVariables {
     pub dim_alt_tolerance_zero_tight: i16,
     /// DIMFIT/DIMATFIT - Fit options
     pub dim_fit: i16,
+    /// DIMFIT - the R13 fit variable that R2000 replaced with DIMATFIT
+    pub dim_fit_r13: i16,
+    /// DIMUNIT - the R13 unit format variable that R2000 replaced with DIMLUNIT
+    pub dim_unit: i16,
+    /// UNITMODE - display of fractional, feet and inches units
+    pub unit_mode: i16,
     /// DIMUPT - User positioned text
     pub dim_user_positioned_text: bool,
     /// DIMPOST - Primary units suffix
@@ -807,6 +818,7 @@ impl Default for HeaderVariables {
             legacy: None,
             // Version-specific flags
             required_versions: 0,
+            acad_maintenance_version: 0,
 
             // Drawing mode flags
             associate_dimensions: true,
@@ -1020,6 +1032,9 @@ impl Default for HeaderVariables {
             dim_alt_tolerance_zero_suppression: 0,
             dim_alt_tolerance_zero_tight: 0,
             dim_fit: 3,
+            dim_fit_r13: 0,
+            dim_unit: 0,
+            unit_mode: 0,
             dim_user_positioned_text: false,
             dim_post: String::new(),
             dim_alt_post: String::new(),
